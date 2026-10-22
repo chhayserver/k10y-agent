@@ -87,3 +87,71 @@ def test_missing_key_is_a_clear_error():
         assert "API key" in str(e)
     else:
         raise AssertionError("expected ProviderError")
+
+
+class FakeSecretCore:
+    """In-memory Secret API for AIConfigStore tests."""
+
+    def __init__(self, initial=None):
+        import base64 as b64
+        self.b64 = b64
+        self.data = {k: b64.b64encode(v.encode()).decode() for k, v in (initial or {}).items()} if initial is not None else None
+
+    def read_namespaced_secret(self, name, ns):
+        from kubernetes.client.rest import ApiException
+        if self.data is None:
+            raise ApiException(status=404)
+        return type("S", (), {"data": dict(self.data)})()
+
+    def replace_namespaced_secret(self, name, ns, body):
+        from kubernetes.client.rest import ApiException
+        if self.data is None:
+            raise ApiException(status=404)
+        self.data = {k: self.b64.b64encode(v.encode()).decode() for k, v in body.string_data.items()}
+
+    def create_namespaced_secret(self, ns, body):
+        self.data = {k: self.b64.b64encode(v.encode()).decode() for k, v in body.string_data.items()}
+
+    def delete_namespaced_secret(self, name, ns):
+        self.data = None
+
+
+def _store(core):
+    return ai.AIConfigStore(lambda: core, lambda: "k10y", {})
+
+
+def test_both_provider_keys_are_kept_and_switchable():
+    core = FakeSecretCore()
+    store = _store(core)
+    store.save("gemini", "AIza-gemini-key-1111", "gemini-3.8-flash", "")
+    store.save("openai", "cc_codecraft-key-2222", "gemini-3.7-flash", "", activate=True)
+    pub = ai.AIConfigStore.public(store.load_all())
+    assert pub["provider"] == "openai"
+    assert pub["providers"]["gemini"]["key_hint"] == "…1111" and pub["providers"]["openai"]["key_hint"] == "…2222"
+    store.set_active("gemini")
+    assert store.load()["api_key"] == "AIza-gemini-key-1111"
+    assert store.load("openai")["api_key"] == "cc_codecraft-key-2222"
+    store.save("openai", None, "other-model", "", activate=False)   # change model, keep key, stay on gemini
+    assert store.load("openai")["api_key"] == "cc_codecraft-key-2222"
+    assert store.load_all()["active"] == "gemini"
+
+
+def test_legacy_single_provider_secret_is_migrated():
+    core = FakeSecretCore({"provider": "openai", "api_key": "cc_old-key-3333", "model": "m1", "base_url": "https://codecraftapi.com/v1"})
+    store = _store(core)
+    assert store.load()["provider"] == "openai" and store.load()["api_key"] == "cc_old-key-3333"
+    store.save("gemini", "AIza-new-4444", "", "", activate=False)
+    data = store.load_all()
+    assert data["active"] == "openai"
+    assert data["providers"]["openai"]["api_key"] == "cc_old-key-3333"
+    assert data["providers"]["gemini"]["model"] == "gemini-3.8-flash"
+
+
+def test_removing_active_key_falls_back_to_other_provider():
+    store = _store(FakeSecretCore())
+    store.save("gemini", "AIza-gemini-key-1111", "", "")
+    store.save("openai", "cc_codecraft-key-2222", "x", "")
+    store.clear("openai")
+    assert store.load_all()["active"] == "gemini"
+    store.clear("gemini")
+    assert store._raw() == {}

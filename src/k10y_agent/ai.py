@@ -369,64 +369,126 @@ def _api_error(r: httpx.Response) -> str:
 # --- configuration (env, overridden by the k10y-ai Secret) ------------------------------
 
 class AIConfigStore:
+    """AI settings for every provider, kept side by side in one Secret, plus which one is active.
+
+    Secret k10y-ai keys: active_provider, and <provider>_api_key / _model / _base_url for each
+    provider. Older single-provider Secrets (provider, api_key, model, base_url) are read as the
+    settings of that provider and rewritten in the new layout on the next save.
+    """
+
+    FIELDS = ("api_key", "model", "base_url")
+
     def __init__(self, core_factory: Callable[[], client.CoreV1Api], namespace_reader: Callable[[], Optional[str]],
                  env: Dict[str, str]):
         self.core_factory = core_factory
         self.namespace_reader = namespace_reader
         self.env = env
 
-    def load(self) -> Dict[str, str]:
-        cfg = {k: v for k, v in self.env.items() if v}
+    def _raw(self) -> Dict[str, str]:
         ns = self.namespace_reader()
-        if ns:
-            try:
-                sec = self.core_factory().read_namespaced_secret(AI_SECRET, ns)
-                cfg.update({k: base64.b64decode(v).decode() for k, v in (sec.data or {}).items() if v})
-            except ApiException as e:
-                if e.status not in (403, 404):
-                    raise
-        provider = cfg.get("provider", "gemini")
-        if provider not in PROVIDERS:
-            provider = "gemini"
-        cfg["provider"] = provider
-        cfg.setdefault("base_url", PROVIDERS[provider]["base_url"])
-        cfg["model"] = cfg.get("model") or PROVIDERS[provider]["default_model"]
-        return cfg
+        if not ns:
+            return {}
+        try:
+            sec = self.core_factory().read_namespaced_secret(AI_SECRET, ns)
+        except ApiException as e:
+            if e.status in (403, 404):
+                return {}
+            raise
+        return {k: base64.b64decode(v).decode() for k, v in (sec.data or {}).items() if v}
 
-    def save(self, provider: str, api_key: Optional[str], model: str, base_url: str) -> None:
+    def load_all(self) -> Dict[str, Any]:
+        raw = self._raw()
+        env_provider = self.env.get("provider") if self.env.get("provider") in PROVIDERS else None
+        legacy = raw.get("provider") if raw.get("provider") in PROVIDERS else None
+        providers: Dict[str, Dict[str, str]] = {}
+        for p, meta in PROVIDERS.items():
+            slot = {f: raw.get(f"{p}_{f}", "") for f in self.FIELDS}
+            for source, owner in ((raw, legacy), (self.env, env_provider)):
+                if owner == p:
+                    for f in self.FIELDS:
+                        slot[f] = slot[f] or source.get(f, "")
+            slot["base_url"] = (slot["base_url"] or meta["base_url"]).rstrip("/")
+            slot["model"] = slot["model"] or meta["default_model"]
+            providers[p] = slot
+        active = raw.get("active_provider") or legacy or env_provider
+        if active not in PROVIDERS:
+            active = next((p for p, sl in providers.items() if sl["api_key"]), "gemini")
+        return {"active": active, "providers": providers}
+
+    def load(self, provider: Optional[str] = None) -> Dict[str, str]:
+        """Settings of one provider (default: the active one) as a flat dict for make_chat."""
+        data = self.load_all()
+        p = provider if provider in PROVIDERS else data["active"]
+        return {"provider": p, **data["providers"][p]}
+
+    def _write(self, data: Dict[str, Any]) -> None:
         ns = self.namespace_reader()
         if not ns:
             raise ProviderError("AI settings can only be saved when the agent runs inside a cluster")
-        data = {"provider": provider, "model": model, "base_url": base_url}
-        core = self.core_factory()
-        if api_key is None:  # keep the stored key
-            api_key = self.load().get("api_key", "")
-        data["api_key"] = api_key
+        string_data = {"active_provider": data["active"]}
+        for p, slot in data["providers"].items():
+            for f in self.FIELDS:
+                string_data[f"{p}_{f}"] = slot.get(f, "")
         body = client.V1Secret(metadata=client.V1ObjectMeta(name=AI_SECRET, labels={"app.kubernetes.io/name": "k10y-agent"}),
-                               string_data=data)
+                               string_data=string_data)
+        core = self.core_factory()
         try:
-            core.replace_namespaced_secret(AI_SECRET, ns, body)
+            core.replace_namespaced_secret(AI_SECRET, ns, body)  # replace drops legacy keys
         except ApiException as e:
             if e.status != 404:
                 raise
             core.create_namespaced_secret(ns, body)
 
-    def clear(self) -> None:
-        ns = self.namespace_reader()
-        if ns:
-            try:
-                self.core_factory().delete_namespaced_secret(AI_SECRET, ns)
-            except ApiException as e:
-                if e.status != 404:
-                    raise
+    def save(self, provider: str, api_key: Optional[str], model: str, base_url: str, activate: bool = True) -> None:
+        data = self.load_all()
+        slot = data["providers"][provider]
+        if api_key is not None:  # None keeps the stored key
+            slot["api_key"] = api_key
+        slot["model"] = model or PROVIDERS[provider]["default_model"]
+        slot["base_url"] = (base_url or PROVIDERS[provider]["base_url"]).rstrip("/")
+        if activate:
+            data["active"] = provider
+        self._write(data)
+
+    def set_active(self, provider: str) -> None:
+        data = self.load_all()
+        slot = data["providers"][provider]
+        if not (slot["api_key"] and slot["model"]):
+            raise ProviderError(f"{PROVIDERS[provider]['label']} has no saved key and model yet")
+        data["active"] = provider
+        self._write(data)
+
+    def clear(self, provider: str) -> None:
+        data = self.load_all()
+        data["providers"][provider]["api_key"] = ""
+        if data["active"] == provider:
+            data["active"] = next((p for p, sl in data["providers"].items() if sl["api_key"]), provider)
+        if not any(sl["api_key"] for sl in data["providers"].values()):
+            ns = self.namespace_reader()
+            if ns:
+                try:
+                    self.core_factory().delete_namespaced_secret(AI_SECRET, ns)
+                except ApiException as e:
+                    if e.status != 404:
+                        raise
+            return
+        self._write(data)
 
     @staticmethod
-    def public(cfg: Dict[str, str]) -> Dict[str, Any]:
-        key = cfg.get("api_key", "")
-        return {"provider": cfg["provider"], "provider_label": PROVIDERS[cfg["provider"]]["label"],
-                "model": cfg.get("model", ""), "base_url": cfg.get("base_url", ""),
-                "configured": bool(key and cfg.get("model")),
-                "key_hint": f"…{key[-4:]}" if len(key) >= 8 else ("set" if key else "")}
+    def public(data: Dict[str, Any]) -> Dict[str, Any]:
+        providers = {}
+        for p, slot in data["providers"].items():
+            key = slot.get("api_key", "")
+            providers[p] = {
+                "label": PROVIDERS[p]["label"], "model": slot["model"], "base_url": slot["base_url"],
+                "default_model": PROVIDERS[p]["default_model"], "default_base_url": PROVIDERS[p]["base_url"],
+                "configured": bool(key and slot["model"]),
+                "key_hint": f"…{key[-4:]}" if len(key) >= 8 else ("set" if key else ""),
+            }
+        act = providers[data["active"]]
+        # Top-level fields describe the active provider (what an investigation will use).
+        return {"provider": data["active"], "provider_label": act["label"], "model": act["model"],
+                "configured": act["configured"], "key_hint": act["key_hint"], "providers": providers}
 
 
 def make_chat(cfg: Dict[str, str], system: str) -> Any:

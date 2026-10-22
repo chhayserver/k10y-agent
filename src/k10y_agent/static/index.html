@@ -643,7 +643,7 @@
     <div class="form-row"><span class="lbl">Provider</span>
       <div class="segmented" role="group" aria-label="Provider" id="ai-provider">
         <button type="button" data-p="gemini">Google Gemini</button><button type="button" data-p="openai">CodeCraft API</button>
-      </div></div>
+      </div><span class="hint" id="ai-tab-status"></span></div>
     <div class="form-row"><label class="lbl" for="ai-key">API key</label>
       <div class="field"><input class="input" id="ai-key" type="password" autocomplete="off" spellcheck="false">
       <button class="btn" type="button" id="ai-key-show">Show</button></div>
@@ -654,6 +654,7 @@
       <datalist id="ai-models"></datalist><span class="hint" id="ai-model-hint"></span></div>
     <div class="form-row" id="ai-base-row"><label class="lbl" for="ai-base">Base URL</label>
       <input class="input" id="ai-base" autocomplete="off" spellcheck="false" style="font-family:var(--mono)"></div>
+    <label class="pill" style="align-self:flex-start"><input type="checkbox" id="ai-activate"> Use this provider for investigations</label>
     <div class="test-result" id="ai-dlg-result" role="status"></div>
     <div class="actions">
       <button class="btn ghost" type="button" id="ai-remove" style="color:var(--critical)">Remove key</button>
@@ -917,8 +918,10 @@ function renderClusterButton() {
   $("#cluster-dot").className = `hdot ${c ? fleetLevel(c.id) : ""}`;
   $("#cluster-btn").title = c ? `Cluster: ${clusterLabel(c)} (${agentUrl(c)}). Click to switch.` : "No cluster yet. Click to add one.";
 }
+const aiByCluster = {};
 function switchCluster(id, view) {
   closeMenu();
+  const prevCluster = reg.current;
   if (id !== reg.current) {
     reg.current = id;
     saveReg();
@@ -929,7 +932,9 @@ function switchCluster(id, view) {
     state.lastUpdated = null;
     state.metrics = {};
     state.cfg = { configmaps: null, secrets: null };
-    state.ai = { config: null, result: null, running: null, request: { scope: "cluster" }, error: null };
+    aiByCluster[prevCluster] = state.ai;
+    state.ai = aiByCluster[id] || { config: null, result: null, running: null, request: { scope: "cluster" }, error: null };
+    state.ai.running = null;
     Object.assign(mapState, { topo: null, sig: "", selected: null, hover: null, layout: null });
     state.ui.map.ns = "";
     if (state.drawer) closeDrawer();
@@ -2317,13 +2322,23 @@ function renderAIConfig() {
     return;
   }
   if (!c) { el.innerHTML = `<div class="hint">${esc(state.ai.configError || "Loading…")}</div>`; return; }
-  el.innerHTML = `<div class="kv" style="grid-template-columns:1fr">
-      <div><span>Status</span><b>${c.configured ? badge("good", "Ready") : badge("warning", "Not configured")}</b></div>
-      <div><span>Provider</span><b>${esc(c.provider_label)}</b></div>
-      <div><span>Model</span><b style="font-family:var(--mono);font-size:13px">${esc(c.model || "–")}</b></div>
-      <div><span>API key</span><b>${c.key_hint ? `saved (${esc(c.key_hint)})` : "not set"}</b></div></div>`;
+  el.innerHTML = `<div class="radio-list" role="radiogroup" aria-label="Provider used for investigations">${Object.entries(c.providers).map(([id, pr]) => `
+      <label title="${pr.configured ? "" : "Add a key in Settings first"}" style="${pr.configured ? "" : "opacity:.6;cursor:not-allowed"}">
+        <input type="radio" name="ai-active" value="${id}" ${id === c.provider ? "checked" : ""} ${pr.configured ? "" : "disabled"}>
+        <div style="min-width:0"><div class="main-line">${esc(pr.label)}</div>
+          <div class="sub-line">${pr.configured ? `${esc(pr.model)} · key ${esc(pr.key_hint)}` : "no key saved"}</div></div></label>`).join("")}</div>
+    <div class="hint" style="margin-top:8px">${c.configured ? "Investigations use the selected provider. Both keys stay saved." : "Add a key in Settings to start."}</div>`;
+  el.querySelectorAll('input[name="ai-active"]').forEach((r) => {
+    r.onchange = async () => {
+      try {
+        state.ai.config = await api("/api/v1/ai/active", { method: "POST", body: { provider: r.value } });
+        toast(true, `Now using ${state.ai.config.provider_label} (${state.ai.config.model})`);
+      } catch (e) { toast(false, e.message); }
+      renderAIConfig();
+    };
+  });
   $("#ai-run").disabled = !c.configured || Boolean(state.ai.running);
-  $("#ai-run-hint").textContent = c.configured ? "Usually takes 10–60 seconds." : "Add your API key in Settings first.";
+  $("#ai-run-hint").textContent = c.configured ? `Uses ${c.provider_label} · ${c.model}. Usually takes 10–60 seconds.` : "Add your API key in Settings first.";
 }
 
 async function runAI() {
@@ -2430,48 +2445,61 @@ function applyAIAction(idx) {
   });
 }
 
-/* AI settings dialog */
+/* AI settings dialog: one tab per provider, each with its own draft until saved. */
 let aiDlgProvider = "gemini";
-function openAIDialog() {
+let aiDrafts = {};
+function openAIDialog(provider) {
   const c = state.ai.config;
   if (!c) { toast(false, state.ai.configError || "AI settings are not available on this agent."); return; }
-  aiDlgProvider = c.provider;
-  $("#ai-dlg-sub").innerHTML = `For cluster <b>${esc(clusterLabel(cur()))}</b>. The key is stored in Secret <code>k10y-ai</code> in this cluster's <code>k10y</code> namespace and is never sent back to the browser.`;
-  $("#ai-key").value = "";
-  $("#ai-key").type = "password";
-  $("#ai-key-show").textContent = "Show";
-  $("#ai-model").value = c.model || "";
-  $("#ai-base").value = c.base_url || c.providers[c.provider].base_url;
-  $("#ai-remove").hidden = !c.key_hint;
+  aiDrafts = {};
+  for (const [id, pr] of Object.entries(c.providers)) aiDrafts[id] = { key: "", model: pr.model || pr.default_model, base: pr.base_url || pr.default_base_url, models: [] };
+  aiDlgProvider = provider || c.provider;
+  $("#ai-dlg-sub").innerHTML = `For cluster <b>${esc(clusterLabel(cur()))}</b>. Keys are stored in Secret <code>k10y-ai</code> in this cluster's <code>k10y</code> namespace. Each provider keeps its own key, and keys are never sent back to the browser.`;
   $("#ai-dlg-result").className = "test-result";
-  syncAIDialog(false);
+  showAITab();
   $("#ai-dialog").showModal();
   $("#ai-key").focus();
 }
-function syncAIDialog(providerChanged) {
-  const c = state.ai.config, p = c.providers[aiDlgProvider], same = aiDlgProvider === c.provider;
+function saveAIDraft() {
+  const d = aiDrafts[aiDlgProvider];
+  if (!d) return;
+  d.key = $("#ai-key").value;
+  d.model = $("#ai-model").value;
+  d.base = $("#ai-base").value;
+}
+function showAITab() {
+  const c = state.ai.config, pr = c.providers[aiDlgProvider], d = aiDrafts[aiDlgProvider];
   document.querySelectorAll("#ai-provider button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.p === aiDlgProvider)));
-  $("#ai-key").placeholder = same && c.key_hint ? `Saved key ${c.key_hint}. Leave empty to keep it` : aiDlgProvider === "gemini" ? "Paste your Google API key" : "Paste your CodeCraft key (cc_…)";
+  $("#ai-tab-status").innerHTML = pr.configured
+    ? `${aiDlgProvider === c.provider ? "Active provider." : "Saved, not active."} Key ${esc(pr.key_hint)} · ${esc(pr.model)}`
+    : "No key saved for this provider yet.";
+  $("#ai-key").value = d.key;
+  $("#ai-key").type = "password";
+  $("#ai-key-show").textContent = "Show";
+  $("#ai-key").placeholder = pr.key_hint ? `Saved key ${pr.key_hint}. Leave empty to keep it` : aiDlgProvider === "gemini" ? "Paste your Google API key" : "Paste your CodeCraft key (cc_…)";
   $("#ai-key-hint").innerHTML = aiDlgProvider === "gemini"
     ? 'Create a key at <a class="link" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>.'
     : 'Create a key at <a class="link" href="https://codecraftapi.com" target="_blank" rel="noopener">codecraftapi.com</a>. Any OpenAI-compatible API works if you set its base URL.';
-  if (providerChanged) {
-    $("#ai-model").value = same ? c.model : p.default_model;
-    $("#ai-base").value = same ? c.base_url : p.base_url;
-    $("#ai-models").innerHTML = "";
-  }
+  $("#ai-model").value = d.model;
+  $("#ai-models").innerHTML = d.models.map((m) => `<option value="${esc(m)}">`).join("");
   $("#ai-model").placeholder = aiDlgProvider === "gemini" ? "gemini-3.8-flash" : "Click Load models and pick one";
   $("#ai-model-hint").textContent = aiDlgProvider === "gemini"
     ? "Recommended: gemini-3.8-flash. The model must support function calling."
     : "Pick a model that supports tool (function) calling.";
+  $("#ai-base").value = d.base;
   $("#ai-base-row").hidden = aiDlgProvider === "gemini";
+  $("#ai-activate").checked = aiDlgProvider === c.provider || !c.configured;
+  $("#ai-remove").hidden = !pr.key_hint;
+  $("#ai-dlg-result").className = "test-result";
 }
 function aiDlgResult(ok, html) {
   const el = $("#ai-dlg-result");
   el.innerHTML = `${icon(ok ? "ok" : "crit")}<span>${html}</span>`;
   el.className = `test-result show ${ok ? "ok" : "err"}`;
 }
-document.querySelectorAll("#ai-provider button").forEach((b) => { b.onclick = () => { aiDlgProvider = b.dataset.p; syncAIDialog(true); }; });
+document.querySelectorAll("#ai-provider button").forEach((b) => {
+  b.onclick = () => { saveAIDraft(); aiDlgProvider = b.dataset.p; showAITab(); $("#ai-key").focus(); };
+});
 $("#ai-key-show").onclick = (e) => {
   const i = $("#ai-key"), show = i.type === "password";
   i.type = show ? "text" : "password";
@@ -2479,36 +2507,45 @@ $("#ai-key-show").onclick = (e) => {
 };
 $("#ai-cancel").onclick = () => $("#ai-dialog").close();
 $("#ai-load-models").onclick = async () => {
-  const btn = $("#ai-load-models");
+  const btn = $("#ai-load-models"), provider = aiDlgProvider;
   btn.disabled = true;
   try {
     const res = await api("/api/v1/ai/models", { method: "POST", timeout: 40000,
-      body: { provider: aiDlgProvider, api_key: $("#ai-key").value.trim() || null, base_url: $("#ai-base").value.trim() } });
-    $("#ai-models").innerHTML = res.models.map((m) => `<option value="${esc(m)}">`).join("");
-    aiDlgResult(true, `${res.models.length} models available. Click the Model field to choose one.`);
-  } catch (e) { aiDlgResult(false, esc(e.message)); }
+      body: { provider, api_key: $("#ai-key").value.trim() || null, base_url: $("#ai-base").value.trim() } });
+    aiDrafts[provider].models = res.models;
+    if (aiDlgProvider === provider) {
+      $("#ai-models").innerHTML = res.models.map((m) => `<option value="${esc(m)}">`).join("");
+      aiDlgResult(true, `${res.models.length} models available. Click the Model field to choose one.`);
+    }
+  } catch (e) { if (aiDlgProvider === provider) aiDlgResult(false, esc(e.message)); }
   finally { btn.disabled = false; }
 };
 $("#ai-remove").onclick = async () => {
+  const provider = aiDlgProvider;
   try {
-    state.ai.config = await api("/api/v1/ai/config", { method: "DELETE" });
-    $("#ai-dialog").close();
-    toast(true, "AI key removed");
+    state.ai.config = await api(`/api/v1/ai/config?provider=${provider}`, { method: "DELETE" });
+    aiDrafts[provider].key = "";
+    toast(true, `${state.ai.config.providers[provider].label} key removed`);
+    showAITab();
     renderAIConfig();
   } catch (e) { aiDlgResult(false, esc(e.message)); }
 };
 $("#ai-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const c = state.ai.config, key = $("#ai-key").value.trim(), model = $("#ai-model").value.trim();
-  if (!key && (aiDlgProvider !== c.provider || !c.key_hint)) { aiDlgResult(false, "Enter your API key."); return; }
-  if (!model && aiDlgProvider !== "gemini") { aiDlgResult(false, "Choose a model (click Load models)."); return; }
+  saveAIDraft();
+  const c = state.ai.config, provider = aiDlgProvider, pr = c.providers[provider], d = aiDrafts[provider];
+  const key = d.key.trim(), model = d.model.trim();
+  if (!key && !pr.key_hint) { aiDlgResult(false, "Enter your API key."); return; }
+  if (!model && provider !== "gemini") { aiDlgResult(false, "Choose a model (click Load models)."); return; }
   $("#ai-save").disabled = true;
   try {
     const res = await api("/api/v1/ai/config", { method: "POST",
-      body: { provider: aiDlgProvider, api_key: key || null, model, base_url: $("#ai-base").value.trim() } });
+      body: { provider, api_key: key || null, model, base_url: d.base.trim(), activate: $("#ai-activate").checked } });
     state.ai.config = res;
+    d.key = "";
     $("#ai-dialog").close();
-    toast(true, `AI settings saved: ${res.provider_label}, ${res.model}`);
+    const saved = res.providers[provider];
+    toast(true, `${saved.label} saved (${saved.model})${res.provider === provider ? " and in use" : ""}`);
     renderAIConfig();
   } catch (err) { aiDlgResult(false, esc(err.message)); }
   finally { $("#ai-save").disabled = false; }

@@ -237,6 +237,11 @@ class AIConfigBody(BaseModel):
     api_key: Optional[str] = Field(None, max_length=512, description="Omit to keep the stored key.")
     model: str = Field("", max_length=200)
     base_url: str = Field("", max_length=300)
+    activate: bool = Field(True, description="Also make this the provider used for investigations.")
+
+
+class AIActiveBody(BaseModel):
+    provider: str = Field(pattern="^(gemini|openai)$")
 
 
 class AIModelsBody(BaseModel):
@@ -246,6 +251,7 @@ class AIModelsBody(BaseModel):
 
 
 class DiagnoseBody(BaseModel):
+    provider: Optional[str] = Field(None, pattern="^(gemini|openai)$", description="Default: the active provider.")
     scope: str = Field("cluster", pattern="^(cluster|namespace|object)$")
     namespace: Optional[str] = Field(None, max_length=253)
     kind: Optional[str] = Field(None, pattern="^(Pod|Deployment|Service|Node)$")
@@ -263,9 +269,13 @@ def _ai_error(e: Exception) -> HTTPException:
 
 @api.get("/ai/config")
 def ai_config() -> dict:
-    return {**ai.AIConfigStore.public(ai_store.load()),
-            "providers": {k: {"label": v["label"], "base_url": v["base_url"], "default_model": v["default_model"]}
-                          for k, v in ai.PROVIDERS.items()}}
+    return ai.AIConfigStore.public(ai_store.load_all())
+
+
+def _audit_ai(request: Request, action: str, message: str, params: dict) -> None:
+    audit_log.record({"time": now_iso(), "actor": (request.headers.get("x-k10y-actor") or "unknown")[:64],
+                      "client": request.client.host if request.client else None, "action": action,
+                      "target": "secret/k10y-ai", "params": params, "dry_run": False, "ok": True, "message": message})
 
 
 @api.post("/ai/config")
@@ -274,28 +284,35 @@ def save_ai_config(body: AIConfigBody, request: Request) -> dict:
     if not base_url.startswith("https://"):
         raise HTTPException(status_code=400, detail="base URL must start with https://")
     try:
-        ai_store.save(body.provider, body.api_key, body.model or ai.PROVIDERS[body.provider]["default_model"], base_url)
+        ai_store.save(body.provider, body.api_key, body.model, base_url, body.activate)
     except ai.ProviderError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    audit_log.record({"time": now_iso(), "actor": (request.headers.get("x-k10y-actor") or "unknown")[:64],
-                      "client": request.client.host if request.client else None, "action": "ai-config",
-                      "target": "secret/k10y-ai", "params": {"provider": body.provider, "model": body.model,
-                      "key_changed": body.api_key is not None}, "dry_run": False, "ok": True,
-                      "message": f"AI settings saved ({body.provider}, {body.model or 'default model'})"})
+    _audit_ai(request, "ai-config", f"AI settings saved for {body.provider} ({body.model or 'default model'})"
+              + (", now active" if body.activate else ""),
+              {"provider": body.provider, "model": body.model, "key_changed": body.api_key is not None, "activate": body.activate})
+    return ai_config()
+
+
+@api.post("/ai/active")
+def set_ai_active(body: AIActiveBody, request: Request) -> dict:
+    try:
+        ai_store.set_active(body.provider)
+    except ai.ProviderError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _audit_ai(request, "ai-config", f"Active AI provider switched to {body.provider}", {"provider": body.provider})
     return ai_config()
 
 
 @api.delete("/ai/config")
-def clear_ai_config() -> dict:
-    ai_store.clear()
+def clear_ai_config(request: Request, provider: str = Query(..., pattern="^(gemini|openai)$")) -> dict:
+    ai_store.clear(provider)
+    _audit_ai(request, "ai-config", f"AI key removed for {provider}", {"provider": provider})
     return ai_config()
 
 
 @api.post("/ai/models")
 def ai_models(body: AIModelsBody) -> dict:
-    cfg = ai_store.load()
-    if body.provider != cfg["provider"]:
-        cfg = {"provider": body.provider, "api_key": ""}
+    cfg = ai_store.load(body.provider)  # that provider's saved key, if any
     cfg["base_url"] = (body.base_url or ai.PROVIDERS[body.provider]["base_url"]).rstrip("/")
     if body.api_key:
         cfg["api_key"] = body.api_key
@@ -322,7 +339,7 @@ def ai_diagnose(body: DiagnoseBody, request: Request) -> dict:
         task += f"\n\nThe user also asks: {body.question}"
     target = {"cluster": "cluster", "namespace": f"namespace/{body.namespace}"}.get(
         body.scope, f"{(body.kind or '').lower()}/{body.namespace}/{body.name}")
-    cfg = ai_store.load()
+    cfg = ai_store.load(body.provider)
     tools = ai.ClusterTools(get_collector(), lambda ns, name: get_controller().history(ns, name))
     started = now_iso()
     try:
