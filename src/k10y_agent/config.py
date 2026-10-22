@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # "dashboard": serves only the web UI (no cluster access); the browser talks to agents.
     mode: str = "agent"
     # Name this agent reports for its cluster; must be unique across clusters.
-    cluster_name: str = "default"
+    cluster_name: str = "kubernetes"
     # Bearer token required on /api/*. Empty disables auth (local dev only),
     # unless token_secret is set.
     api_token: str = ""
@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     # Browser origins allowed to call this agent directly (dashboard cluster switcher).
     # "*" is safe here because auth is a bearer token, never a cookie. Empty disables CORS.
     cors_origins: str = "*"
+    # AI assistant defaults; the dashboard's AI settings (stored in Secret k10y-ai) override them.
+    ai_provider: str = ""
+    ai_api_key: str = ""
+    ai_model: str = ""
+    ai_base_url: str = ""
     # CPU/memory history kept in memory for the live charts.
     metrics_poll_s: float = 5.0
     metrics_retention_s: int = 3600

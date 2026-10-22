@@ -41,6 +41,20 @@ apply YAML) go through guardrails: protected namespaces, dry run, confirmation a
 | Nodes | Cordon, uncordon, drain |
 | Any manifest | Apply YAML (server-side apply, multiple documents) |
 
+**AI assistant** (Google Gemini or CodeCraft API / any OpenAI-compatible API)
+- **Investigate** the whole cluster, one namespace, or a specific pod or deployment, optionally with
+  your own question. The AI uses read-only tools: problems, events, object specs, logs (including
+  crashed containers) and ConfigMap data. Secret values are never read.
+- You get a summary, each issue's root cause and evidence, and **proposed fixes**: scale, restart,
+  set image, roll back, delete pod, or apply YAML.
+- **Nothing is changed automatically.** Each fix has *Review & apply*, which goes through dry run,
+  protected namespaces, confirmation and the audit log. Read-only agents show the equivalent
+  `kubectl` command instead.
+- **Setup:** AI Assistant → Settings → choose the provider and paste your key. The key is stored in
+  Secret `k10y-ai` in that cluster's `k10y` namespace and never returned to the browser. The
+  default model is `gemini-3.8-flash`; for CodeCraft, choose a model that supports tool calling.
+- Each cluster's agent has its own AI settings. Cluster data the AI reads is sent to the chosen provider.
+
 **Multi-cluster**
 - Cluster switcher with a live health dot per cluster, and an **All clusters** overview.
 - A standalone dashboard container that keeps working when any one cluster is down.
@@ -68,7 +82,8 @@ token on first start.
 
 ```bash
 kubectl -n k10y rollout status deploy/k10y-agent
-kubectl -n k10y set env deploy/k10y-agent K10Y_CLUSTER_NAME=prod     # optional display name
+kubectl -n k10y create configmap k10y-settings --from-literal=cluster-name=prod   # optional display name
+kubectl -n k10y rollout restart deploy/k10y-agent
 kubectl -n k10y get secret k10y-agent -o jsonpath='{.data.api-token}' | base64 -d; echo
 ```
 
@@ -107,7 +122,7 @@ EKS, GKE and AKS include metrics-server.
 ### 1. Build the image
 
 ```bash
-make build        # docker build -t k10y/k10y-agent:1.1.0 .
+make build        # docker build -t k10y/k10y-agent:1.2.0 .
 make test         # unit tests, run inside the image
 ```
 
@@ -120,12 +135,12 @@ make load                         # RKE2 inside a Lima VM (VM=rke2): imports int
 make load-k3d K3D_CLUSTER=edge    # k3d / k3s-in-Docker
 ```
 
-Any other cluster pulls `docker.io/k10y/k10y-agent:1.1.0` from Docker Hub, so this step can be skipped.
+Any other cluster pulls `docker.io/k10y/k10y-agent:1.2.0` from Docker Hub, so this step can be skipped.
 To publish your own build (multi-arch amd64 + arm64):
 
 ```bash
 docker login
-make push                                             # → docker.io/k10y/k10y-agent:1.1.0 and :latest
+make push                                             # → docker.io/k10y/k10y-agent:1.2.0 and :latest
 make push REGISTRY_IMAGE=ghcr.io/<you>/k10y-agent     # or another registry, then set image: in deploy/k8s/agent.yaml
 ```
 
@@ -230,6 +245,7 @@ Agent environment variables (set via `make deploy` or `deploy/k8s/agent.yaml`):
 | `K10Y_CONTROL_ENABLED` | `false` | Allow control actions (also needs `rbac-control.yaml`) |
 | `K10Y_PROTECTED_NAMESPACES` | `kube-system` | Comma-separated; `make deploy` sets `kube-system,k10y` |
 | `K10Y_CORS_ORIGINS` | `*` | Allowed browser origins; empty disables CORS |
+| `K10Y_AI_PROVIDER`, `K10Y_AI_API_KEY`, `K10Y_AI_MODEL`, `K10Y_AI_BASE_URL` | *(empty)* | Optional AI defaults; dashboard settings (Secret `k10y-ai`) override them |
 | `K10Y_METRICS_POLL_S` | `5` | How often to check metrics-server |
 | `K10Y_METRICS_RETENTION_S` | `3600` | In-memory CPU/memory history kept for charts |
 | `K10Y_AUDIT_PATH` | `/data/audit.jsonl` | Audit log file |
@@ -238,7 +254,7 @@ Agent environment variables (set via `make deploy` or `deploy/k8s/agent.yaml`):
 Run `make manifests` after changing `deploy/k8s/` to regenerate the installers.
 
 Makefile variables: `CLUSTER_NAME`, `KUBECONFIG`, `CONTROL`, `PROTECTED`, `VM`, `K3D_CLUSTER`,
-`IMAGE` (default `k10y/k10y-agent`), `TAG` (default `1.1.0`), `REGISTRY_IMAGE`, `PLATFORMS` and
+`IMAGE` (default `k10y/k10y-agent`), `TAG` (default `1.2.0`), `REGISTRY_IMAGE`, `PLATFORMS` and
 `DASHBOARD_PORT`.
 
 ### Live charts
@@ -267,6 +283,9 @@ their audit entries; the dashboard sends `dashboard` and the CLI sends `cli:<use
 | `GET /api/v1/namespaces` | Namespace names |
 | `GET /api/v1/deployments/{ns}/{name}/history` | Revisions |
 | `GET /api/v1/audit?limit=` | Audit log, newest first |
+| `GET/POST/DELETE /api/v1/ai/config` | AI provider settings (the key is write-only) |
+| `POST /api/v1/ai/models` | List the provider's models |
+| `POST /api/v1/ai/diagnose` | `{"scope": "cluster\|namespace\|object", "namespace", "kind", "name", "question"}` returns summary, issues and proposed actions |
 | `POST /api/v1/deployments/{ns}/{name}/scale` | `{"replicas": 3, "dry_run": false}` |
 | `POST /api/v1/deployments/{ns}/{name}/restart` | `{"dry_run": false}` |
 | `POST /api/v1/deployments/{ns}/{name}/image` | `{"container": "app", "image": "nginx:1.28"}` |
@@ -284,6 +303,7 @@ src/k10y_agent/
   controls.py         control actions + protected-namespace guard + audit log
   topology.py         relationship graph for the Map page
   metrics_history.py  background CPU/memory sampler for the live charts
+  ai.py               AI assistant: providers, read-only tools, investigation loop
   cli.py              k10y CLI (multi-cluster)
   config.py           K10Y_* settings
   static/index.html   the dashboard (single file, no build step)
@@ -312,4 +332,4 @@ Dockerfile, Makefile
 - [x] One-command installer (`install.yaml`, `install-readonly.yaml`) with self-provisioned token
 - [ ] Long-term metrics (Prometheus integration) and persistent audit log (PVC)
 - [ ] Per-user authentication instead of one shared token per cluster
-- [ ] Chat/AI operator built on the same API
+- [x] AI assistant (Gemini / OpenAI-compatible): diagnosis and human-approved fixes

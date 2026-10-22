@@ -1,0 +1,30 @@
+# The agent's own Secrets in its namespace: the API token (k10y-agent) and the AI
+# assistant settings (k10y-ai). Namespace-scoped, so it grants nothing elsewhere.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k10y-agent-self
+  namespace: k10y
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [k10y-agent, k10y-ai]
+    verbs: [get, update, patch, delete]
+  # "create" cannot be limited by resourceNames; this Role only covers namespace k10y.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k10y-agent-self
+  namespace: k10y
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: k10y-agent-self
+subjects:
+  - kind: ServiceAccount
+    name: k10y-agent
+    namespace: k10y

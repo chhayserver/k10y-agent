@@ -1,5 +1,5 @@
 IMAGE        ?= k10y/k10y-agent
-TAG          ?= 1.1.0
+TAG          ?= 1.2.0
 VM           ?= rke2
 CLUSTER_NAME ?= lab
 KUBECONFIG   ?= $(HOME)/.kube/rke2.yaml
@@ -45,6 +45,7 @@ load-k3d: build   ## Import the image into a k3d cluster (K3D_CLUSTER=edge)
 
 deploy:           ## Apply manifests; creates the API token once
 	kubectl apply -f deploy/k8s/rbac.yaml
+	kubectl apply -f deploy/k8s/rbac-self.yaml
 ifeq ($(CONTROL),true)
 	kubectl apply -f deploy/k8s/rbac-control.yaml
 else
@@ -73,6 +74,7 @@ logs:             ## Tail agent logs
 undeploy:         ## Remove the agent from the cluster
 	kubectl delete -f deploy/k8s/agent.yaml --ignore-not-found
 	kubectl delete -f deploy/k8s/rbac-control.yaml --ignore-not-found
+	kubectl delete -f deploy/k8s/rbac-self.yaml --ignore-not-found
 	kubectl delete -f deploy/k8s/rbac.yaml --ignore-not-found
 
 DASHBOARD_PORT ?= 8080

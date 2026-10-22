@@ -32,33 +32,14 @@ def labelled(doc, version):
     return doc
 
 
-def token_rbac():
-    """Lets the agent read/create only its own token Secret, in its own namespace."""
-    role = {
-        "apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role",
-        "metadata": {"name": "k10y-agent-token", "namespace": NAMESPACE},
-        "rules": [
-            {"apiGroups": [""], "resources": ["secrets"], "resourceNames": [TOKEN_SECRET], "verbs": ["get"]},
-            # "create" cannot be limited by resourceNames; this Role is namespace-scoped to k10y.
-            {"apiGroups": [""], "resources": ["secrets"], "verbs": ["create"]},
-        ],
-    }
-    binding = {
-        "apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding",
-        "metadata": {"name": "k10y-agent-token", "namespace": NAMESPACE},
-        "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "k10y-agent-token"},
-        "subjects": [{"kind": "ServiceAccount", "name": "k10y-agent", "namespace": NAMESPACE}],
-    }
-    return [role, binding]
-
-
 def agent_docs(version, control):
     deployment, service = load("agent.yaml")
     container = deployment["spec"]["template"]["spec"]["containers"][0]
     container["image"] = f"docker.io/k10y/k10y-agent:{version}"
     # No ConfigMap/Secret prerequisites: plain values, and the agent creates its own token.
     container["env"] = [
-        {"name": "K10Y_CLUSTER_NAME", "value": "kubernetes"},
+        # Optional ConfigMap the installer never creates, so upgrades keep the name.
+        {"name": "K10Y_CLUSTER_NAME", "valueFrom": {"configMapKeyRef": {"name": "k10y-settings", "key": "cluster-name", "optional": True}}},
         {"name": "K10Y_TOKEN_SECRET", "value": TOKEN_SECRET},
         {"name": "K10Y_CONTROL_ENABLED", "value": "true" if control else "false"},
         {"name": "K10Y_PROTECTED_NAMESPACES", "value": "kube-system,k10y"},
@@ -69,7 +50,7 @@ def agent_docs(version, control):
 
 def build(version, control):
     rbac = load("rbac.yaml")
-    docs = rbac + token_rbac()
+    docs = rbac + load("rbac-self.yaml")
     if control:
         docs += load("rbac-control.yaml")
     docs += agent_docs(version, control)
@@ -79,7 +60,8 @@ def build(version, control):
 #
 # Install:      kubectl apply -f <this file>
 # Get token:    kubectl -n k10y get secret k10y-agent -o jsonpath='{{.data.api-token}}' | base64 -d; echo
-# Name cluster: kubectl -n k10y set env deploy/k10y-agent K10Y_CLUSTER_NAME=<name>
+# Name cluster: kubectl -n k10y create configmap k10y-settings --from-literal=cluster-name=<name>
+#               kubectl -n k10y rollout restart deploy/k10y-agent
 # Open:         http://<any-node-ip>:30800   (or add it to a standalone dashboard)
 # Uninstall:    kubectl delete -f <this file>
 #

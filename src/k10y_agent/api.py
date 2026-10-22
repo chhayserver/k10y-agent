@@ -2,6 +2,8 @@ import base64
 import logging
 import secrets
 from contextlib import asynccontextmanager
+
+import httpx
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -17,6 +19,7 @@ from pydantic import BaseModel, Field
 from . import __version__
 from .collectors import Collector
 from .config import Settings
+from . import ai
 from .metrics_history import MetricsHistory
 from .controls import ActionError, AuditLog, Controller, ProtectedNamespaceError, api_error_message, now_iso
 
@@ -210,6 +213,133 @@ def metrics(
     if scope == "pod" and not (namespace and name):
         raise HTTPException(status_code=400, detail="scope=pod needs namespace and name")
     return metrics_history.query(scope, since, namespace, name)
+
+
+# --- AI assistant -------------------------------------------------------------
+
+
+def _own_namespace() -> Optional[str]:
+    try:
+        return NAMESPACE_FILE.read_text().strip()
+    except OSError:
+        return None
+
+
+ai_store = ai.AIConfigStore(
+    lambda: client.CoreV1Api(get_api_client()), _own_namespace,
+    {"provider": settings.ai_provider, "api_key": settings.ai_api_key, "model": settings.ai_model,
+     "base_url": settings.ai_base_url},
+)
+
+
+class AIConfigBody(BaseModel):
+    provider: str = Field(pattern="^(gemini|openai)$")
+    api_key: Optional[str] = Field(None, max_length=512, description="Omit to keep the stored key.")
+    model: str = Field("", max_length=200)
+    base_url: str = Field("", max_length=300)
+
+
+class AIModelsBody(BaseModel):
+    provider: str = Field(pattern="^(gemini|openai)$")
+    api_key: Optional[str] = Field(None, max_length=512)
+    base_url: str = Field("", max_length=300)
+
+
+class DiagnoseBody(BaseModel):
+    scope: str = Field("cluster", pattern="^(cluster|namespace|object)$")
+    namespace: Optional[str] = Field(None, max_length=253)
+    kind: Optional[str] = Field(None, pattern="^(Pod|Deployment|Service|Node)$")
+    name: Optional[str] = Field(None, max_length=253)
+    question: str = Field("", max_length=2000)
+
+
+def _ai_error(e: Exception) -> HTTPException:
+    if isinstance(e, ai.ProviderError):
+        return HTTPException(status_code=502, detail=str(e))
+    if isinstance(e, httpx.HTTPError):
+        return HTTPException(status_code=504, detail=f"AI provider unreachable: {e}")
+    raise e
+
+
+@api.get("/ai/config")
+def ai_config() -> dict:
+    return {**ai.AIConfigStore.public(ai_store.load()),
+            "providers": {k: {"label": v["label"], "base_url": v["base_url"], "default_model": v["default_model"]}
+                          for k, v in ai.PROVIDERS.items()}}
+
+
+@api.post("/ai/config")
+def save_ai_config(body: AIConfigBody, request: Request) -> dict:
+    base_url = (body.base_url or ai.PROVIDERS[body.provider]["base_url"]).rstrip("/")
+    if not base_url.startswith("https://"):
+        raise HTTPException(status_code=400, detail="base URL must start with https://")
+    try:
+        ai_store.save(body.provider, body.api_key, body.model or ai.PROVIDERS[body.provider]["default_model"], base_url)
+    except ai.ProviderError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    audit_log.record({"time": now_iso(), "actor": (request.headers.get("x-k10y-actor") or "unknown")[:64],
+                      "client": request.client.host if request.client else None, "action": "ai-config",
+                      "target": "secret/k10y-ai", "params": {"provider": body.provider, "model": body.model,
+                      "key_changed": body.api_key is not None}, "dry_run": False, "ok": True,
+                      "message": f"AI settings saved ({body.provider}, {body.model or 'default model'})"})
+    return ai_config()
+
+
+@api.delete("/ai/config")
+def clear_ai_config() -> dict:
+    ai_store.clear()
+    return ai_config()
+
+
+@api.post("/ai/models")
+def ai_models(body: AIModelsBody) -> dict:
+    cfg = ai_store.load()
+    if body.provider != cfg["provider"]:
+        cfg = {"provider": body.provider, "api_key": ""}
+    cfg["base_url"] = (body.base_url or ai.PROVIDERS[body.provider]["base_url"]).rstrip("/")
+    if body.api_key:
+        cfg["api_key"] = body.api_key
+    try:
+        return {"models": ai.list_models(cfg)}
+    except Exception as e:
+        raise _ai_error(e)
+
+
+@api.post("/ai/diagnose")
+def ai_diagnose(body: DiagnoseBody, request: Request) -> dict:
+    if body.scope == "namespace" and not body.namespace:
+        raise HTTPException(status_code=400, detail="scope=namespace needs a namespace")
+    if body.scope == "object" and not (body.kind and body.name and (body.namespace or body.kind == "Node")):
+        raise HTTPException(status_code=400, detail="scope=object needs kind, name and namespace")
+    if body.scope == "cluster":
+        task = "Check the whole cluster: find every current problem, explain root causes and propose fixes."
+    elif body.scope == "namespace":
+        task = f"Check namespace '{body.namespace}': find current problems, explain root causes and propose fixes."
+    else:
+        where = f" in namespace '{body.namespace}'" if body.namespace else ""
+        task = f"Investigate {body.kind} '{body.name}'{where}: is anything wrong, why, and how to fix it?"
+    if body.question:
+        task += f"\n\nThe user also asks: {body.question}"
+    cfg = ai_store.load()
+    tools = ai.ClusterTools(get_collector(), lambda ns, name: get_controller().history(ns, name))
+    started = now_iso()
+    try:
+        result = ai.diagnose(cfg, tools, task, settings.protected)
+    except Exception as e:
+        err = _ai_error(e)
+        audit_log.record({"time": started, "actor": (request.headers.get("x-k10y-actor") or "unknown")[:64],
+                          "client": request.client.host if request.client else None, "action": "ai-diagnose",
+                          "target": body.scope if body.scope != "object" else f"{body.kind}/{body.namespace}/{body.name}",
+                          "params": {"model": cfg.get("model")}, "dry_run": False, "ok": False, "message": err.detail})
+        raise err
+    target = {"cluster": "cluster", "namespace": f"namespace/{body.namespace}"}.get(body.scope, f"{(body.kind or '').lower()}/{body.namespace}/{body.name}")
+    audit_log.record({"time": started, "actor": (request.headers.get("x-k10y-actor") or "unknown")[:64],
+                      "client": request.client.host if request.client else None, "action": "ai-diagnose",
+                      "target": target, "params": {"model": result["model"], "steps": len(result["steps"])},
+                      "dry_run": False, "ok": True,
+                      "message": f"{len(result['issues'])} issue(s), {len(result['actions'])} proposed action(s), "
+                                 f"{result['seconds']}s with {result['provider']}/{result['model']}"})
+    return {**result, "control_enabled": settings.control_enabled}
 
 
 @api.get("/namespaces")
