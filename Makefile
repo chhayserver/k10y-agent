@@ -1,5 +1,5 @@
-IMAGE        ?= k10y-agent
-TAG          ?= 0.1.0
+IMAGE        ?= k10y/k10y-agent
+TAG          ?= 1.0.0
 VM           ?= rke2
 CLUSTER_NAME ?= lab
 KUBECONFIG   ?= $(HOME)/.kube/rke2.yaml
@@ -13,7 +13,7 @@ export KUBECONFIG
 CTR = limactl shell $(VM) sudo /var/lib/rancher/rke2/bin/ctr \
       --address /run/k3s/containerd/containerd.sock -n k8s.io
 
-.PHONY: build test load deploy restart up token logs undeploy dashboard dashboard-stop load-k3d
+.PHONY: build test load deploy restart up token logs undeploy dashboard dashboard-stop load-k3d push
 
 build:            ## Build the agent image with Docker
 	docker build -t $(IMAGE):$(TAG) .
@@ -21,6 +21,17 @@ build:            ## Build the agent image with Docker
 test:             ## Run unit tests inside the image
 	docker run --rm --entrypoint sh -e K10Y_AUDIT_PATH=/tmp/audit.jsonl -v $(CURDIR)/tests:/tests $(IMAGE):$(TAG) \
 	  -c "pip install --quiet --user pytest httpx && python -m pytest -q /tests"
+
+# Docker Hub / registry publishing. REGISTRY_IMAGE=docker.io/<user>/k10y-agent
+REGISTRY_IMAGE ?= docker.io/$(IMAGE)
+PLATFORMS      ?= linux/amd64,linux/arm64
+
+push:             ## Build multi-arch (amd64+arm64) and push :$(TAG) and :latest to REGISTRY_IMAGE
+	@test -n "$(REGISTRY_IMAGE)" || (echo "set REGISTRY_IMAGE, e.g. make push REGISTRY_IMAGE=docker.io/<user>/k10y-agent" && exit 1)
+	docker buildx build --platform $(PLATFORMS) \
+	  --label org.opencontainers.image.source=https://github.com/zorouzumaki1111-cmd/k10y-agent \
+	  --label org.opencontainers.image.version=$(TAG) \
+	  -t $(REGISTRY_IMAGE):$(TAG) -t $(REGISTRY_IMAGE):latest --push .
 
 load: build       ## Import the image into the RKE2 node's containerd
 	docker save $(IMAGE):$(TAG) | $(CTR) images import -

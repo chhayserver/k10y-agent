@@ -46,7 +46,22 @@ apply YAML) go through guardrails: protected namespaces, dry run, confirmation a
 - A standalone dashboard container that keeps working when any one cluster is down.
 - Multi-cluster CLI: `k10y status --all`.
 
-## Quick start
+## Install from Docker Hub (no build needed)
+
+The image is published as **[`k10y/k10y-agent`](https://hub.docker.com/r/k10y/k10y-agent)** for
+`linux/amd64` and `linux/arm64`.
+
+```bash
+# 1. Agent in a cluster (repeat per cluster)
+make deploy KUBECONFIG=~/.kube/<cluster>.yaml CLUSTER_NAME=<name>
+make token  KUBECONFIG=~/.kube/<cluster>.yaml
+
+# 2. Standalone dashboard on your machine
+docker run -d --name k10y-dashboard -p 8080:8080 -e K10Y_MODE=dashboard k10y/k10y-agent:1.0.0
+open http://localhost:8080    # Add cluster → http://<node-ip>:30800 + token
+```
+
+## Quick start (build from source)
 
 Requirements: Docker, `kubectl`, `make`, and a Kubernetes cluster with metrics-server. RKE2, k3s,
 EKS, GKE and AKS include metrics-server.
@@ -54,7 +69,7 @@ EKS, GKE and AKS include metrics-server.
 ### 1. Build the image
 
 ```bash
-make build        # docker build -t k10y-agent:0.1.0 .
+make build        # docker build -t k10y/k10y-agent:1.0.0 .
 make test         # unit tests, run inside the image
 ```
 
@@ -67,11 +82,13 @@ make load                         # RKE2 inside a Lima VM (VM=rke2): imports int
 make load-k3d K3D_CLUSTER=edge    # k3d / k3s-in-Docker
 ```
 
-For any other cluster, push the image to a registry the cluster can pull from, then set
-`image:` in `deploy/k8s/agent.yaml`:
+Any other cluster pulls `docker.io/k10y/k10y-agent:1.0.0` from Docker Hub, so this step can be skipped.
+To publish your own build (multi-arch amd64 + arm64):
 
 ```bash
-docker tag k10y-agent:0.1.0 ghcr.io/<you>/k10y-agent:0.1.0 && docker push ghcr.io/<you>/k10y-agent:0.1.0
+docker login
+make push                                             # → docker.io/k10y/k10y-agent:1.0.0 and :latest
+make push REGISTRY_IMAGE=ghcr.io/<you>/k10y-agent     # or another registry, then set image: in deploy/k8s/agent.yaml
 ```
 
 ### 3. Deploy the agent
@@ -180,7 +197,8 @@ Agent environment variables (set via `make deploy` or `deploy/k8s/agent.yaml`):
 | `K10Y_KUBECONFIG` | — | Only when running outside a cluster |
 
 Makefile variables: `CLUSTER_NAME`, `KUBECONFIG`, `CONTROL`, `PROTECTED`, `VM`, `K3D_CLUSTER`,
-`IMAGE`, `TAG` and `DASHBOARD_PORT`.
+`IMAGE` (default `k10y/k10y-agent`), `TAG` (default `1.0.0`), `REGISTRY_IMAGE`, `PLATFORMS` and
+`DASHBOARD_PORT`.
 
 ### Live charts
 
@@ -249,7 +267,8 @@ Dockerfile, Makefile
 - [x] Multi-cluster dashboard and standalone dashboard container
 - [x] Live CPU/memory charts (cluster, node, pod)
 - [ ] Alerts: a rule engine with Slack, Telegram and email notifications
-- [ ] Image publishing (`make push`) and a single-file installer manifest
+- [x] Multi-arch image on Docker Hub (`k10y/k10y-agent`, `make push`)
+- [ ] Single-file installer manifest
 - [ ] Long-term metrics (Prometheus integration) and persistent audit log (PVC)
 - [ ] Per-user authentication instead of one shared token per cluster
 - [ ] Chat/AI operator built on the same API
