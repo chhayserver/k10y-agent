@@ -184,6 +184,21 @@ def deployments(namespace: Optional[str] = None) -> list:
     return get_collector().deployments(namespace)
 
 
+@api.get("/statefulsets")
+def statefulsets(namespace: Optional[str] = None) -> list:
+    return get_collector().statefulsets(namespace)
+
+
+@api.get("/daemonsets")
+def daemonsets(namespace: Optional[str] = None) -> list:
+    return get_collector().daemonsets(namespace)
+
+
+@api.get("/jobs")
+def jobs(namespace: Optional[str] = None) -> list:
+    return get_collector().jobs(namespace)
+
+
 @api.get("/services")
 def services(namespace: Optional[str] = None) -> list:
     return get_collector().services(namespace)
@@ -513,6 +528,33 @@ def delete_deployment(namespace: str, name: str, request: Request, dry_run: bool
         request, "delete", f"deployment/{namespace}/{name}", dry_run,
         lambda: get_controller().delete_deployment(namespace, name, dry_run),
     )
+
+
+@api.post("/statefulsets/{namespace}/{name}/scale")
+def scale_statefulset(namespace: str, name: str, body: ScaleBody, request: Request) -> dict:
+    return run_action(
+        request, "scale", f"statefulset/{namespace}/{name}", body.dry_run,
+        lambda: get_controller().scale_statefulset(namespace, name, body.replicas, body.dry_run),
+        {"replicas": body.replicas},
+    )
+
+
+@api.post("/statefulsets/{namespace}/{name}/restart")
+def restart_statefulset(namespace: str, name: str, body: DryRun, request: Request) -> dict:
+    return run_action(request, "restart", f"statefulset/{namespace}/{name}", body.dry_run,
+                      lambda: get_controller().restart_workload("statefulset", namespace, name, body.dry_run))
+
+
+@api.post("/daemonsets/{namespace}/{name}/restart")
+def restart_daemonset(namespace: str, name: str, body: DryRun, request: Request) -> dict:
+    return run_action(request, "restart", f"daemonset/{namespace}/{name}", body.dry_run,
+                      lambda: get_controller().restart_workload("daemonset", namespace, name, body.dry_run))
+
+
+@api.delete("/jobs/{namespace}/{name}")
+def delete_job(namespace: str, name: str, request: Request, dry_run: bool = False) -> dict:
+    return run_action(request, "delete", f"job/{namespace}/{name}", dry_run,
+                      lambda: get_controller().delete_job(namespace, name, dry_run))
 
 
 @api.delete("/pods/{namespace}/{name}")

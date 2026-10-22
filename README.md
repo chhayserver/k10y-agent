@@ -26,6 +26,9 @@ apply YAML) go through guardrails: protected namespaces, dry run, confirmation a
   request and limit. Ranges are 5m, 15m and 1h.
 - Nodes, deployments, pods, services, ConfigMaps, Secrets (key names only), events and pod logs,
   including the previous crashed container.
+- **Workload pages:** Deployments, StatefulSets (scale, restart), DaemonSets (restart) and Jobs
+  (status, completions, failed pods, duration, created-by CronJob; delete with its pods).
+  Under-replicated StatefulSets and DaemonSets, and failed Jobs, appear under Problems.
 - **Details panel for every resource:** click any row (node, deployment, pod, service, event,
   ConfigMap, Secret or activity entry) to open it, like Kubernetes Dashboard. The **Overview** tab
   shows metadata, labels and annotations; kind-specific spec and status (replicas and strategy,
@@ -44,6 +47,9 @@ apply YAML) go through guardrails: protected namespaces, dry run, confirmation a
 | Resource | Actions |
 |---|---|
 | Deployments | Scale, restart, update image, roll back (pick a revision), delete |
+| StatefulSets | Scale, restart |
+| DaemonSets | Restart |
+| Jobs | Delete (with its pods) |
 | Pods | Delete (a controller recreates it) |
 | Services, ConfigMaps, Secrets | Delete (warns if still in use) |
 | Nodes | Cordon, uncordon, drain |
@@ -131,7 +137,7 @@ EKS, GKE and AKS include metrics-server.
 ### 1. Build the image
 
 ```bash
-make build        # docker build -t k10y/k10y-agent:1.3.0 .
+make build        # docker build -t k10y/k10y-agent:1.4.0 .
 make test         # unit tests, run inside the image
 ```
 
@@ -144,12 +150,12 @@ make load                         # RKE2 inside a Lima VM (VM=rke2): imports int
 make load-k3d K3D_CLUSTER=edge    # k3d / k3s-in-Docker
 ```
 
-Any other cluster pulls `docker.io/k10y/k10y-agent:1.3.0` from Docker Hub, so this step can be skipped.
+Any other cluster pulls `docker.io/k10y/k10y-agent:1.4.0` from Docker Hub, so this step can be skipped.
 To publish your own build (multi-arch amd64 + arm64):
 
 ```bash
 docker login
-make push                                             # → docker.io/k10y/k10y-agent:1.3.0 and :latest
+make push                                             # → docker.io/k10y/k10y-agent:1.4.0 and :latest
 make push REGISTRY_IMAGE=ghcr.io/<you>/k10y-agent     # or another registry, then set image: in deploy/k8s/agent.yaml
 ```
 
@@ -283,7 +289,8 @@ their audit entries; the dashboard sends `dashboard` and the CLI sends `cli:<use
 |---|---|
 | `GET /api/v1/info` | Cluster name, versions, control setting, protected namespaces |
 | `GET /api/v1/summary` | Health, counts, usage, problems |
-| `GET /api/v1/nodes`, `/pods`, `/deployments`, `/services`, `/configmaps`, `/secrets` | Resources (`?namespace=`) |
+| `GET /api/v1/nodes`, `/pods`, `/deployments`, `/statefulsets`, `/daemonsets`, `/jobs`, `/services`, `/configmaps`, `/secrets` | Resources (`?namespace=`) |
+| `POST /api/v1/statefulsets/{ns}/{name}/{scale,restart}`, `/daemonsets/{ns}/{name}/restart`, `DELETE /api/v1/jobs/{ns}/{name}` | Workload actions (`dry_run` supported) |
 | `GET /api/v1/configmaps/{ns}/{name}` | ConfigMap data |
 | `GET /api/v1/events?namespace=&warnings_only=&limit=` | Events, newest first |
 | `GET /api/v1/pods/{ns}/{pod}/logs?container=&tail=&previous=` | Logs (plain text) |

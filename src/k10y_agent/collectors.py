@@ -143,6 +143,61 @@ def deployment_info(dep: client.V1Deployment) -> Dict[str, Any]:
     }
 
 
+def _containers(spec: client.V1PodSpec) -> List[Dict[str, str]]:
+    return [{"name": c.name, "image": c.image} for c in spec.containers]
+
+
+def statefulset_info(s: client.V1StatefulSet) -> Dict[str, Any]:
+    st = s.status
+    return {
+        "namespace": s.metadata.namespace, "name": s.metadata.name,
+        "desired": s.spec.replicas if s.spec.replicas is not None else 1,
+        "ready": st.ready_replicas or 0, "current": st.current_replicas or 0, "updated": st.updated_replicas or 0,
+        "service_name": s.spec.service_name, "containers": _containers(s.spec.template.spec),
+        "images": [c.image for c in s.spec.template.spec.containers],
+        "age_s": _age_seconds(s.metadata.creation_timestamp),
+    }
+
+
+def daemonset_info(d: client.V1DaemonSet) -> Dict[str, Any]:
+    st = d.status
+    return {
+        "namespace": d.metadata.namespace, "name": d.metadata.name,
+        "desired": st.desired_number_scheduled or 0, "current": st.current_number_scheduled or 0,
+        "ready": st.number_ready or 0, "updated": st.updated_number_scheduled or 0, "available": st.number_available or 0,
+        "node_selector": d.spec.template.spec.node_selector or {}, "containers": _containers(d.spec.template.spec),
+        "images": [c.image for c in d.spec.template.spec.containers],
+        "age_s": _age_seconds(d.metadata.creation_timestamp),
+    }
+
+
+def job_info(j: Any) -> Dict[str, Any]:
+    st = j.status
+    conds = {c.type: c for c in st.conditions or [] if c.status == "True"}
+    if "Complete" in conds or "SuccessCriteriaMet" in conds:
+        status = "Complete"
+    elif "Failed" in conds:
+        status = "Failed"
+    elif j.spec.suspend:
+        status = "Suspended"
+    else:
+        status = "Running"
+    duration = None
+    if st.start_time:
+        end = st.completion_time or (conds["Failed"].last_transition_time if "Failed" in conds else None)
+        duration = int(((end or datetime.now(timezone.utc)) - st.start_time).total_seconds())
+    owner = next((f"{o.kind}/{o.name}" for o in j.metadata.owner_references or [] if o.controller), None)
+    return {
+        "namespace": j.metadata.namespace, "name": j.metadata.name, "status": status,
+        "completions": j.spec.completions if j.spec.completions is not None else 1,
+        "succeeded": st.succeeded or 0, "failed": st.failed or 0, "active": st.active or 0,
+        "failure_reason": conds["Failed"].reason if "Failed" in conds else None,
+        "duration_s": duration, "owner": owner, "containers": _containers(j.spec.template.spec),
+        "images": [c.image for c in j.spec.template.spec.containers],
+        "age_s": _age_seconds(j.metadata.creation_timestamp),
+    }
+
+
 def service_info(svc: client.V1Service) -> Dict[str, Any]:
     spec = svc.spec
     ingress = (svc.status.load_balancer.ingress or []) if svc.status and svc.status.load_balancer else []
@@ -343,6 +398,20 @@ class Collector:
         )
         return [deployment_info(d) for d in items]
 
+    def statefulsets(self, namespace: Optional[str] = None) -> List[Dict[str, Any]]:
+        items = (self.apps.list_namespaced_stateful_set(namespace) if namespace
+                 else self.apps.list_stateful_set_for_all_namespaces()).items
+        return [statefulset_info(s) for s in items]
+
+    def daemonsets(self, namespace: Optional[str] = None) -> List[Dict[str, Any]]:
+        items = (self.apps.list_namespaced_daemon_set(namespace) if namespace
+                 else self.apps.list_daemon_set_for_all_namespaces()).items
+        return [daemonset_info(d) for d in items]
+
+    def jobs(self, namespace: Optional[str] = None) -> List[Dict[str, Any]]:
+        items = (self.batch.list_namespaced_job(namespace) if namespace else self.batch.list_job_for_all_namespaces()).items
+        return [job_info(j) for j in items]
+
     def services(self, namespace: Optional[str] = None) -> List[Dict[str, Any]]:
         items = (
             self.core.list_namespaced_service(namespace).items
@@ -402,6 +471,18 @@ class Collector:
                         "reason": f"{d['ready']}/{d['desired']} replicas ready",
                     }
                 )
+        for s in self.statefulsets():
+            if s["ready"] < s["desired"]:
+                problems.append({"kind": "StatefulSet", "namespace": s["namespace"], "name": s["name"],
+                                 "reason": f"{s['ready']}/{s['desired']} replicas ready"})
+        for d in self.daemonsets():
+            if d["ready"] < d["desired"]:
+                problems.append({"kind": "DaemonSet", "namespace": d["namespace"], "name": d["name"],
+                                 "reason": f"{d['ready']}/{d['desired']} pods ready"})
+        for j in self.jobs():
+            if j["status"] == "Failed":
+                problems.append({"kind": "Job", "namespace": j["namespace"], "name": j["name"],
+                                 "reason": f"Job failed{': ' + j['failure_reason'] if j['failure_reason'] else ''}"})
 
         if any(p["kind"] == "Node" and p["reason"] == "NotReady" for p in problems):
             health = "critical"

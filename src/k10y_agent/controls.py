@@ -182,6 +182,28 @@ class Controller:
             "message": f"rolled back {namespace}/{name} to revision {target['revision']} ({', '.join(target['images'])})"
         }
 
+    def scale_statefulset(self, namespace: str, name: str, replicas: int, dry_run: bool = False) -> Dict[str, Any]:
+        self.guard(namespace)
+        if replicas < 0:
+            raise ActionError("replicas must be >= 0")
+        current = self.apps.read_namespaced_stateful_set_scale(name, namespace).spec.replicas
+        self.apps.patch_namespaced_stateful_set_scale(name, namespace, {"spec": {"replicas": replicas}}, **self._dry(dry_run))
+        return {"message": f"scaled statefulset {namespace}/{name} from {current} to {replicas} replicas"}
+
+    def restart_workload(self, kind: str, namespace: str, name: str, dry_run: bool = False) -> Dict[str, Any]:
+        """Rolling restart of a StatefulSet or DaemonSet (same mechanism as kubectl rollout restart)."""
+        self.guard(namespace)
+        patch = {"spec": {"template": {"metadata": {"annotations": {"kubectl.kubernetes.io/restartedAt": now_iso()}}}}}
+        fn = {"statefulset": self.apps.patch_namespaced_stateful_set, "daemonset": self.apps.patch_namespaced_daemon_set}[kind]
+        fn(name, namespace, patch, **self._dry(dry_run))
+        return {"message": f"rolling restart of {kind} {namespace}/{name} started"}
+
+    def delete_job(self, namespace: str, name: str, dry_run: bool = False) -> Dict[str, Any]:
+        self.guard(namespace)
+        client.BatchV1Api(self.api_client).delete_namespaced_job(
+            name, namespace, propagation_policy="Background", **self._dry(dry_run))  # also removes its pods
+        return {"message": f"deleted job {namespace}/{name} and its pods"}
+
     def delete_deployment(self, namespace: str, name: str, dry_run: bool = False) -> Dict[str, Any]:
         self.guard(namespace)
         self.apps.delete_namespaced_deployment(name, namespace, **self._dry(dry_run))

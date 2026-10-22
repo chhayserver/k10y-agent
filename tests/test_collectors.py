@@ -98,3 +98,20 @@ def test_service_info_nodeport():
     assert info["ports"] == [
         {"name": "http", "protocol": "TCP", "port": 80, "target_port": "8080", "node_port": 30080}
     ]
+
+
+def test_job_status_and_duration():
+    from k10y_agent.collectors import job_info
+
+    start = datetime.now(timezone.utc) - timedelta(seconds=90)
+    def job(conds, succeeded=0, failed=0, completion=None):
+        return client.V1Job(
+            metadata=client.V1ObjectMeta(name="j", namespace="ns", creation_timestamp=start),
+            spec=client.V1JobSpec(template=client.V1PodTemplateSpec(spec=client.V1PodSpec(containers=[client.V1Container(name="c", image="img")]))),
+            status=client.V1JobStatus(start_time=start, completion_time=completion, succeeded=succeeded, failed=failed,
+                                      conditions=[client.V1JobCondition(type=t, status="True", reason=r) for t, r in conds]))
+    done = job_info(job([("Complete", None)], succeeded=1, completion=start + timedelta(seconds=30)))
+    assert done["status"] == "Complete" and done["duration_s"] == 30
+    failed = job_info(job([("Failed", "BackoffLimitExceeded")], failed=6))
+    assert failed["status"] == "Failed" and failed["failure_reason"] == "BackoffLimitExceeded"
+    assert job_info(job([]))["status"] == "Running"

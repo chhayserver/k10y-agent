@@ -28,6 +28,9 @@ def _controller():
         lambda c: c.delete_deployment("kube-system", "x"),
         lambda c: c.delete_pod("kube-system", "x"),
         lambda c: c.delete_service("kube-system", "x"),
+        lambda c: c.scale_statefulset("kube-system", "x", 1),
+        lambda c: c.restart_workload("daemonset", "kube-system", "x"),
+        lambda c: c.delete_job("kube-system", "x"),
     ],
 )
 def test_protected_namespace_is_rejected(call):

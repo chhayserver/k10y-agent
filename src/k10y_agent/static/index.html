@@ -124,6 +124,7 @@
   .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 18px; font-weight: 650; font-size: 15px; letter-spacing: -0.01em; }
   .brand-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; color: #fff; }
   .brand-mark svg { width: 18px; height: 18px; stroke-width: 2.2; }
+  .nav .nav-label:not(:first-child) { margin-top: 10px; }
   .nav-label { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; padding: 8px 10px 4px; }
   .nav a { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; color: var(--text-2);
            text-decoration: none; font-weight: 500; }
@@ -583,7 +584,6 @@
       <span class="cs-text"><span class="cs-label">Cluster</span><b id="cluster-name">…</b></span>
       <svg class="icon"><use href="#i-sort"/></svg>
     </button>
-    <div class="nav-label">Cluster</div>
     <nav class="nav" id="nav" aria-label="Main"></nav>
     <div class="sidebar-foot" id="sidebar-foot">Connecting…</div>
   </aside>
@@ -809,6 +809,7 @@ const saveUi = () => store.set("k10y-ui", state.ui);
 // Views added after the UI state was first saved in a browser.
 state.ui.range = RANGES[state.ui.range] ? state.ui.range : "15m";
 state.ui.map = state.ui.map || { ns: "", rs: false, config: true, q: "" };
+for (const k of ["statefulsets", "daemonsets", "jobs"]) state.ui[k] = state.ui[k] || { q: "", ns: "", sort: { key: "namespace", dir: 1 } };
 state.ui.configmaps = state.ui.configmaps || { q: "", ns: "", filter: "all", sort: { key: "namespace", dir: 1 } };
 state.ui.secrets = state.ui.secrets || { q: "", ns: "", filter: "all", sort: { key: "namespace", dir: 1 } };
 state.cfg = { configmaps: null, secrets: null };
@@ -872,12 +873,13 @@ async function refresh() {
       if (!cur().name) { cur().name = info.cluster; saveReg(); }
       setTimeout(pollLive, 0);
     }
-    const [summary, nodes, pods, deployments, services, events, audit] = await Promise.all([
+    const [summary, nodes, pods, deployments, services, events, audit, statefulsets, daemonsets, jobs] = await Promise.all([
       api("/api/v1/summary"), api("/api/v1/nodes"), api("/api/v1/pods"), api("/api/v1/deployments"),
       api("/api/v1/services"), api("/api/v1/events?limit=300"), api("/api/v1/audit?limit=300"),
+      api("/api/v1/statefulsets").catch(() => []), api("/api/v1/daemonsets").catch(() => []), api("/api/v1/jobs").catch(() => []),
     ]);
     if (gen !== state.gen) return;  // switched cluster while loading
-    state.data = { summary, nodes, pods, deployments, services, events, audit };
+    state.data = { summary, nodes, pods, deployments, services, events, audit, statefulsets, daemonsets, jobs };
     state.fleet[reg.current] = { summary, at: Date.now() };
     state.lastUpdated = Date.now();
     hideBanner();
@@ -964,18 +966,21 @@ function switcherItems() {
 
 /* ================= chrome ================= */
 const NAV = [
-  { id: "clusters", label: "All clusters", icon: "globe" },
-  { id: "overview", label: "Overview", icon: "overview" },
-  { id: "map", label: "Map", icon: "map" },
-  { id: "ai", label: "AI Assistant", icon: "ai" },
-  { id: "nodes", label: "Nodes", icon: "nodes" },
-  { id: "deployments", label: "Deployments", icon: "deploy" },
-  { id: "pods", label: "Pods", icon: "pods" },
-  { id: "services", label: "Services", icon: "service" },
-  { id: "configmaps", label: "ConfigMaps", icon: "file" },
-  { id: "secrets", label: "Secrets", icon: "lock" },
-  { id: "events", label: "Events", icon: "events" },
-  { id: "activity", label: "Activity", icon: "audit" },
+  { id: "clusters", label: "All clusters", icon: "globe", section: "Cluster" },
+  { id: "overview", label: "Overview", icon: "overview", section: "Cluster" },
+  { id: "map", label: "Map", icon: "map", section: "Cluster" },
+  { id: "ai", label: "AI Assistant", icon: "ai", section: "Cluster" },
+  { id: "nodes", label: "Nodes", icon: "nodes", section: "Cluster" },
+  { id: "deployments", label: "Deployments", icon: "deploy", section: "Workloads" },
+  { id: "statefulsets", label: "StatefulSets", icon: "db", section: "Workloads" },
+  { id: "daemonsets", label: "DaemonSets", icon: "nodes", section: "Workloads" },
+  { id: "jobs", label: "Jobs", icon: "pending", section: "Workloads" },
+  { id: "pods", label: "Pods", icon: "pods", section: "Workloads" },
+  { id: "services", label: "Services", icon: "service", section: "Network & config" },
+  { id: "configmaps", label: "ConfigMaps", icon: "file", section: "Network & config" },
+  { id: "secrets", label: "Secrets", icon: "lock", section: "Network & config" },
+  { id: "events", label: "Events", icon: "events", section: "Activity" },
+  { id: "activity", label: "Activity", icon: "audit", section: "Activity" },
 ];
 
 function renderNav() {
@@ -983,6 +988,9 @@ function renderNav() {
   const counts = d ? {
     nodes: { n: d.nodes.length, alert: d.nodes.some((n) => !n.ready) },
     deployments: { n: d.deployments.length, alert: d.deployments.some((x) => x.ready < x.desired) },
+    statefulsets: { n: d.statefulsets.length || "", alert: d.statefulsets.some((x) => x.ready < x.desired) },
+    daemonsets: { n: d.daemonsets.length || "", alert: d.daemonsets.some((x) => x.ready < x.desired) },
+    jobs: { n: d.jobs.length || "", alert: d.jobs.some((x) => x.status === "Failed") },
     pods: { n: d.pods.length, alert: d.pods.some((p) => p.problem) },
     services: { n: d.services.length, alert: false },
     events: { n: d.events.filter((e) => e.type === "Warning").length, alert: false },
@@ -990,10 +998,13 @@ function renderNav() {
     overview: { n: d.summary.problems.length || "", alert: d.summary.problems.length > 0 },
     clusters: { n: reg.list.length > 1 ? reg.list.length : "", alert: reg.list.some((c) => fleetLevel(c.id) === "critical") },
   } : {};
+  let section = null;
   $("#nav").innerHTML = NAV.filter((item) => cur() || item.id === "clusters").map((item) => {
     const c = counts[item.id];
     const count = c && c.n !== "" ? `<span class="count ${c.alert ? "alert" : ""}">${c.n}</span>` : "";
-    return `<a href="#/${item.id}" ${state.view === item.id ? 'aria-current="page"' : ""}>${icon(item.icon)}<span>${item.label}</span>${count}</a>`;
+    const head = item.section !== section ? `<div class="nav-label">${esc(item.section)}</div>` : "";
+    section = item.section;
+    return `${head}<a href="#/${item.id}" ${state.view === item.id ? 'aria-current="page"' : ""}>${icon(item.icon)}<span>${item.label}</span>${count}</a>`;
   }).join("");
 }
 
@@ -2558,6 +2569,86 @@ $("#ai-form").addEventListener("submit", async (e) => {
   finally { $("#ai-save").disabled = false; }
 });
 
+
+/* ---- StatefulSets, DaemonSets, Jobs ---- */
+const imagesCell = (x) => `<span class="truncate mono" style="max-width:240px" title="${esc(x.images.join("\n"))}">${esc(x.images.join(", "))}</span>`;
+const JOB_LEVEL = { Complete: "good", Failed: "critical", Running: "pending", Suspended: "neutral" };
+function workloadView({ id, kind, menuKind, placeholder, columns, search }) {
+  return {
+    mount(root) {
+      const ui = state.ui[id];
+      root.innerHTML = `
+        <div class="toolbar">
+          <label class="search">${icon("search")}<input class="input" id="wl-q" placeholder="${esc(placeholder)}" value="${esc(ui.q)}" aria-label="Search"><kbd>/</kbd></label>
+          <select class="select" id="wl-ns" aria-label="Namespace"></select>
+          <span class="grow"></span><span class="result-count" id="wl-count"></span>
+        </div>
+        <section class="card flush"><div class="card-body table-wrap" id="wl-table">${skeletonRows(5)}</div></section>`;
+      $("#wl-q").addEventListener("input", (e) => { ui.q = e.target.value; saveUi(); this.update(); });
+      $("#wl-ns").addEventListener("change", (e) => { ui.ns = e.target.value; saveUi(); this.update(); });
+    },
+    update() {
+      if (!state.data || !$("#wl-table")) return;
+      const ui = state.ui[id], all = state.data[id] || [];
+      fillNsSelect($("#wl-ns"), all, ui.ns);
+      const q = ui.q.trim().toLowerCase();
+      const rows = all.filter((x) => (!ui.ns || x.namespace === ui.ns) && (!q || search(x).toLowerCase().includes(q)));
+      $("#wl-count").textContent = `${rows.length} of ${all.length}`;
+      renderTable($("#wl-table"), {
+        rows, sortState: ui.sort,
+        onSort: (st) => { ui.sort = st; saveUi(); this.update(); },
+        onRow: (x) => openDetail(kind, x.namespace, x.name),
+        empty: all.length ? emptyState(`No matching ${kind}s`, "Try a different search or namespace.")
+          : emptyState(`No ${kind}s in this cluster`, "", "pods"),
+        columns: [
+          { key: "name", label: "Name", cls: "primary", render: (x) => esc(x.name) },
+          { key: "namespace", label: "Namespace", render: (x) => `<span class="ns">${esc(x.namespace)}</span>` },
+          ...columns,
+          { key: "age_s", label: "Age", num: true, render: (x) => fmt.age(x.age_s) },
+          { key: "_a", label: "Actions", nosort: true, cls: "actions", render: (x) => menuButton(menuKind, x.namespace, x.name) },
+        ],
+      });
+    },
+  };
+}
+const readyBadge = (x) => (x.desired === 0 ? badge("neutral", "Scaled to 0") : x.ready >= x.desired ? badge("good", "Ready") : badge("warning", "Degraded"));
+VIEWS.statefulsets = workloadView({
+  id: "statefulsets", kind: "StatefulSet", menuKind: "statefulset", placeholder: "Search StatefulSets or images",
+  search: (x) => `${x.name} ${x.namespace} ${x.images.join(" ")} ${x.service_name || ""}`,
+  columns: [
+    { key: "status", label: "Status", sort: (x) => (x.ready >= x.desired ? 1 : 0), render: readyBadge },
+    { key: "ready", label: "Ready", num: true, render: (x) => `${x.ready} / ${x.desired}` },
+    { key: "updated", label: "Up-to-date", num: true, render: (x) => x.updated },
+    { key: "service_name", label: "Service", render: (x) => esc(x.service_name || "–") },
+    { key: "images", label: "Image", sort: (x) => x.images[0], render: imagesCell },
+  ],
+});
+VIEWS.daemonsets = workloadView({
+  id: "daemonsets", kind: "DaemonSet", menuKind: "daemonset", placeholder: "Search DaemonSets or images",
+  search: (x) => `${x.name} ${x.namespace} ${x.images.join(" ")}`,
+  columns: [
+    { key: "status", label: "Status", sort: (x) => (x.ready >= x.desired ? 1 : 0), render: readyBadge },
+    { key: "desired", label: "Desired", num: true, render: (x) => x.desired },
+    { key: "ready", label: "Ready", num: true, render: (x) => x.ready },
+    { key: "updated", label: "Up-to-date", num: true, render: (x) => x.updated },
+    { key: "available", label: "Available", num: true, render: (x) => x.available },
+    { key: "node_selector", label: "Node selector", cls: "wrap-sm", sort: (x) => Object.keys(x.node_selector).join(), render: (x) => chips(x.node_selector) },
+    { key: "images", label: "Image", sort: (x) => x.images[0], render: imagesCell },
+  ],
+});
+VIEWS.jobs = workloadView({
+  id: "jobs", kind: "Job", menuKind: "job", placeholder: "Search jobs, status or images",
+  search: (x) => `${x.name} ${x.namespace} ${x.status} ${x.images.join(" ")} ${x.owner || ""}`,
+  columns: [
+    { key: "status", label: "Status", render: (x) => badge(JOB_LEVEL[x.status] || "neutral", x.status) },
+    { key: "succeeded", label: "Completions", num: true, render: (x) => `${x.succeeded} / ${x.completions}` },
+    { key: "failed", label: "Failed pods", num: true, render: (x) => (x.failed ? `<b style="color:var(--text)">${x.failed}</b>` : "0") },
+    { key: "duration_s", label: "Duration", num: true, render: (x) => fmt.age(x.duration_s) },
+    { key: "owner", label: "Created by", render: (x) => esc(x.owner || "–") },
+    { key: "images", label: "Image", sort: (x) => x.images[0], render: imagesCell },
+  ],
+});
+
 /* ---- Services ---- */
 const nodeAddress = () => {
   const n = state.data && (state.data.nodes.find((x) => x.ready && x.internal_ip) || state.data.nodes[0]);
@@ -2649,7 +2740,8 @@ VIEWS.activity = {
         : emptyState("No actions yet", "Scale, restart, delete or apply something and it will show up here.", "audit"),
       onRow: (a) => {
         const [k, ns, name] = a.target.split("/");
-        const kind = { deployment: "Deployment", pod: "Pod", service: "Service", node: "Node", configmap: "ConfigMap", secret: "Secret" }[k];
+        const kind = { deployment: "Deployment", statefulset: "StatefulSet", daemonset: "DaemonSet", job: "Job", pod: "Pod",
+          service: "Service", node: "Node", configmap: "ConfigMap", secret: "Secret" }[k];
         if (kind && name) openDetail(kind, ns, name); else if (kind === "Node" && ns) openDetail("Node", "", ns);
       },
       columns: [
@@ -2672,7 +2764,8 @@ VIEWS.activity = {
 /* ================= resource details panel (like Kubernetes Dashboard) ================= */
 const DETAIL_KINDS = new Set(["Pod", "Service", "ConfigMap", "PersistentVolumeClaim", "Node", "Namespace", "Deployment",
   "StatefulSet", "DaemonSet", "ReplicaSet", "Job", "Ingress", "Secret"]);
-const MENU_KIND = { Deployment: "deployment", Service: "service", Node: "node", ConfigMap: "configmap", Secret: "secret", Pod: "pod" };
+const MENU_KIND = { Deployment: "deployment", StatefulSet: "statefulset", DaemonSet: "daemonset", Job: "job",
+  Service: "service", Node: "node", ConfigMap: "configmap", Secret: "secret", Pod: "pod" };
 const drawerStack = [];
 
 function drawerDesc() {
@@ -2775,7 +2868,7 @@ function containersTable(containers, statuses) {
     }
     const probes = [c.livenessProbe && "liveness", c.readinessProbe && "readiness", c.startupProbe && "startup"].filter(Boolean).join(", ") || "–";
     return `<tr><td class="primary">${esc(c.name)}</td><td class="mono" style="white-space:normal;overflow-wrap:anywhere">${esc(c.image)}</td>
-      <td>${esc((c.ports || []).map((p) => `${p.containerPort}/${p.protocol || "TCP"}`).join(", ") || "–")}</td>
+      <td>${esc((c.ports || []).map((p) => `${p.name ? `${p.name}:` : ""}${p.containerPort}/${p.protocol || "TCP"}`).join(", ") || "–")}</td>
       <td>${esc(qty(c.resources && c.resources.requests))}</td><td>${esc(qty(c.resources && c.resources.limits))}</td><td>${esc(probes)}</td>
       ${statuses ? `<td>${esc(state)}</td><td class="num">${s ? s.restartCount : "–"}</td>` : ""}</tr>`;
   }).join("");
@@ -2851,6 +2944,7 @@ function specView(kind, o) {
   } else if (kind === "Secret") {
     kv = kvRow("Type", esc(o.type)) + kvRow("Keys", Object.keys(o.data || {}).map((k) => `<span class="chip">${esc(k)}</span>`).join(" ") || "–");
   }
+  if (sp.template && sp.template.metadata && sp.template.metadata.labels) kv += kvRow("Pod template labels", chips(sp.template.metadata.labels));
   return `${kv ? `<div class="kv">${kv}</div>` : ""}${extra}`;
 }
 
@@ -2884,6 +2978,8 @@ function relatedView(d) {
   return html ? `<div><h3 class="section-title">Related</h3>${html}</div>` : "";
 }
 
+const sp_tmpl_hint = (o) => (o.spec && o.spec.template && o.spec.template.metadata && o.spec.template.metadata.labels
+  ? " Its pods' labels are under <b>Pod template labels</b> below." : "");
 function renderResource() {
   const d = state.drawer, el = $("#drawer");
   if (!d || d.type !== "res") return;
@@ -2915,7 +3011,8 @@ function renderResource() {
         ${owners ? kvRow("Controlled by", owners) : ""}
         ${kvRow("UID", `<span style="font-family:var(--mono);font-size:12px">${esc(meta.uid || "–")}</span>`)}
       </div>
-      <div><h3 class="section-title">Labels</h3>${chips(meta.labels)}</div>
+      <div><h3 class="section-title">Labels</h3>${Object.keys(meta.labels || {}).length ? chips(meta.labels)
+        : `<span class="hint">No labels on this ${esc(d.kind)} object itself.${sp_tmpl_hint(o)}</span>`}</div>
       ${annEntries.length ? `<details><summary class="section-title" style="cursor:pointer;margin:0">Annotations · ${annEntries.length}</summary>
         <div style="display:grid;gap:6px;margin-top:8px">${annEntries.map(([k, v]) => `<div style="font-size:12px"><b style="font-family:var(--mono)">${esc(k)}</b>
           <div class="hint" style="font-family:var(--mono);overflow-wrap:anywhere">${esc(String(v).length > 400 ? `${String(v).slice(0, 400)}…` : v)}</div></div>`).join("")}</div></details>` : ""}
@@ -3096,7 +3193,8 @@ function find(kind, ns, name) {
     const list = state.cfg[`${kind}s`] || [];
     return list.find((x) => x.name === name && x.namespace === ns) || { namespace: ns, name, keys: [], used_by: [] };
   }
-  const list = { deployment: "deployments", pod: "pods", service: "services", node: "nodes" }[kind];
+  const list = { deployment: "deployments", pod: "pods", service: "services", node: "nodes",
+    statefulset: "statefulsets", daemonset: "daemonsets", job: "jobs" }[kind];
   return state.data[list].find((x) => x.name === name && (kind === "node" || x.namespace === ns));
 }
 function menuItems(kind, ns, name) {
@@ -3128,6 +3226,20 @@ function menuItems(kind, ns, name) {
       { label: "Diagnose with AI", icon: "ai", safe: true, run: () => startAI({ scope: "object", kind: "Pod", namespace: obj.namespace, name: obj.name }, true) },
       { sep: true },
       { label: "Delete pod…", icon: "trash", danger: true, run: () => actDelete("pod", obj) },
+    ],
+    statefulset: [
+      { label: "Scale…", icon: "scale", run: () => actScale(obj, "statefulset") },
+      { label: "Restart", icon: "refresh", run: () => actRestart(obj, "statefulset") },
+      { label: "Show on map", icon: "map", safe: true, run: () => showOnMap("StatefulSet", obj) },
+    ],
+    daemonset: [
+      { label: "Restart", icon: "refresh", run: () => actRestart(obj, "daemonset") },
+      { label: "Show on map", icon: "map", safe: true, run: () => showOnMap("DaemonSet", obj) },
+    ],
+    job: [
+      { label: "Show on map", icon: "map", safe: true, run: () => showOnMap("Job", obj) },
+      { sep: true },
+      { label: "Delete job…", icon: "trash", danger: true, run: () => actDelete("job", obj) },
     ],
     configmap: [
       { label: "View data", icon: "file", safe: true, run: () => openConfig("configmap", obj.namespace, obj.name) },
@@ -3295,9 +3407,10 @@ const enc = encodeURIComponent;
 const depPath = (d) => `/api/v1/deployments/${enc(d.namespace)}/${enc(d.name)}`;
 const refName = (o) => `<b>${esc(o.namespace ? `${o.namespace}/` : "")}${esc(o.name)}</b>`;
 
-function actScale(d) {
+function actScale(d, kind = "deployment") {
+  const base = `/api/v1/${kind}s/${enc(d.namespace)}/${enc(d.name)}`;
   openAction({
-    title: "Scale deployment",
+    title: `Scale ${kind}`,
     desc: `${refName(d)} currently has <b>${d.ready}/${d.desired}</b> replicas ready.`,
     body: `<div class="form-row"><label class="lbl" for="scale-n">Replicas</label>
       <div class="stepper"><button type="button" class="btn icon-only" data-step="-1" aria-label="Decrease">−</button>
@@ -3307,7 +3420,7 @@ function actScale(d) {
     confirmLabel: "Scale",
     init(root) {
       const inp = $("#scale-n", root), hint = $("#scale-hint", root);
-      const sync = () => { hint.textContent = +inp.value === 0 ? "Scaling to 0 stops every pod of this deployment." : ""; };
+      const sync = () => { hint.textContent = +inp.value === 0 ? `Scaling to 0 stops every pod of this ${kind}.` : ""; };
       root.querySelectorAll("[data-step]").forEach((b) => b.onclick = () => { inp.value = Math.max(0, (+inp.value || 0) + +b.dataset.step); sync(); });
       inp.oninput = sync; sync();
     },
@@ -3315,17 +3428,19 @@ function actScale(d) {
       const n = Number($("#scale-n", root).value);
       if (!Number.isInteger(n) || n < 0 || n > 1000) throw new Error("Replicas must be a whole number from 0 to 1000.");
       if (n === d.desired) throw new Error(`The deployment already has ${n} replicas.`);
-      return { path: `${depPath(d)}/scale`, body: { replicas: n, dry_run: dryRun } };
+      return { path: `${base}/scale`, body: { replicas: n, dry_run: dryRun } };
     },
   });
 }
 
-function actRestart(d) {
+function actRestart(d, kind = "deployment") {
+  const how = kind === "daemonset" ? "the pod on each node is replaced in turn"
+    : `pods are replaced one at a time${d.desired > 1 ? ", so the app stays available" : ". With a single replica there may be a brief interruption"}`;
   openAction({
-    title: "Restart deployment",
-    desc: `Rolling restart of ${refName(d)}: pods are replaced one at a time${d.desired > 1 ? ", so the app stays available" : ". With a single replica there may be a brief interruption"}.`,
+    title: `Restart ${kind}`,
+    desc: `Rolling restart of ${refName(d)}: ${how}.`,
     confirmLabel: "Restart",
-    request: (_, dryRun) => ({ path: `${depPath(d)}/restart`, body: { dry_run: dryRun } }),
+    request: (_, dryRun) => ({ path: `/api/v1/${kind}s/${enc(d.namespace)}/${enc(d.name)}/restart`, body: { dry_run: dryRun } }),
   });
 }
 
@@ -3403,6 +3518,7 @@ function actDelete(kind, o) {
     pod: `Deletes the pod ${refName(o)}. If a deployment or other controller manages it, a replacement pod is created automatically.`,
     service: `Deletes the service ${refName(o)}. Anything reaching the app through it, including its NodePort, stops working.`,
     configmap: `Deletes the ConfigMap ${refName(o)}.`,
+    job: `Deletes the job ${refName(o)} and its pods (including their logs). A CronJob will create new jobs on its schedule.`,
     secret: `Deletes the Secret ${refName(o)}.`,
   }[kind];
   const users = (kind === "configmap" || kind === "secret") && o.used_by && o.used_by.length
