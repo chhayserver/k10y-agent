@@ -103,7 +103,7 @@ hub-up: hub-init  ## Start hub + PostgreSQL (uses the local build of $(IMAGE):$(
 	K10Y_IMAGE=$(IMAGE):$(TAG) docker compose up -d
 	@echo "Hub: https://localhost:8443  (self-signed certificate)"
 
-hub-down:         ## Stop hub + PostgreSQL (data is kept in Docker volumes)
+hub-down:         ## Stop hub + PostgreSQL (data stays in $(K10Y_DATA_DIR), default ./data)
 	docker compose down
 
 hub-logs:         ## Follow hub logs

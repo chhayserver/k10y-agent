@@ -1,5 +1,6 @@
 # k10y hub + PostgreSQL.  Start:  make hub-up   (creates .env with random secrets on first run)
 # Then open https://localhost:8443 (self-signed certificate) and log in as the admin from .env.
+# Data is stored in folders on this machine: ${K10Y_DATA_DIR:-./data}/postgres and .../hub
 services:
   postgres:
     image: postgres:17-alpine
@@ -8,7 +9,7 @@ services:
       POSTGRES_USER: k10y
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run make hub-init first}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ${K10Y_DATA_DIR:-./data}/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U k10y -d k10y"]
       interval: 5s
@@ -36,13 +37,9 @@ services:
     ports:
       - "${K10Y_HUB_PORT:-8443}:8443"
     volumes:
-      - hubdata:/data          # self-signed certificate (so the browser exception stays valid)
+      - ${K10Y_DATA_DIR:-./data}/hub:/data     # self-signed certificate (so the browser exception stays valid)
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
-
-volumes:
-  pgdata:
-  hubdata:

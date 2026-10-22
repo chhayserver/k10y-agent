@@ -108,6 +108,12 @@ chmod 600 .env && docker compose up -d && grep ADMIN .env
 Open **https://\<server\>:8443**. The certificate is self-signed, so accept the browser warning
 once. Log in with the admin from `.env`; you must set a new password at first login.
 
+**Where the data lives:** folders on the host, next to `docker-compose.yml`:
+`./data/postgres` (the PostgreSQL database: users, roles, clusters, settings, audit, alerts) and
+`./data/hub` (the hub's HTTPS certificate). Set `K10Y_DATA_DIR=/some/path` in `.env` to use another
+location. Back up by stopping the stack (`docker compose stop`) and copying the folder, or at any
+time with `docker compose exec postgres pg_dump -U k10y k10y > k10y.sql`.
+
 > **Back up `.env`.** `K10Y_SECRET_KEY` encrypts the agent tokens, AI keys and Telegram tokens stored
 > in PostgreSQL. Without it, those secrets cannot be decrypted.
 
@@ -211,6 +217,7 @@ Hub (`docker-compose.yml` / `.env`):
 | `K10Y_ALERTS_ENABLED` | `true` | Run the alert engine (rules are evaluated every 30 s) |
 | `K10Y_TLS`, `K10Y_TLS_CERT`, `K10Y_TLS_KEY`, `K10Y_TLS_DIR` | `false`, —, —, `/tmp/k10y-tls` | HTTPS; a self-signed certificate is generated when no cert or key is given |
 | `K10Y_HUB_PORT` | `8443` | Published port (compose) |
+| `K10Y_DATA_DIR` | `./data` | Host folder for the database and certificate (compose) |
 
 Agent (`deploy/k8s/agent.yaml`):
 
