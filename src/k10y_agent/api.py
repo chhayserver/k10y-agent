@@ -1,3 +1,5 @@
+import base64
+import logging
 import secrets
 from contextlib import asynccontextmanager
 from functools import lru_cache
@@ -22,11 +24,50 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 settings = Settings()
 audit_log = AuditLog(settings.audit_path)
+log = logging.getLogger(__name__)
+NAMESPACE_FILE = Path("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+token_error: Optional[str] = None
+
+
+def provision_token() -> None:
+    """Load the API token from settings.token_secret, creating it on first start."""
+    global token_error
+    if settings.api_token or not settings.token_secret or settings.mode == "dashboard":
+        return
+    try:
+        namespace = NAMESPACE_FILE.read_text().strip()
+        core = client.CoreV1Api(get_api_client())
+        token = ""
+        for _ in range(2):
+            try:
+                sec = core.read_namespaced_secret(settings.token_secret, namespace)
+                token = base64.b64decode((sec.data or {}).get("api-token", "")).decode()
+                break
+            except ApiException as e:
+                if e.status != 404:
+                    raise
+            try:
+                core.create_namespaced_secret(namespace, client.V1Secret(
+                    metadata=client.V1ObjectMeta(name=settings.token_secret, labels={"app.kubernetes.io/name": "k10y-agent"}),
+                    string_data={"api-token": secrets.token_hex(24)},
+                ))
+                log.info("created API token Secret %s/%s", namespace, settings.token_secret)
+            except ApiException as e:
+                if e.status != 409:  # 409: another replica created it first; read it on the next loop
+                    raise
+        if not token:
+            raise RuntimeError(f"Secret {namespace}/{settings.token_secret} has no api-token key")
+        settings.api_token = token
+        token_error = None
+    except Exception as e:
+        token_error = str(e)
+        log.error("could not provision API token: %s", e)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     if settings.mode != "dashboard":
+        provision_token()
         metrics_history.start()
     yield
     metrics_history.stop()
@@ -67,7 +108,12 @@ metrics_history = MetricsHistory(get_collector, settings.metrics_poll_s, setting
 
 def require_token(authorization: Optional[str] = Header(None)) -> None:
     if not settings.api_token:
-        return
+        if settings.token_secret:  # fail closed: never serve unauthenticated by accident
+            provision_token()
+            if not settings.api_token:
+                raise HTTPException(status_code=503, detail=f"API token not available yet: {token_error}")
+        else:
+            return
     expected = f"Bearer {settings.api_token}".encode()
     if not authorization or not secrets.compare_digest(authorization.encode(), expected):
         raise HTTPException(status_code=401, detail="invalid or missing bearer token")

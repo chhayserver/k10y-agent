@@ -1,5 +1,5 @@
 IMAGE        ?= k10y/k10y-agent
-TAG          ?= 1.0.0
+TAG          ?= 1.1.0
 VM           ?= rke2
 CLUSTER_NAME ?= lab
 KUBECONFIG   ?= $(HOME)/.kube/rke2.yaml
@@ -13,7 +13,7 @@ export KUBECONFIG
 CTR = limactl shell $(VM) sudo /var/lib/rancher/rke2/bin/ctr \
       --address /run/k3s/containerd/containerd.sock -n k8s.io
 
-.PHONY: build test load deploy restart up token logs undeploy dashboard dashboard-stop load-k3d push
+.PHONY: build test load deploy restart up token logs undeploy dashboard dashboard-stop load-k3d push manifests
 
 build:            ## Build the agent image with Docker
 	docker build -t $(IMAGE):$(TAG) .
@@ -32,6 +32,9 @@ push:             ## Build multi-arch (amd64+arm64) and push :$(TAG) and :latest
 	  --label org.opencontainers.image.source=https://github.com/zorouzumaki1111-cmd/k10y-agent \
 	  --label org.opencontainers.image.version=$(TAG) \
 	  -t $(REGISTRY_IMAGE):$(TAG) -t $(REGISTRY_IMAGE):latest --push .
+
+manifests:        ## Regenerate deploy/install/install.yaml and install-readonly.yaml for $(TAG)
+	.venv/bin/python scripts/gen_install.py $(TAG)
 
 load: build       ## Import the image into the RKE2 node's containerd
 	docker save $(IMAGE):$(TAG) | $(CTR) images import -

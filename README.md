@@ -46,20 +46,58 @@ apply YAML) go through guardrails: protected namespaces, dry run, confirmation a
 - A standalone dashboard container that keeps working when any one cluster is down.
 - Multi-cluster CLI: `k10y status --all`.
 
-## Install from Docker Hub (no build needed)
+## Install (users: one command per cluster)
 
-The image is published as **[`k10y/k10y-agent`](https://hub.docker.com/r/k10y/k10y-agent)** for
-`linux/amd64` and `linux/arm64`.
+**Requirements:** `kubectl` with admin access to the cluster, and metrics-server for the CPU and
+memory charts (included in RKE2, k3s, EKS, GKE and AKS). Nodes must be able to pull
+`docker.io/k10y/k10y-agent` (amd64 or arm64), and your browser must be able to reach port **30800**
+on a node.
+
+**1. Install the agent.** Choose one:
 
 ```bash
-# 1. Agent in a cluster (repeat per cluster)
-make deploy KUBECONFIG=~/.kube/<cluster>.yaml CLUSTER_NAME=<name>
-make token  KUBECONFIG=~/.kube/<cluster>.yaml
+# Monitoring + control (scale, restart, roll back, delete, drain, apply YAML)
+kubectl apply -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install.yaml
 
-# 2. Standalone dashboard on your machine
-docker run -d --name k10y-dashboard -p 8080:8080 -e K10Y_MODE=dashboard k10y/k10y-agent:1.0.0
-open http://localhost:8080    # Add cluster → http://<node-ip>:30800 + token
+# Read-only monitoring
+kubectl apply -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install-readonly.yaml
 ```
+
+**2. Wait for it, name the cluster, and get the API token.** The agent creates its own random
+token on first start.
+
+```bash
+kubectl -n k10y rollout status deploy/k10y-agent
+kubectl -n k10y set env deploy/k10y-agent K10Y_CLUSTER_NAME=prod     # optional display name
+kubectl -n k10y get secret k10y-agent -o jsonpath='{.data.api-token}' | base64 -d; echo
+```
+
+**3. Open it.** Either:
+- open the agent's own dashboard at `http://<any-node-ip>:30800` and paste the token, or
+- use one dashboard for all your clusters:
+  ```bash
+  docker run -d --name k10y-dashboard --restart unless-stopped -p 8080:8080 \
+    -e K10Y_MODE=dashboard k10y/k10y-agent:latest
+  ```
+  Then open `http://<server>:8080`, choose **Add cluster**, and enter `http://<node-ip>:30800` and the token.
+
+**Other tasks:**
+
+```bash
+# Upgrade: apply the newer release's install.yaml (the token is kept)
+kubectl apply -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install.yaml
+
+# Rotate the token
+kubectl -n k10y delete secret k10y-agent && kubectl -n k10y rollout restart deploy/k10y-agent
+
+# Uninstall
+kubectl delete -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install.yaml
+```
+
+> The agent serves plain HTTP on a NodePort. Keep port 30800 limited to your network, or put the
+> agent behind an Ingress or LoadBalancer with TLS before exposing it beyond a private network.
+
+The installers are generated from `deploy/k8s/` by `make manifests` (`scripts/gen_install.py`).
 
 ## Quick start (build from source)
 
@@ -69,7 +107,7 @@ EKS, GKE and AKS include metrics-server.
 ### 1. Build the image
 
 ```bash
-make build        # docker build -t k10y/k10y-agent:1.0.0 .
+make build        # docker build -t k10y/k10y-agent:1.1.0 .
 make test         # unit tests, run inside the image
 ```
 
@@ -82,12 +120,12 @@ make load                         # RKE2 inside a Lima VM (VM=rke2): imports int
 make load-k3d K3D_CLUSTER=edge    # k3d / k3s-in-Docker
 ```
 
-Any other cluster pulls `docker.io/k10y/k10y-agent:1.0.0` from Docker Hub, so this step can be skipped.
+Any other cluster pulls `docker.io/k10y/k10y-agent:1.1.0` from Docker Hub, so this step can be skipped.
 To publish your own build (multi-arch amd64 + arm64):
 
 ```bash
 docker login
-make push                                             # → docker.io/k10y/k10y-agent:1.0.0 and :latest
+make push                                             # → docker.io/k10y/k10y-agent:1.1.0 and :latest
 make push REGISTRY_IMAGE=ghcr.io/<you>/k10y-agent     # or another registry, then set image: in deploy/k8s/agent.yaml
 ```
 
@@ -187,7 +225,8 @@ Agent environment variables (set via `make deploy` or `deploy/k8s/agent.yaml`):
 |---|---|---|
 | `K10Y_MODE` | `agent` | `agent`, or `dashboard` (UI only, no cluster access) |
 | `K10Y_CLUSTER_NAME` | `default` | Name shown in the dashboard and CLI |
-| `K10Y_API_TOKEN` | *(empty = no auth)* | Bearer token |
+| `K10Y_API_TOKEN` | *(empty)* | Bearer token. Empty means no auth, unless `K10Y_TOKEN_SECRET` is set |
+| `K10Y_TOKEN_SECRET` | *(empty)* | Read the token from this Secret in the agent's namespace, creating it if missing. Fails closed (503) if that's impossible |
 | `K10Y_CONTROL_ENABLED` | `false` | Allow control actions (also needs `rbac-control.yaml`) |
 | `K10Y_PROTECTED_NAMESPACES` | `kube-system` | Comma-separated; `make deploy` sets `kube-system,k10y` |
 | `K10Y_CORS_ORIGINS` | `*` | Allowed browser origins; empty disables CORS |
@@ -196,8 +235,10 @@ Agent environment variables (set via `make deploy` or `deploy/k8s/agent.yaml`):
 | `K10Y_AUDIT_PATH` | `/data/audit.jsonl` | Audit log file |
 | `K10Y_KUBECONFIG` | — | Only when running outside a cluster |
 
+Run `make manifests` after changing `deploy/k8s/` to regenerate the installers.
+
 Makefile variables: `CLUSTER_NAME`, `KUBECONFIG`, `CONTROL`, `PROTECTED`, `VM`, `K3D_CLUSTER`,
-`IMAGE` (default `k10y/k10y-agent`), `TAG` (default `1.0.0`), `REGISTRY_IMAGE`, `PLATFORMS` and
+`IMAGE` (default `k10y/k10y-agent`), `TAG` (default `1.1.0`), `REGISTRY_IMAGE`, `PLATFORMS` and
 `DASHBOARD_PORT`.
 
 ### Live charts
@@ -268,7 +309,7 @@ Dockerfile, Makefile
 - [x] Live CPU/memory charts (cluster, node, pod)
 - [ ] Alerts: a rule engine with Slack, Telegram and email notifications
 - [x] Multi-arch image on Docker Hub (`k10y/k10y-agent`, `make push`)
-- [ ] Single-file installer manifest
+- [x] One-command installer (`install.yaml`, `install-readonly.yaml`) with self-provisioned token
 - [ ] Long-term metrics (Prometheus integration) and persistent audit log (PVC)
 - [ ] Per-user authentication instead of one shared token per cluster
 - [ ] Chat/AI operator built on the same API

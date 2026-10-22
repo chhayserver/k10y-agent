@@ -13,8 +13,12 @@ class Settings(BaseSettings):
     mode: str = "agent"
     # Name this agent reports for its cluster; must be unique across clusters.
     cluster_name: str = "default"
-    # Bearer token required on /api/*. Empty disables auth (local dev only).
+    # Bearer token required on /api/*. Empty disables auth (local dev only),
+    # unless token_secret is set.
     api_token: str = ""
+    # When api_token is empty: read the token from this Secret in the agent's own namespace,
+    # creating it with a random token on first start (used by install.yaml).
+    token_secret: str = ""
     # Used only when not running in-cluster.
     kubeconfig: Optional[str] = None
     host: str = "0.0.0.0"
