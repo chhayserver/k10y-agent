@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k10y-agent
+  namespace: k10y
+  labels: {app: k10y-agent}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: k10y-agent}
+  template:
+    metadata:
+      labels: {app: k10y-agent}
+    spec:
+      serviceAccountName: k10y-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: agent
+          image: k10y-agent:0.1.0
+          # Image is loaded straight into the node's containerd (see Makefile), not pulled.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - name: K10Y_CLUSTER_NAME
+              valueFrom:
+                configMapKeyRef: {name: k10y-agent, key: cluster-name}
+            - name: K10Y_API_TOKEN
+              valueFrom:
+                secretKeyRef: {name: k10y-agent, key: api-token}
+            - name: K10Y_CONTROL_ENABLED
+              valueFrom:
+                configMapKeyRef: {name: k10y-agent, key: control-enabled}
+            - name: K10Y_PROTECTED_NAMESPACES
+              valueFrom:
+                configMapKeyRef: {name: k10y-agent, key: protected-namespaces}
+            - name: K10Y_AUDIT_PATH
+              value: /data/audit.jsonl
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 320Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        # Audit log. emptyDir survives container restarts but not pod deletion;
+        # swap for a PersistentVolumeClaim once the cluster has a storage class.
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k10y-agent
+  namespace: k10y
+spec:
+  type: NodePort
+  selector: {app: k10y-agent}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      nodePort: 30800

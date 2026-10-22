@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k10y
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k10y-agent
+  namespace: k10y
+---
+# Read-only for Phase 1. Control actions (scale, restart, ...) will get a
+# separate, opt-in role so monitoring-only installs stay least-privilege.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k10y-agent-read
+rules:
+  - apiGroups: [""]
+    resources: [nodes, namespaces, pods, pods/log, events, services, persistentvolumeclaims, configmaps]
+    verbs: [get, list, watch]
+  # Secrets page and map. Kubernetes cannot grant "metadata only", so this permission
+  # technically allows reading values; the agent API only ever returns names, type
+  # and key names. Remove this rule to hide Secrets entirely.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [list]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes, pods]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k10y-agent-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k10y-agent-read
+subjects:
+  - kind: ServiceAccount
+    name: k10y-agent
+    namespace: k10y

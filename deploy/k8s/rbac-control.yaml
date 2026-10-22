@@ -1,0 +1,62 @@
+# Opt-in write access for control actions (scale, restart, set image, rollback,
+# delete, cordon/drain, apply). Leave this file out for a monitoring-only agent.
+# Deliberately excludes RBAC, CRDs and other cluster-scoped kinds (except
+# Namespace) so "apply" cannot be used to escalate privileges.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k10y-agent-control
+rules:
+  # Deployments: scale, restart, set image, rollback, delete, apply.
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [create, patch, update, delete]
+  - apiGroups: [apps]
+    resources: [deployments/scale]
+    verbs: [get, patch, update]
+  - apiGroups: [apps]
+    resources: [statefulsets, daemonsets]
+    verbs: [create, patch, update]
+  # Pods: delete; drain uses evictions. Services: delete and apply.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [delete]
+  - apiGroups: [""]
+    resources: [pods/eviction]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [create, patch, update, delete]
+  # Nodes: cordon / uncordon.
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [patch]
+  # Other common kinds for apply.
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims, serviceaccounts, namespaces]
+    verbs: [get, create, patch, update]
+  - apiGroups: [""]
+    resources: [configmaps, secrets]
+    verbs: [create, patch, update, delete]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, create, patch, update]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, create, patch, update]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, create, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k10y-agent-control
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k10y-agent-control
+subjects:
+  - kind: ServiceAccount
+    name: k10y-agent
+    namespace: k10y
