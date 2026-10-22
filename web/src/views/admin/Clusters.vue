@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PasswordInput from "@/components/PasswordInput.vue";
 import { onMounted, reactive, ref } from "vue";
 import { hub } from "@/api/client";
 import DataTable from "@/components/DataTable.vue";
@@ -51,7 +52,7 @@ const columns = [{ key: "name", label: "Name", cls: "primary" }, { key: "url", l
   </div></section>
   <Modal :open="edit.open" :title="edit.id ? `Edit ${edit.name}` : 'Add cluster'" @close="edit.open = false">
     <div class="form-row"><label class="lbl">Agent URL</label><input v-model="edit.url" class="input" style="font-family:var(--mono)" placeholder="https://10.0.0.5:30800" autocomplete="off"></div>
-    <div class="form-row"><label class="lbl">API token {{ edit.id ? "(leave empty to keep)" : "" }}</label><input v-model="edit.token" class="input" type="password" autocomplete="off" style="font-family:var(--mono)">
+    <div class="form-row"><label class="lbl">API token {{ edit.id ? "(leave empty to keep)" : "" }}</label><PasswordInput v-model="edit.token" autocomplete="off" mono />
       <span class="hint">kubectl -n k10y get secret k10y-agent -o jsonpath='{.data.api-token}' | base64 -d</span></div>
     <div class="form-row"><label class="lbl">Display name</label><input v-model="edit.name" class="input" placeholder="defaults to the agent's cluster name"></div>
     <label class="pill" style="align-self:flex-start"><input v-model="edit.verify_tls" type="checkbox"> Verify the agent's TLS certificate (off for self-signed)</label>

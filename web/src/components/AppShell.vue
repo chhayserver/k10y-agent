@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Logo from "./Logo.vue";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { actApply } from "@/lib/actions";
@@ -113,7 +114,7 @@ const canApply = computed(() => navItem.value?.cluster && s.can("apply.yaml") &&
 <template>
   <div class="app">
     <aside class="sidebar">
-      <div class="brand"><div class="brand-mark"><Icon name="logo" /></div><span>k10y</span></div>
+      <div class="brand"><Logo :size="28" /><span>k10y<span class="brand-sub">-agent</span></span></div>
       <button class="cluster-switch" title="Switch cluster" aria-haspopup="menu" @click="clusterMenu">
         <span class="hdot" :class="s.current ? fleetLevel(s.current.id) : ''" />
         <span class="cs-text"><span class="cs-label">Cluster</span><b>{{ s.current?.name || "No cluster" }}</b></span>

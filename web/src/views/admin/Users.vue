@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PasswordInput from "@/components/PasswordInput.vue";
 import { computed, onMounted, reactive, ref } from "vue";
 import { hub } from "@/api/client";
 import Badge from "@/components/Badge.vue";
@@ -60,7 +61,7 @@ const columns = [{ key: "username", label: "Username", cls: "primary" }, { key: 
     <div class="two-col" style="margin:0">
       <div class="form-row"><label class="lbl">Username</label><input v-model="edit.username" class="input" :disabled="!!edit.id" autocomplete="off"></div>
       <div class="form-row"><label class="lbl">Display name</label><input v-model="edit.display_name" class="input" autocomplete="off"></div>
-      <div class="form-row"><label class="lbl">{{ edit.id ? "Reset password (optional)" : "Password" }}</label><input v-model="edit.password" class="input" type="password" autocomplete="new-password" placeholder="at least 8 characters, letters + numbers"></div>
+      <div class="form-row"><label class="lbl">{{ edit.id ? "Reset password (optional)" : "Password" }}</label><PasswordInput v-model="edit.password" autocomplete="new-password" placeholder="at least 8 characters, letters + numbers" /></div>
       <div class="form-row" style="justify-content:flex-end"><label class="pill"><input v-model="edit.must_change_password" type="checkbox"> Must change password at next login</label>
         <label class="pill"><input v-model="edit.is_active" type="checkbox"> Account active</label></div>
     </div>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PasswordInput from "@/components/PasswordInput.vue";
 import { onMounted, reactive, ref } from "vue";
 import { hub } from "@/api/client";
 import Badge from "@/components/Badge.vue";
@@ -65,8 +66,8 @@ async function removeKey(id: string) { if (!confirm("Remove this provider's key?
         <button v-else-if="p.configured" class="btn sm" @click="activate(String(id))">Use this provider</button>
         <Badge v-else level="neutral" label="No key" /></div></div>
       <div v-if="drafts[id]" class="card-body" style="display:flex;flex-direction:column;gap:12px">
-        <div class="form-row"><label class="lbl">API key</label><input v-model="drafts[id].key" class="input" type="password" autocomplete="off" style="font-family:var(--mono)"
-          :placeholder="p.key_hint ? `Saved key ${p.key_hint}. Leave empty to keep it` : id === 'gemini' ? 'Google API key' : 'cc_… key'">
+        <div class="form-row"><label class="lbl">API key</label><PasswordInput v-model="drafts[id].key" autocomplete="off" mono
+          :placeholder="p.key_hint ? `Saved key ${p.key_hint}. Leave empty to keep it` : id === 'gemini' ? 'Google API key' : 'cc_… key'" />
           <span class="hint"><template v-if="id === 'gemini'">Create a key at aistudio.google.com/apikey.</template><template v-else>Create a key at codecraftapi.com. Any OpenAI-compatible API works with its base URL.</template></span></div>
         <div class="form-row"><label class="lbl">Model</label><div class="field"><input v-model="drafts[id].model" class="input" :list="`models-${id}`" style="font-family:var(--mono)" :placeholder="p.default_model || 'pick a model'">
           <button class="btn" type="button" :disabled="drafts[id].busy" @click="models(String(id))">Load models</button></div>
@@ -99,8 +100,8 @@ async function removeKey(id: string) { if (!confirm("Remove this provider's key?
     <ol class="hint" style="margin:0;padding-left:18px;line-height:1.6"><li>In Telegram, message <b>@BotFather</b>, send <code>/newbot</code> and copy the token.</li>
       <li>Send any message to your new bot, or add it to a group and post there.</li><li>Paste the token and press <b>Find chats</b>.</li></ol>
     <div class="form-row"><label class="lbl">Name</label><input v-model="ch.name" class="input" placeholder="e.g. Ops group"></div>
-    <div class="form-row"><label class="lbl">Bot token</label><input v-model="ch.bot_token" class="input" type="password" autocomplete="off" style="font-family:var(--mono)"
-      :placeholder="ch.token_set ? 'Saved. Leave empty to keep it' : '123456789:AA…'"></div>
+    <div class="form-row"><label class="lbl">Bot token</label><PasswordInput v-model="ch.bot_token" autocomplete="off" mono
+      :placeholder="ch.token_set ? 'Saved. Leave empty to keep it' : '123456789:AA…'" /></div>
     <div class="form-row"><label class="lbl">Chat ID</label><div class="field"><input v-model="ch.chat_id" class="input" style="font-family:var(--mono)" placeholder="e.g. 123456789 or -100…">
       <button class="btn" type="button" :disabled="ch.busy || (!ch.bot_token && !ch.token_set)" @click="findChats">Find chats</button></div>
       <div v-if="ch.chats.length" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
