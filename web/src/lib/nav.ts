@@ -1,0 +1,25 @@
+export interface NavItem { id: string; label: string; icon: string; section: string; perm?: string; global?: string; locked?: boolean; cluster?: boolean }
+// perm: needed on the current cluster; global: needed on all clusters; cluster: page needs a selected cluster.
+export const NAV: NavItem[] = [
+  { id: "clusters", label: "All clusters", icon: "globe", section: "Cluster" },
+  { id: "overview", label: "Overview", icon: "overview", section: "Cluster", perm: "cluster.view", cluster: true },
+  { id: "map", label: "Map", icon: "map", section: "Cluster", perm: "cluster.view", cluster: true },
+  { id: "ai", label: "AI Assistant", icon: "ai", section: "Cluster", perm: "ai.use", cluster: true },
+  { id: "nodes", label: "Nodes", icon: "nodes", section: "Cluster", perm: "cluster.view", cluster: true },
+  { id: "namespaces", label: "Namespaces", icon: "folder", section: "Cluster", perm: "cluster.view", cluster: true },
+  { id: "deployments", label: "Deployments", icon: "deploy", section: "Workloads", perm: "cluster.view", cluster: true },
+  { id: "statefulsets", label: "StatefulSets", icon: "db", section: "Workloads", perm: "cluster.view", cluster: true },
+  { id: "daemonsets", label: "DaemonSets", icon: "nodes", section: "Workloads", perm: "cluster.view", cluster: true },
+  { id: "jobs", label: "Jobs", icon: "pending", section: "Workloads", perm: "cluster.view", cluster: true },
+  { id: "pods", label: "Pods", icon: "pods", section: "Workloads", perm: "cluster.view", cluster: true },
+  { id: "services", label: "Services", icon: "service", section: "Network & config", perm: "cluster.view", cluster: true },
+  { id: "configmaps", label: "ConfigMaps", icon: "file", section: "Network & config", perm: "cluster.view", cluster: true },
+  { id: "secrets", label: "Secrets", icon: "lock", section: "Network & config", perm: "secrets.view", cluster: true },
+  { id: "events", label: "Events", icon: "events", section: "Activity", perm: "cluster.view", cluster: true },
+  { id: "activity", label: "Activity", icon: "audit", section: "Activity", perm: "audit.view" },
+  { id: "users", label: "Users", icon: "key", section: "Administration", global: "users.manage" },
+  { id: "roles", label: "Roles", icon: "lock", section: "Administration", global: "users.manage" },
+  { id: "manage-clusters", label: "Clusters", icon: "logo", section: "Administration", global: "clusters.manage" },
+  { id: "system", label: "System settings", icon: "gear", section: "Administration", global: "settings.manage" },
+  { id: "settings", label: "My settings", icon: "gear", section: "You", locked: true },
+];

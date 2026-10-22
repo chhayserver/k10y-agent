@@ -125,3 +125,38 @@ def test_cluster_tokens_are_encrypted_at_rest(client):
 ])
 def test_proxy_permission_map(method, path, perm):
     assert required_permission(method, path) == perm
+
+
+def test_proxy_passes_agent_responses_through(client, monkeypatch):
+    """Lists, objects and plain text from the agent reach the browser unchanged; writes are audited."""
+    import httpx
+
+    class FakeAgent:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def request(self, method, url, params=None, content=None, headers=None):
+            assert headers["Authorization"] == "Bearer agent-token"
+            assert headers["X-K10Y-Actor"] == "hub:admin"
+            if url.endswith("/pods"):
+                return httpx.Response(200, json=[{"name": "p1"}, {"name": "p2"}])
+            if url.endswith("/logs"):
+                return httpx.Response(200, text="line1\nline2", headers={"content-type": "text/plain"})
+            return httpx.Response(200, json={"message": "scaled demo/web from 2 to 3 replicas", "ok": True})
+
+    monkeypatch.setattr(hub.httpx, "AsyncClient", FakeAgent)
+    ready_admin(client)
+    cid = client.post("/api/hub/clusters", json={"name": "a", "url": "https://agent:1", "token": "agent-token"}, headers=CSRF).json()["id"]
+    assert client.get(f"/api/hub/clusters/{cid}/api/pods").json() == [{"name": "p1"}, {"name": "p2"}]
+    assert client.get(f"/api/hub/clusters/{cid}/api/pods/ns/p1/logs").text == "line1\nline2"
+    r = client.post(f"/api/hub/clusters/{cid}/api/deployments/demo/web/scale", json={"replicas": 3}, headers=CSRF)
+    assert r.status_code == 200
+    entry = client.get("/api/hub/audit").json()[0]
+    assert entry["action"] == "scale" and entry["ok"] and entry["message"].startswith("scaled demo/web")
+    assert entry["params"] == {"replicas": 3}

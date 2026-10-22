@@ -570,9 +570,11 @@ def delete_cluster(cluster_id: int, request: Request, p: Principal = Depends(req
 def _describe_result(r: httpx.Response) -> str:
     try:
         d = r.json()
-        return str(d.get("message") or d.get("detail") or "")[:2000]
     except ValueError:
         return r.text[:300]
+    if isinstance(d, dict):
+        return str(d.get("message") or d.get("detail") or "")[:2000]
+    return 
 
 
 @api.api_route("/clusters/{cluster_id}/api/{path:path}", methods=["GET", "POST", "DELETE"])
@@ -614,7 +616,8 @@ async def proxy(cluster_id: int, path: str, request: Request, p: Principal = Dep
     except httpx.HTTPError as e:
         record(False, f"cannot reach agent: {e}")
         return JSONResponse(status_code=502, content={"detail": f"Cannot reach agent {c.name}: {e}"})
-    record(r.status_code < 400, _describe_result(r))
+    if request.method != "GET":
+        record(r.status_code < 400, _describe_result(r))
     passthrough = {k: v for k, v in r.headers.items() if k.lower() in ("content-type",)}
     return Response(content=r.content, status_code=r.status_code, headers=passthrough)
 
