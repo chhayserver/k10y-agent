@@ -320,6 +320,8 @@ def ai_diagnose(body: DiagnoseBody, request: Request) -> dict:
         task = f"Investigate {body.kind} '{body.name}'{where}: is anything wrong, why, and how to fix it?"
     if body.question:
         task += f"\n\nThe user also asks: {body.question}"
+    target = {"cluster": "cluster", "namespace": f"namespace/{body.namespace}"}.get(
+        body.scope, f"{(body.kind or '').lower()}/{body.namespace}/{body.name}")
     cfg = ai_store.load()
     tools = ai.ClusterTools(get_collector(), lambda ns, name: get_controller().history(ns, name))
     started = now_iso()
@@ -329,10 +331,9 @@ def ai_diagnose(body: DiagnoseBody, request: Request) -> dict:
         err = _ai_error(e)
         audit_log.record({"time": started, "actor": (request.headers.get("x-k10y-actor") or "unknown")[:64],
                           "client": request.client.host if request.client else None, "action": "ai-diagnose",
-                          "target": body.scope if body.scope != "object" else f"{body.kind}/{body.namespace}/{body.name}",
+                          "target": target,
                           "params": {"model": cfg.get("model")}, "dry_run": False, "ok": False, "message": err.detail})
         raise err
-    target = {"cluster": "cluster", "namespace": f"namespace/{body.namespace}"}.get(body.scope, f"{(body.kind or '').lower()}/{body.namespace}/{body.name}")
     audit_log.record({"time": started, "actor": (request.headers.get("x-k10y-actor") or "unknown")[:64],
                       "client": request.client.host if request.client else None, "action": "ai-diagnose",
                       "target": target, "params": {"model": result["model"], "steps": len(result["steps"])},

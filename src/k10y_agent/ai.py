@@ -30,7 +30,7 @@ PROVIDERS = {
                "default_model": ""},
 }
 AI_SECRET = "k10y-ai"
-MAX_STEPS = 12
+MAX_STEPS = 16
 MAX_TOOL_OUTPUT = 7000
 HTTP_TIMEOUT = 90.0
 
@@ -283,7 +283,7 @@ class GeminiChat:
                 "generationConfig": {"temperature": 0.2}}
         r = httpx.post(self.url, headers=self.headers, json=body, timeout=HTTP_TIMEOUT)
         if r.status_code >= 400:
-            raise ProviderError(f"Gemini API {r.status_code}: {_api_error(r)}")
+            raise ProviderError(f"Gemini API {r.status_code}: {_api_error(r)}{_hint(r.status_code)}")
         data = r.json()
         meta = data.get("usageMetadata", {})
         self.usage["input_tokens"] += meta.get("promptTokenCount", 0)
@@ -326,7 +326,7 @@ class OpenAIChat:
                 "temperature": 0.2}
         r = httpx.post(self.url, headers=self.headers, json=body, timeout=HTTP_TIMEOUT)
         if r.status_code >= 400:
-            raise ProviderError(f"{self.url.split('/v1')[0]} API {r.status_code}: {_api_error(r)}")
+            raise ProviderError(f"{self.url.split('/v1')[0]} API {r.status_code}: {_api_error(r)}{_hint(r.status_code)}")
         data = r.json()
         usage = data.get("usage") or {}
         self.usage["input_tokens"] += usage.get("prompt_tokens", 0)
@@ -347,6 +347,14 @@ class OpenAIChat:
     def results(self, results: List[Tuple[dict, str]]) -> None:
         for call, output in results:
             self.messages.append({"role": "tool", "tool_call_id": call["id"], "content": output})
+
+
+def _hint(status: int) -> str:
+    if status == 429:
+        return " (This key hit its quota or rate limit. Wait, enable billing, or switch provider in AI settings.)"
+    if status in (401, 403):
+        return " (Check the API key in AI settings.)"
+    return ""
 
 
 def _api_error(r: httpx.Response) -> str:
