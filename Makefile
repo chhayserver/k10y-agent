@@ -1,5 +1,5 @@
 IMAGE        ?= k10y/k10y-agent
-TAG          ?= 1.2.1
+TAG          ?= 1.3.0
 VM           ?= rke2
 CLUSTER_NAME ?= lab
 KUBECONFIG   ?= $(HOME)/.kube/rke2.yaml

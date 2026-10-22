@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "k10y-agent"
-version = "1.2.1"
+version = "1.3.0"
 description = "Monitor and control Kubernetes clusters: in-cluster agent, REST API, web dashboard and multi-cluster CLI."
 readme = "README.md"
 requires-python = ">=3.9"

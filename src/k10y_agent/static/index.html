@@ -314,6 +314,9 @@
   .drawer-head h2 { margin: 0; font-size: 16px; font-weight: 650; overflow-wrap: anywhere; }
   .drawer-head .sub { color: var(--muted); font-size: 12px; margin-top: 4px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .drawer-body { overflow-y: auto; padding: 18px 20px 28px; display: flex; flex-direction: column; gap: 22px; }
+  /* Scrollable children (tables) must not be squeezed to zero height in the column. */
+  .drawer-body > * { flex-shrink: 0; }
+  .drawer-body .kv + .section-title, .drawer-body .table-wrap + .section-title, .drawer-body .kv + .table-wrap { margin-top: 18px; }
   .section-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 10px; }
   .kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px 18px; }
   .kv div > span { display: block; color: var(--muted); font-size: 12px; }
@@ -1521,13 +1524,13 @@ VIEWS.overview = {
       const items = [...s.problems].sort((a, b) => order[problemLevel(a)] - order[problemLevel(b)]);
       pEl.innerHTML = `<ul class="list">${items.slice(0, 8).map((p, i) => {
         const lvl = problemLevel(p);
-        return `<li class="${p.kind === "Pod" ? "clickable" : ""}" data-i="${i}" ${p.kind === "Pod" ? 'tabindex="0"' : ""}>
+        return `<li class="clickable" data-i="${i}" tabindex="0">
           <span class="ic ${lvl === "serious" ? "warning" : lvl}">${icon(lvl === "critical" ? "crit" : "warn")}</span>
           <div><div class="main-line">${esc(p.name)}</div><div class="sub-line">${esc(p.kind)}${p.namespace ? ` · ${esc(p.namespace)}` : ""} · ${esc(p.reason)}</div></div></li>`;
       }).join("")}</ul>${items.length > 8 ? `<div style="padding:10px 18px" class="sub-line dim">+${items.length - 8} more</div>` : ""}`;
       pEl.querySelectorAll("li.clickable").forEach((li) => {
         const p = items[+li.dataset.i];
-        const open = () => openPod(p.namespace, p.name);
+        const open = () => openDetail(p.kind, p.namespace || "", p.name);
         li.addEventListener("click", open);
         li.addEventListener("keydown", (e) => e.key === "Enter" && open());
       });
@@ -1579,6 +1582,7 @@ VIEWS.nodes = {
     renderTable($("#node-table"), {
       rows: nodes, sortState: ui.sort,
       onSort: (s) => { ui.sort = s; saveUi(); this.update(); },
+      onRow: (n) => openDetail("Node", "", n.name),
       empty: emptyState("No nodes", "", "nodes"),
       columns: [
         { key: "name", label: "Name", cls: "primary", render: (n) => esc(n.name) },
@@ -1625,6 +1629,7 @@ VIEWS.deployments = {
     renderTable($("#dep-table"), {
       rows, sortState: ui.sort,
       onSort: (s) => { ui.sort = s; saveUi(); this.update(); },
+      onRow: (d) => openDetail("Deployment", d.namespace, d.name),
       empty: emptyState("No matching deployments", "Try a different search or namespace."),
       columns: [
         { key: "name", label: "Name", cls: "primary", render: (d) => esc(d.name) },
@@ -1725,7 +1730,7 @@ VIEWS.events = {
     renderTable($("#ev-table"), {
       rows, sortState: ui.sort,
       onSort: (s) => { ui.sort = s; saveUi(); this.update(); },
-      onRow: (e) => { const [kind, name] = e.object.split("/"); if (kind === "Pod") openPod(e.namespace, name); },
+      onRow: (e) => { const [kind, name] = e.object.split("/"); if (DETAIL_KINDS.has(kind)) openDetail(kind, e.namespace || "", name); else toast(false, `No details view for ${kind}`); },
       empty: ui.type === "Warning" && !q && !ui.ns
         ? emptyState("No warning events", "Nothing has gone wrong recently.", "ok", "good")
         : emptyState("No matching events", "Try a different search, namespace or type."),
@@ -1754,7 +1759,7 @@ const MAP_COLUMNS = [
   { label: "Config & storage", kinds: ["ConfigMap", "Secret", "PersistentVolumeClaim"] },
 ];
 const CONFIG_KINDS = new Set(["ConfigMap", "Secret", "PersistentVolumeClaim"]);
-const KIND_ICON = { Ingress: "globe", Service: "service", Deployment: "deploy", StatefulSet: "db", DaemonSet: "nodes", Job: "pending",
+const KIND_ICON = { Namespace: "overview", Node: "nodes", Ingress: "globe", Service: "service", Deployment: "deploy", StatefulSet: "db", DaemonSet: "nodes", Job: "pending",
   ReplicaSet: "copy", Pod: "pods", ConfigMap: "file", Secret: "lock", PersistentVolumeClaim: "disk" };
 const KIND_LABEL = { PersistentVolumeClaim: "PVC" };
 const MAP = { W: 200, H: 54, ROW: 66, GAP: 64, HEAD: 30 };
@@ -2011,10 +2016,10 @@ function renderMapPanel() {
     return `<button class="map-chip" data-goto="${esc(oid)}" title="${esc(o.kind)} ${esc(o.name)}">${icon(KIND_ICON[o.kind] || "dot")}<span>${esc(o.name)}</span>${how.length ? `<i>${esc(how.join(", "))}</i>` : ""}</button>`;
   };
   let actions = "";
-  if (n.kind === "Pod") actions = `<button class="btn sm" id="map-open-pod">${icon("pods")}<span>Details &amp; logs</span></button>`;
+  if (DETAIL_KINDS.has(n.kind) && !n.missing) actions = `<button class="btn sm" id="map-open-detail">${icon("file")}<span>${n.kind === "Pod" ? "Details &amp; logs" : "Open details"}</span></button>`;
   if (n.kind === "Service" && n.node_ports && n.node_ports.length) {
     const host = nodeAddress();
-    actions = n.node_ports.map((p) => `<a class="ext-link" href="http://${esc(host)}:${p}" target="_blank" rel="noopener">http://${esc(host)}:${p}${icon("external")}</a>`).join("<br>");
+    actions += "<br>" + n.node_ports.map((p) => `<a class="ext-link" href="http://${esc(host)}:${p}" target="_blank" rel="noopener">http://${esc(host)}:${p}${icon("external")}</a>`).join("<br>");
   }
   const menuKind = { Deployment: "deployment", Service: "service", Pod: "pod", ConfigMap: "configmap", Secret: "secret" }[n.kind];
   const menu = menuKind && control() && !n.missing ? menuButton(menuKind, n.namespace, n.name) : "";
@@ -2039,8 +2044,8 @@ function renderMapPanel() {
     }
     selectMapNode(b.dataset.goto, true);
   }));
-  const op = $("#map-open-pod");
-  if (op) op.onclick = () => openPod(n.namespace, n.name);
+  const op = $("#map-open-detail");
+  if (op) op.onclick = () => openDetail(n.kind, n.namespace || "", n.name);
 }
 
 
@@ -2124,8 +2129,10 @@ async function openConfig(kind, namespace, name) {
   const title = kind === "configmap" ? "ConfigMap" : "Secret";
   el.innerHTML = `
     <div class="drawer-head">
+      ${backButton()}
       <div style="min-width:0;flex:1"><h2 id="drawer-title">${esc(name)}</h2>
         <div class="sub"><span class="ns">${esc(namespace)}</span><span>${title}</span></div></div>
+      <button class="btn" data-open="${title}|${esc(namespace)}|${esc(name)}|yaml">${icon("file")}<span>YAML</span></button>
       <button class="btn" id="cfg-map">${icon("map")}<span>Show on map</span></button>
       <button class="btn icon-only ghost" id="drawer-close" aria-label="Close (Esc)" title="Close (Esc)">${icon("x")}</button>
     </div>
@@ -2581,6 +2588,7 @@ VIEWS.services = {
     renderTable($("#svc-table"), {
       rows, sortState: ui.sort,
       onSort: (st) => { ui.sort = st; saveUi(); this.update(); },
+      onRow: (x) => openDetail("Service", x.namespace, x.name),
       empty: emptyState("No matching services", "Try a different search or namespace."),
       columns: [
         { key: "name", label: "Name", cls: "primary", render: (x) => esc(x.name) },
@@ -2639,6 +2647,11 @@ VIEWS.activity = {
       onSort: (st) => { ui.sort = st; saveUi(); this.update(); },
       empty: all.length ? emptyState("No matching activity", "Try a different search or filter.")
         : emptyState("No actions yet", "Scale, restart, delete or apply something and it will show up here.", "audit"),
+      onRow: (a) => {
+        const [k, ns, name] = a.target.split("/");
+        const kind = { deployment: "Deployment", pod: "Pod", service: "Service", node: "Node", configmap: "ConfigMap", secret: "Secret" }[k];
+        if (kind && name) openDetail(kind, ns, name); else if (kind === "Node" && ns) openDetail("Node", "", ns);
+      },
       columns: [
         { key: "time", label: "Time", render: (a) => {
             const t = new Date(a.time);
@@ -2655,6 +2668,287 @@ VIEWS.activity = {
   },
 };
 
+
+/* ================= resource details panel (like Kubernetes Dashboard) ================= */
+const DETAIL_KINDS = new Set(["Pod", "Service", "ConfigMap", "PersistentVolumeClaim", "Node", "Namespace", "Deployment",
+  "StatefulSet", "DaemonSet", "ReplicaSet", "Job", "Ingress", "Secret"]);
+const MENU_KIND = { Deployment: "deployment", Service: "service", Node: "node", ConfigMap: "configmap", Secret: "secret", Pod: "pod" };
+const drawerStack = [];
+
+function drawerDesc() {
+  const d = state.drawer;
+  if (!d) return null;
+  if (d.type === "res") return { t: "res", kind: d.kind, namespace: d.namespace, name: d.name, tab: d.tab };
+  if (d.type === "config") return { t: "config", kind: d.kind, namespace: d.namespace, name: d.name };
+  return { t: "pod", namespace: d.namespace, name: d.name };
+}
+/* Open the best panel for an object. push=true remembers the current panel for Back. */
+function openDetail(kind, namespace, name, { push = false, tab = null } = {}) {
+  if (!DETAIL_KINDS.has(kind)) { toast(false, `No details view for ${kind}`); return; }
+  const prev = state.drawer;
+  if (push && prev) drawerStack.push(drawerDesc());
+  else if (!push) drawerStack.length = 0;
+  const rootFocus = prev ? prev.lastFocus : document.activeElement;
+  if (tab) openResource(kind, namespace, name, tab);
+  else if (kind === "Pod") openPod(namespace, name);
+  else if (kind === "ConfigMap" || kind === "Secret") openConfig(kind.toLowerCase(), namespace, name);
+  else openResource(kind, namespace, name);
+  if (state.drawer) state.drawer.lastFocus = rootFocus;
+}
+function drawerBack() {
+  const desc = drawerStack.pop();
+  if (!desc) return;
+  const rootFocus = state.drawer && state.drawer.lastFocus;
+  if (desc.t === "pod") openPod(desc.namespace, desc.name);
+  else if (desc.t === "config") openConfig(desc.kind, desc.namespace, desc.name);
+  else openResource(desc.kind, desc.namespace, desc.name, desc.tab);
+  if (state.drawer) state.drawer.lastFocus = rootFocus;
+}
+function backButton() {
+  return drawerStack.length ? `<button class="btn icon-only ghost" data-drawer-back aria-label="Back" title="Back">${icon("rollback")}</button>` : "";
+}
+function openLink(kind, namespace, name, label, extra = "") {
+  return `<button class="map-chip" data-open="${esc(kind)}|${esc(namespace || "")}|${esc(name)}" title="${esc(kind)} ${esc(name)}">${icon(KIND_ICON[kind] || "dot")}<span>${esc(label || name)}</span>${extra ? `<i>${esc(extra)}</i>` : ""}</button>`;
+}
+$("#drawer").addEventListener("click", (e) => {
+  if (e.target.closest("[data-drawer-back]")) { drawerBack(); return; }
+  const o = e.target.closest("[data-open]");
+  if (o) {
+    const [kind, ns, name, tab] = o.dataset.open.split("|");
+    openDetail(kind, ns, name, { push: true, tab: tab || null });
+  }
+});
+
+function openResource(kind, namespace, name, tab = "overview") {
+  closeMenu();
+  state.drawer = { type: "res", kind, namespace, name, tab: tab || "overview", data: null, error: null, lastFocus: document.activeElement };
+  renderResource();
+  $("#drawer").classList.add("show"); $("#backdrop").classList.add("show"); $("#drawer").setAttribute("aria-hidden", "false");
+  setTimeout(() => $("#drawer-close") && $("#drawer-close").focus(), 50);
+  loadResource();
+}
+async function loadResource() {
+  const d = state.drawer;
+  if (!d || d.type !== "res") return;
+  const q = new URLSearchParams({ kind: d.kind, name: d.name });
+  if (d.namespace) q.set("namespace", d.namespace);
+  try {
+    const res = await api(`/api/v1/resource?${q}`);
+    if (state.drawer === d) { d.data = res; d.error = null; renderResource(); }
+  } catch (e) {
+    if (state.drawer === d) { d.error = e.message; renderResource(); }
+  }
+}
+
+function resourceBadge(kind, o) {
+  const st = o.status || {}, sp = o.spec || {};
+  const cond = (t) => (st.conditions || []).find((c) => c.type === t);
+  if (["Deployment", "StatefulSet", "ReplicaSet"].includes(kind)) {
+    const want = sp.replicas ?? 0, ready = st.readyReplicas || 0;
+    return want === 0 ? badge("neutral", "Scaled to 0") : ready >= want ? badge("good", `${ready}/${want} ready`) : badge("warning", `${ready}/${want} ready`);
+  }
+  if (kind === "DaemonSet") return (st.numberReady || 0) >= (st.desiredNumberScheduled || 0) ? badge("good", `${st.numberReady || 0}/${st.desiredNumberScheduled || 0} ready`) : badge("warning", `${st.numberReady || 0}/${st.desiredNumberScheduled || 0} ready`);
+  if (kind === "Node") { const r = cond("Ready"); return r && r.status === "True" ? badge("good", sp.unschedulable ? "Ready, cordoned" : "Ready") : badge("critical", "NotReady"); }
+  if (kind === "Pod") return badge(st.phase === "Running" ? "good" : st.phase === "Succeeded" ? "neutral" : st.phase === "Failed" ? "critical" : "warning", st.phase || "Unknown");
+  if (kind === "Job") return st.succeeded ? badge("good", "Complete") : st.failed ? badge("critical", "Failed") : badge("warning", `${st.active || 0} active`);
+  if (kind === "PersistentVolumeClaim") return badge(st.phase === "Bound" ? "good" : "warning", st.phase || "Unknown");
+  if (kind === "Namespace") return badge(st.phase === "Active" ? "good" : "warning", st.phase || "Unknown");
+  if (kind === "Service") return badge("neutral", sp.type || "ClusterIP");
+  if (kind === "Secret") return badge("neutral", o.type || "Opaque");
+  return "";
+}
+
+const kvRow = (label, value) => (value === undefined || value === null || value === "" ? "" : `<div><span>${esc(label)}</span><b>${value}</b></div>`);
+const chips = (obj) => { const e = Object.entries(obj || {}); return e.length ? e.map(([k, v]) => `<span class="chip">${esc(k)}=${esc(v)}</span>`).join(" ") : '<span class="dim">–</span>'; };
+const ago = (ts) => (ts ? `${fmt.age(Math.max(0, Math.round((Date.now() - Date.parse(ts)) / 1000)))} ago` : "–");
+const qty = (r) => (r ? Object.entries(r).map(([k, v]) => `${k} ${v}`).join(", ") : "–");
+
+function containersTable(containers, statuses) {
+  if (!containers || !containers.length) return "";
+  const byName = Object.fromEntries((statuses || []).map((s) => [s.name, s]));
+  const rows = containers.map((c) => {
+    const s = byName[c.name];
+    let state = "";
+    if (s) {
+      const [k, v] = Object.entries(s.state || {})[0] || ["unknown", {}];
+      state = `${k}${v && v.reason ? `: ${v.reason}` : ""}`;
+    }
+    const probes = [c.livenessProbe && "liveness", c.readinessProbe && "readiness", c.startupProbe && "startup"].filter(Boolean).join(", ") || "–";
+    return `<tr><td class="primary">${esc(c.name)}</td><td class="mono" style="white-space:normal;overflow-wrap:anywhere">${esc(c.image)}</td>
+      <td>${esc((c.ports || []).map((p) => `${p.containerPort}/${p.protocol || "TCP"}`).join(", ") || "–")}</td>
+      <td>${esc(qty(c.resources && c.resources.requests))}</td><td>${esc(qty(c.resources && c.resources.limits))}</td><td>${esc(probes)}</td>
+      ${statuses ? `<td>${esc(state)}</td><td class="num">${s ? s.restartCount : "–"}</td>` : ""}</tr>`;
+  }).join("");
+  return `<div class="table-wrap card" style="box-shadow:none"><table class="data"><thead><tr><th>Name</th><th>Image</th><th>Ports</th><th>Requests</th><th>Limits</th><th>Probes</th>
+    ${statuses ? "<th>State</th><th>Restarts</th>" : ""}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function specView(kind, o) {
+  const sp = o.spec || {}, st = o.status || {}, meta = o.metadata || {}, ann = meta.annotations || {};
+  const tmpl = sp.template && sp.template.spec;
+  let kv = "", extra = "";
+  if (kind === "Deployment") {
+    const ru = (sp.strategy || {}).rollingUpdate || {};
+    kv = kvRow("Replicas", `${sp.replicas ?? 0} desired · ${st.updatedReplicas || 0} updated · ${st.readyReplicas || 0} ready · ${st.availableReplicas || 0} available`)
+      + kvRow("Strategy", esc(`${(sp.strategy || {}).type || "RollingUpdate"}${ru.maxSurge !== undefined ? ` (max surge ${ru.maxSurge}, max unavailable ${ru.maxUnavailable})` : ""}`))
+      + kvRow("Revision", esc(ann["deployment.kubernetes.io/revision"] || "–")) + kvRow("Selector", chips((sp.selector || {}).matchLabels))
+      + kvRow("Min ready seconds", sp.minReadySeconds || 0) + (sp.paused ? kvRow("Paused", "yes") : "");
+    extra = tmpl ? `<h3 class="section-title">Containers</h3>${containersTable(tmpl.containers)}` : "";
+  } else if (kind === "StatefulSet") {
+    kv = kvRow("Replicas", `${sp.replicas ?? 0} desired · ${st.readyReplicas || 0} ready · ${st.currentReplicas || 0} current`)
+      + kvRow("Service name", esc(sp.serviceName || "–")) + kvRow("Update strategy", esc((sp.updateStrategy || {}).type || "RollingUpdate"))
+      + kvRow("Selector", chips((sp.selector || {}).matchLabels));
+    extra = tmpl ? `<h3 class="section-title">Containers</h3>${containersTable(tmpl.containers)}` : "";
+  } else if (kind === "DaemonSet") {
+    kv = kvRow("Pods", `${st.desiredNumberScheduled || 0} desired · ${st.currentNumberScheduled || 0} scheduled · ${st.numberReady || 0} ready · ${st.updatedNumberScheduled || 0} updated`)
+      + kvRow("Update strategy", esc((sp.updateStrategy || {}).type || "RollingUpdate")) + kvRow("Selector", chips((sp.selector || {}).matchLabels));
+    extra = tmpl ? `<h3 class="section-title">Containers</h3>${containersTable(tmpl.containers)}` : "";
+  } else if (kind === "ReplicaSet") {
+    kv = kvRow("Replicas", `${sp.replicas ?? 0} desired · ${st.readyReplicas || 0} ready`) + kvRow("Revision", esc(ann["deployment.kubernetes.io/revision"] || "–"))
+      + kvRow("Selector", chips((sp.selector || {}).matchLabels));
+    extra = tmpl ? `<h3 class="section-title">Containers</h3>${containersTable(tmpl.containers)}` : "";
+  } else if (kind === "Job") {
+    kv = kvRow("Completions", `${st.succeeded || 0} / ${sp.completions ?? 1}`) + kvRow("Parallelism", sp.parallelism ?? 1)
+      + kvRow("Active · failed", `${st.active || 0} · ${st.failed || 0}`) + kvRow("Started", ago(st.startTime)) + kvRow("Completed", st.completionTime ? ago(st.completionTime) : "–")
+      + kvRow("Backoff limit", sp.backoffLimit ?? 6);
+    extra = tmpl ? `<h3 class="section-title">Containers</h3>${containersTable(tmpl.containers)}` : "";
+  } else if (kind === "Pod") {
+    kv = kvRow("Phase", esc(st.phase || "–")) + kvRow("Node", sp.nodeName ? openLink("Node", "", sp.nodeName) : "–")
+      + kvRow("Pod IP", esc(st.podIP || "–")) + kvRow("Host IP", esc(st.hostIP || "–")) + kvRow("QoS class", esc(st.qosClass || "–"))
+      + kvRow("Restart policy", esc(sp.restartPolicy || "–")) + kvRow("Service account", esc(sp.serviceAccountName || "–")) + kvRow("Started", ago(st.startTime));
+    extra = `${sp.initContainers ? `<h3 class="section-title">Init containers</h3>${containersTable(sp.initContainers, st.initContainerStatuses || [])}` : ""}
+      <h3 class="section-title">Containers</h3>${containersTable(sp.containers, st.containerStatuses || [])}`;
+  } else if (kind === "Service") {
+    const host = nodeAddress();
+    kv = kvRow("Type", esc(sp.type || "ClusterIP")) + kvRow("Cluster IP", `<span style="font-family:var(--mono)">${esc((sp.clusterIPs || [sp.clusterIP]).join(", "))}</span>`)
+      + kvRow("Selector", chips(sp.selector)) + kvRow("Session affinity", esc(sp.sessionAffinity || "None"))
+      + (sp.externalTrafficPolicy ? kvRow("External traffic policy", esc(sp.externalTrafficPolicy)) : "");
+    extra = `<h3 class="section-title">Ports</h3><div class="table-wrap card" style="box-shadow:none"><table class="data"><thead><tr><th>Name</th><th>Port</th><th>Target</th><th>Protocol</th><th>NodePort</th></tr></thead><tbody>
+      ${(sp.ports || []).map((p) => `<tr><td>${esc(p.name || "–")}</td><td class="num">${p.port}</td><td>${esc(String(p.targetPort ?? "–"))}</td><td>${esc(p.protocol || "TCP")}</td>
+        <td>${p.nodePort ? `<a class="ext-link" href="http://${esc(host)}:${p.nodePort}" target="_blank" rel="noopener">${p.nodePort}${icon("external")}</a>` : "–"}</td></tr>`).join("")}</tbody></table></div>`;
+  } else if (kind === "Node") {
+    const ni = st.nodeInfo || {};
+    kv = kvRow("Addresses", esc((st.addresses || []).map((a) => `${a.type} ${a.address}`).join(" · ")))
+      + kvRow("OS image", esc(ni.osImage)) + kvRow("Kernel", esc(ni.kernelVersion)) + kvRow("Container runtime", esc(ni.containerRuntimeVersion))
+      + kvRow("Kubelet", esc(ni.kubeletVersion)) + kvRow("Architecture", esc(ni.architecture)) + kvRow("Pod CIDR", esc(sp.podCIDR || "–"))
+      + kvRow("Schedulable", sp.unschedulable ? "No (cordoned)" : "Yes");
+    const res = Object.keys(st.capacity || {}).sort();
+    extra = `<h3 class="section-title">Capacity</h3><div class="table-wrap card" style="box-shadow:none"><table class="data"><thead><tr><th>Resource</th><th>Capacity</th><th>Allocatable</th></tr></thead><tbody>
+      ${res.map((r) => `<tr><td>${esc(r)}</td><td>${esc(st.capacity[r])}</td><td>${esc((st.allocatable || {})[r] || "–")}</td></tr>`).join("")}</tbody></table></div>
+      <h3 class="section-title">Taints</h3>${(sp.taints || []).length ? (sp.taints || []).map((t) => `<span class="chip">${esc(t.key)}${t.value ? `=${esc(t.value)}` : ""}:${esc(t.effect)}</span>`).join(" ") : '<span class="dim">None</span>'}`;
+  } else if (kind === "PersistentVolumeClaim") {
+    kv = kvRow("Phase", esc(st.phase)) + kvRow("Capacity", esc(qty(st.capacity))) + kvRow("Requested", esc(qty((sp.resources || {}).requests)))
+      + kvRow("Access modes", esc((sp.accessModes || []).join(", "))) + kvRow("Storage class", esc(sp.storageClassName || "–")) + kvRow("Volume", esc(sp.volumeName || "–"));
+  } else if (kind === "Ingress") {
+    kv = kvRow("Class", esc(sp.ingressClassName || "–")) + kvRow("TLS hosts", esc((sp.tls || []).flatMap((t) => t.hosts || []).join(", ") || "–"));
+    extra = `<h3 class="section-title">Rules</h3><div class="table-wrap card" style="box-shadow:none"><table class="data"><thead><tr><th>Host</th><th>Path</th><th>Service</th></tr></thead><tbody>
+      ${(sp.rules || []).flatMap((r) => ((r.http || {}).paths || []).map((p) => `<tr><td>${esc(r.host || "*")}</td><td>${esc(p.path || "/")}</td>
+        <td>${p.backend && p.backend.service ? openLink("Service", meta.namespace, p.backend.service.name, `${p.backend.service.name}:${(p.backend.service.port || {}).number || (p.backend.service.port || {}).name || ""}`) : "–"}</td></tr>`)).join("")}</tbody></table></div>`;
+  } else if (kind === "Namespace") {
+    kv = kvRow("Phase", esc(st.phase));
+  } else if (kind === "ConfigMap") {
+    kv = kvRow("Keys", Object.keys(o.data || {}).map((k) => `<span class="chip">${esc(k)}</span>`).join(" ") || "–");
+  } else if (kind === "Secret") {
+    kv = kvRow("Type", esc(o.type)) + kvRow("Keys", Object.keys(o.data || {}).map((k) => `<span class="chip">${esc(k)}</span>`).join(" ") || "–");
+  }
+  return `${kv ? `<div class="kv">${kv}</div>` : ""}${extra}`;
+}
+
+function conditionsTable(o) {
+  const conds = (o.status || {}).conditions;
+  if (!conds || !conds.length) return "";
+  const lvl = (c) => {
+    const bad = ["MemoryPressure", "DiskPressure", "PIDPressure", "NetworkUnavailable", "ReplicaFailure", "Failed"].includes(c.type);
+    if (c.status === "True") return bad ? "critical" : "good";
+    if (c.status === "False") return bad ? "good" : "warning";
+    return "neutral";
+  };
+  return `<h3 class="section-title">Conditions</h3><div class="table-wrap card" style="box-shadow:none"><table class="data"><thead><tr><th>Type</th><th>Status</th><th>Reason</th><th>Message</th><th>Last change</th></tr></thead><tbody>
+    ${conds.map((c) => `<tr><td class="primary">${esc(c.type)}</td><td>${badge(lvl(c), c.status)}</td><td>${esc(c.reason || "–")}</td>
+      <td class="wrap">${esc(c.message || "")}</td><td>${ago(c.lastTransitionTime || c.lastHeartbeatTime)}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+function relatedView(d) {
+  const groups = {};
+  for (const r of d.related || []) (groups[r.relation] = groups[r.relation] || []).push(r);
+  let html = Object.entries(groups).map(([rel, items]) => `<div class="rel"><h4>${esc(rel)} · ${items.length}</h4>${items.map((r) =>
+    DETAIL_KINDS.has(r.kind) ? openLink(r.kind, r.namespace, r.name, r.name, r.status || "") : `<span class="map-chip">${icon(KIND_ICON[r.kind] || "dot")}<span>${esc(r.name)}</span></span>`).join("")}</div>`).join("");
+  if (d.pods) {
+    html += `<div class="rel"><h4>Pods · ${d.pods.length}</h4>${d.pods.length ? `<div class="table-wrap card" style="box-shadow:none"><table class="data"><thead><tr><th>Name</th><th>Status</th><th>Ready</th><th>Restarts</th><th>Node</th><th>Age</th></tr></thead><tbody>
+      ${d.pods.slice(0, 100).map((p) => `<tr class="clickable" data-open="Pod|${esc(p.namespace)}|${esc(p.name)}"><td class="primary">${esc(p.name)}${d.kind === "Node" ? ` <span class="ns">${esc(p.namespace)}</span>` : ""}</td>
+        <td>${badge(p.problem ? "critical" : p.phase === "Running" ? "good" : p.phase === "Succeeded" ? "neutral" : "warning", p.phase === "Succeeded" ? "Completed" : p.status)}</td>
+        <td class="num">${p.ready_containers}/${p.total_containers}</td><td class="num">${p.restarts}</td><td>${esc(p.node || "–")}</td><td class="num">${fmt.age(p.age_s)}</td></tr>`).join("")}
+      </tbody></table></div>` : '<p class="hint" style="margin:0">No pods.</p>'}</div>`;
+  }
+  if (d.related_error) html += `<p class="hint">Some related objects could not be loaded (${esc(d.related_error)}).</p>`;
+  return html ? `<div><h3 class="section-title">Related</h3>${html}</div>` : "";
+}
+
+function renderResource() {
+  const d = state.drawer, el = $("#drawer");
+  if (!d || d.type !== "res") return;
+  const o = d.data && d.data.object;
+  const meta = (o && o.metadata) || {};
+  const menuKind = MENU_KIND[d.kind];
+  const tabs = [["overview", "Overview"], ["yaml", "YAML"], ["events", `Events${d.data ? ` · ${d.data.events.length}` : ""}`]];
+  let body;
+  if (d.error) body = emptyState(`Could not load ${d.kind}`, d.error, "crit");
+  else if (!o) body = skeletonRows(8);
+  else if (d.tab === "yaml") {
+    body = `<div style="display:flex;gap:8px;align-items:center"><span class="hint" style="flex:1">${d.kind === "Secret" ? "Secret values are hidden." : "Live object, read-only. managedFields omitted."}</span>
+        <button class="btn sm" id="res-copy">${icon("copy")}<span>Copy</span></button></div>
+      <pre class="logs" style="max-height:none;white-space:pre">${esc(d.data.yaml)}</pre>`;
+  } else if (d.tab === "events") {
+    const evs = d.data.events;
+    body = evs.length ? `<ul class="list card" style="box-shadow:none">${evs.map((e) => `<li>
+        <span class="ic ${e.type === "Warning" ? "warning" : ""}">${icon(e.type === "Warning" ? "warn" : "dot")}</span>
+        <div style="min-width:0"><div class="main-line">${esc(e.reason)}</div><div class="sub-line">${esc(e.message)}</div></div>
+        <span class="meta">${fmt.age(e.age_s)} ago${e.count > 1 ? ` · ×${e.count}` : ""}</span></li>`).join("")}</ul>`
+      : emptyState("No events", "Kubernetes keeps events for about an hour.", "ok", "good");
+  } else {
+    const owners = (meta.ownerReferences || []).map((r) => (DETAIL_KINDS.has(r.kind) ? openLink(r.kind, meta.namespace, r.name, `${r.kind}/${r.name}`) : esc(`${r.kind}/${r.name}`))).join(" ");
+    const annEntries = Object.entries(meta.annotations || {});
+    body = `
+      <div class="kv">
+        ${kvRow("Created", `${esc(meta.creationTimestamp ? new Date(meta.creationTimestamp).toLocaleString() : "–")} <span class="dim">(${ago(meta.creationTimestamp)})</span>`)}
+        ${meta.namespace ? kvRow("Namespace", openLink("Namespace", "", meta.namespace)) : ""}
+        ${owners ? kvRow("Controlled by", owners) : ""}
+        ${kvRow("UID", `<span style="font-family:var(--mono);font-size:12px">${esc(meta.uid || "–")}</span>`)}
+      </div>
+      <div><h3 class="section-title">Labels</h3>${chips(meta.labels)}</div>
+      ${annEntries.length ? `<details><summary class="section-title" style="cursor:pointer;margin:0">Annotations · ${annEntries.length}</summary>
+        <div style="display:grid;gap:6px;margin-top:8px">${annEntries.map(([k, v]) => `<div style="font-size:12px"><b style="font-family:var(--mono)">${esc(k)}</b>
+          <div class="hint" style="font-family:var(--mono);overflow-wrap:anywhere">${esc(String(v).length > 400 ? `${String(v).slice(0, 400)}…` : v)}</div></div>`).join("")}</div></details>` : ""}
+      <div><h3 class="section-title">${esc(d.kind)}</h3>${specView(d.kind, o)}</div>
+      ${conditionsTable(o)}
+      ${relatedView(d.data)}`;
+  }
+  el.innerHTML = `
+    <div class="drawer-head">
+      ${backButton()}
+      <div style="min-width:0;flex:1">
+        <div class="kind" style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;font-weight:550;text-transform:uppercase;letter-spacing:.05em">${icon(KIND_ICON[d.kind] || "dot")}${esc(d.kind)}</div>
+        <h2 id="drawer-title">${esc(d.name)}</h2>
+        <div class="sub">${d.namespace ? `<span class="ns">${esc(d.namespace)}</span>` : ""}${o ? resourceBadge(d.kind, o) : ""}</div>
+      </div>
+      <button class="btn icon-only ghost" id="res-reload" aria-label="Reload" title="Reload">${icon("refresh")}</button>
+      ${menuKind && o ? menuButton(menuKind, d.namespace || "", d.name) : ""}
+      <button class="btn icon-only ghost" id="drawer-close" aria-label="Close (Esc)" title="Close (Esc)">${icon("x")}</button>
+    </div>
+    <div style="padding:10px 20px 0"><div class="segmented" role="tablist">${tabs.map(([id, label]) =>
+      `<button role="tab" data-tab="${id}" aria-pressed="${d.tab === id}" aria-selected="${d.tab === id}">${esc(label)}</button>`).join("")}</div></div>
+    <div class="drawer-body">${body}</div>`;
+  $("#drawer-close").onclick = closeDrawer;
+  $("#res-reload").onclick = () => { d.data = null; renderResource(); loadResource(); };
+  el.querySelectorAll("[data-tab]").forEach((b) => { b.onclick = () => { d.tab = b.dataset.tab; renderResource(); }; });
+  const copy = $("#res-copy");
+  if (copy) copy.onclick = async () => {
+    const span = copy.querySelector("span");
+    try { await navigator.clipboard.writeText(d.data.yaml); span.textContent = "Copied"; } catch (_) { span.textContent = "Copy failed"; }
+    setTimeout(() => { span.textContent = "Copy"; }, 1500);
+  };
+}
+
 /* ================= pod drawer ================= */
 function openPod(namespace, name) {
   const pod = state.data && state.data.pods.find((p) => p.namespace === namespace && p.name === name);
@@ -2666,6 +2960,7 @@ function openPod(namespace, name) {
   setTimeout(() => $("#drawer-close") && $("#drawer-close").focus(), 50);
 }
 function closeDrawer() {
+  drawerStack.length = 0;
   if (!state.drawer) return;
   const f = state.drawer.lastFocus;
   state.drawer = null;
@@ -2697,7 +2992,7 @@ function renderLogs(scrollEnd = false) {
 }
 function renderDrawer(fresh = false) {
   const d = state.drawer, el = $("#drawer");
-  if (!d || d.type === "config") return;
+  if (!d || d.type) return;  // config/resource panels render themselves
   const pod = state.data && state.data.pods.find((p) => p.namespace === d.namespace && p.name === d.name);
   if (!fresh && $("#drawer-details")) {
     // Periodic refresh: update details only, keep log viewer untouched.
@@ -2708,10 +3003,12 @@ function renderDrawer(fresh = false) {
   }
   el.innerHTML = `
     <div class="drawer-head">
+      ${backButton()}
       <div style="min-width:0;flex:1">
         <h2 id="drawer-title">${esc(d.name)}</h2>
         <div class="sub"><span class="ns">${esc(d.namespace)}</span><span id="drawer-status">${pod ? badge(podLevel(pod), podLabel(pod)) : badge("neutral", "Deleted")}</span></div>
       </div>
+      <button class="btn" data-open="Pod|${esc(d.namespace)}|${esc(d.name)}|overview">${icon("file")}<span>Details &amp; YAML</span></button>
       ${pod ? `<button class="btn" id="drawer-ai">${icon("ai")}<span>Ask AI</span></button>` : ""}
       ${control() && pod ? `<button class="btn" id="drawer-delete" ${isProtected(d.namespace) ? `disabled title="${esc(d.namespace)} is protected"` : ""}>${icon("trash")}<span>Delete pod</span></button>` : ""}
       <button class="btn icon-only ghost" id="drawer-close" aria-label="Close (Esc)" title="Close (Esc)">${icon("x")}</button>

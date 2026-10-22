@@ -26,6 +26,14 @@ apply YAML) go through guardrails: protected namespaces, dry run, confirmation a
   request and limit. Ranges are 5m, 15m and 1h.
 - Nodes, deployments, pods, services, ConfigMaps, Secrets (key names only), events and pod logs,
   including the previous crashed container.
+- **Details panel for every resource:** click any row (node, deployment, pod, service, event,
+  ConfigMap, Secret or activity entry) to open it, like Kubernetes Dashboard. The **Overview** tab
+  shows metadata, labels and annotations; kind-specific spec and status (replicas and strategy,
+  containers with images, resources and probes, node capacity and taints, service ports with NodePort
+  links); conditions; and **related objects** (ReplicaSets, pods, services, owner, node, ConfigMaps
+  and Secrets). Click any related object to drill down, and use **Back** to return. The **YAML** tab
+  shows the live object, read-only, with Secret values hidden. The **Events** tab shows that object's
+  events.
 - **Map**: a per-namespace relationship diagram of Ingress → Service → Deployment, StatefulSet,
   DaemonSet or Job → (ReplicaSet) → Pod → ConfigMap, Secret or PVC. Click anything to highlight
   what it depends on and what depends on it. Missing references and services that select no pods
@@ -123,7 +131,7 @@ EKS, GKE and AKS include metrics-server.
 ### 1. Build the image
 
 ```bash
-make build        # docker build -t k10y/k10y-agent:1.2.1 .
+make build        # docker build -t k10y/k10y-agent:1.3.0 .
 make test         # unit tests, run inside the image
 ```
 
@@ -136,12 +144,12 @@ make load                         # RKE2 inside a Lima VM (VM=rke2): imports int
 make load-k3d K3D_CLUSTER=edge    # k3d / k3s-in-Docker
 ```
 
-Any other cluster pulls `docker.io/k10y/k10y-agent:1.2.1` from Docker Hub, so this step can be skipped.
+Any other cluster pulls `docker.io/k10y/k10y-agent:1.3.0` from Docker Hub, so this step can be skipped.
 To publish your own build (multi-arch amd64 + arm64):
 
 ```bash
 docker login
-make push                                             # → docker.io/k10y/k10y-agent:1.2.1 and :latest
+make push                                             # → docker.io/k10y/k10y-agent:1.3.0 and :latest
 make push REGISTRY_IMAGE=ghcr.io/<you>/k10y-agent     # or another registry, then set image: in deploy/k8s/agent.yaml
 ```
 
@@ -282,6 +290,7 @@ their audit entries; the dashboard sends `dashboard` and the CLI sends `cli:<use
 | `GET /api/v1/metrics/history?scope=cluster\|nodes\|pod&namespace=&name=&since=` | CPU/memory history (epoch ms) |
 | `GET /api/v1/topology?namespace=` | Relationship graph for the Map |
 | `GET /api/v1/namespaces` | Namespace names |
+| `GET /api/v1/resource?kind=&namespace=&name=` | One object: live spec/status, YAML, events, related objects (Pod, Deployment, StatefulSet, DaemonSet, ReplicaSet, Job, Service, Ingress, Node, Namespace, ConfigMap, Secret, PVC) |
 | `GET /api/v1/deployments/{ns}/{name}/history` | Revisions |
 | `GET /api/v1/audit?limit=` | Audit log, newest first |
 | `GET/POST /api/v1/ai/config`, `DELETE /api/v1/ai/config?provider=` | Per-provider AI settings (keys are write-only) |
@@ -306,6 +315,7 @@ src/k10y_agent/
   topology.py         relationship graph for the Map page
   metrics_history.py  background CPU/memory sampler for the live charts
   ai.py               AI assistant: providers, read-only tools, investigation loop
+  resources.py        details panel data: object, YAML, events, related objects
   cli.py              k10y CLI (multi-cluster)
   config.py           K10Y_* settings
   static/index.html   the dashboard (single file, no build step)

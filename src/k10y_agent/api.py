@@ -21,6 +21,7 @@ from .collectors import Collector
 from .config import Settings
 from . import ai
 from .metrics_history import MetricsHistory
+from .resources import NotSupported, ResourceViewer
 from .controls import ActionError, AuditLog, Controller, ProtectedNamespaceError, api_error_message, now_iso
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -358,6 +359,15 @@ def ai_diagnose(body: DiagnoseBody, request: Request) -> dict:
                       "message": f"{len(result['issues'])} issue(s), {len(result['actions'])} proposed action(s), "
                                  f"{result['seconds']}s with {result['provider']}/{result['model']}"})
     return {**result, "control_enabled": settings.control_enabled}
+
+
+@api.get("/resource")
+def resource(kind: str, name: str, namespace: Optional[str] = None) -> dict:
+    """Live object (+YAML), its events and related objects, for the dashboard's detail panel."""
+    try:
+        return ResourceViewer(get_collector()).get(kind, namespace or None, name)
+    except NotSupported as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @api.get("/namespaces")
