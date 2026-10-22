@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "k10y-agent"
-version = "2.0.0"
+version = "2.1.0"
 description = "Monitor and control Kubernetes clusters: in-cluster agent, REST API, web dashboard and multi-cluster CLI."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -21,6 +21,7 @@ dependencies = [
 server = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
+    "websockets>=13",          # pod shell (agent and hub)
     "kubernetes>=29",
     "pydantic-settings>=2",
     "cryptography>=42",

@@ -1,5 +1,7 @@
+import asyncio
 import base64
 import logging
+import time
 import secrets
 from contextlib import asynccontextmanager
 
@@ -8,9 +10,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from kubernetes.config.config_exception import ConfigException
@@ -19,12 +21,11 @@ from pydantic import BaseModel, Field
 from . import __version__
 from .collectors import Collector
 from .config import Settings
-from . import ai, logstream
+from . import ai, logstream, podexec
 from .metrics_history import MetricsHistory
 from .resources import NotSupported, ResourceViewer
 from .controls import ActionError, AuditLog, Controller, ProtectedNamespaceError, api_error_message, now_iso
 
-STATIC_DIR = Path(__file__).parent / "static"
 
 settings = Settings()
 audit_log = AuditLog(settings.audit_path)
@@ -36,7 +37,7 @@ token_error: Optional[str] = None
 def provision_token() -> None:
     """Load the API token from settings.token_secret, creating it on first start."""
     global token_error
-    if settings.api_token or not settings.token_secret or settings.mode == "dashboard":
+    if settings.api_token or not settings.token_secret:
         return
     try:
         namespace = NAMESPACE_FILE.read_text().strip()
@@ -70,9 +71,8 @@ def provision_token() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    if settings.mode != "dashboard":
-        provision_token()
-        metrics_history.start()
+    provision_token()
+    metrics_history.start()
     yield
     metrics_history.stop()
 
@@ -135,18 +135,13 @@ def healthz() -> dict:
 
 
 @app.get("/", include_in_schema=False)
-def dashboard() -> HTMLResponse:
-    html = (STATIC_DIR / "index.html").read_text()
-    html = html.replace('<meta name="k10y-mode" content="agent">', f'<meta name="k10y-mode" content="{settings.mode}">')
-    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+def root() -> dict:
+    # The agent is API-only: people use the k10y hub, which checks logins and roles and keeps the audit log.
+    return {"service": "k10y-agent", "version": __version__,
+            "message": "API only. Add this agent to a k10y hub (Administration → Clusters) to use the dashboard."}
 
 
-def require_agent_mode() -> None:
-    if settings.mode == "dashboard":
-        raise HTTPException(status_code=404, detail="this is a dashboard-only instance; it has no cluster API")
-
-
-api = APIRouter(prefix="/api/v1", dependencies=[Depends(require_agent_mode), Depends(require_token)])
+api = APIRouter(prefix="/api/v1", dependencies=[Depends(require_token)])
 
 
 # --- read -------------------------------------------------------------------
@@ -691,6 +686,65 @@ def uncordon_node(name: str, body: DryRun, request: Request) -> dict:
 def drain_node(name: str, body: DryRun, request: Request) -> dict:
     return run_action(request, "drain", f"node/{name}", body.dry_run,
                       lambda: get_controller().drain(name, body.dry_run))
+
+
+class EditBody(BaseModel):
+    kind: str = Field(max_length=64)
+    namespace: Optional[str] = Field(None, max_length=253)
+    name: str = Field(max_length=253)
+    yaml: str = Field(max_length=500_000)
+    dry_run: bool = False
+
+
+@api.put("/resource")
+def edit_resource(body: EditBody, request: Request) -> dict:
+    target = f"{body.kind.lower()}/{body.namespace + '/' if body.namespace else ''}{body.name}"
+    return run_action(request, "edit", target, body.dry_run,
+                      lambda: get_controller().replace_object(body.yaml, body.kind, body.namespace, body.name, body.dry_run),
+                      {"bytes": len(body.yaml)})
+
+
+@app.websocket("/api/v1/pods/{namespace}/{pod}/exec")
+async def pod_exec(ws: WebSocket, namespace: str, pod: str, container: Optional[str] = None) -> None:
+    """Interactive shell in a container. Needs the API token, control enabled and a non-protected namespace."""
+    try:
+        require_token(ws.headers.get("authorization"))
+    except HTTPException as e:
+        await ws.close(code=4401, reason=str(e.detail)[:120])
+        return
+    if not settings.control_enabled:
+        await ws.close(code=4403, reason="control actions are disabled on this agent")
+        return
+    if namespace in settings.protected:
+        await ws.close(code=4403, reason=f"namespace {namespace} is protected")
+        return
+    await ws.accept()
+    actor = (ws.headers.get("x-k10y-actor") or "unknown")[:64]
+    target = f"pod/{namespace}/{pod}" + (f"/{container}" if container else "")
+    started = time.monotonic()
+    try:
+        # Own ApiClient: kubernetes.stream temporarily swaps the client's request method while connecting.
+        core = client.CoreV1Api(client.ApiClient(get_api_client().configuration))
+        resp = await asyncio.to_thread(podexec.open_exec, core, namespace, pod, container)
+    except Exception as e:
+        reason = api_error_message(e) if isinstance(e, ApiException) else str(e)
+        audit_log.record({"time": now_iso(), "actor": actor, "client": ws.client.host if ws.client else None,
+                          "action": "exec", "target": target, "params": {}, "dry_run": False, "ok": False, "message": reason})
+        await ws.send_text(f"\r\n\x1b[31mCould not start a shell: {reason}\x1b[0m\r\n")
+        await ws.close(code=1011)
+        return
+    try:
+        await podexec.bridge(ws, resp)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        audit_log.record({"time": now_iso(), "actor": actor, "client": ws.client.host if ws.client else None,
+                          "action": "exec", "target": target, "params": {"seconds": int(time.monotonic() - started)},
+                          "dry_run": False, "ok": True, "message": "shell session ended"})
+        try:
+            await ws.close()
+        except RuntimeError:
+            pass
 
 
 @api.post("/apply")

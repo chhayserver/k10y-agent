@@ -9,7 +9,7 @@ import { fmt, podLabel, podLevel } from "@/lib/format";
 import { useCluster } from "@/stores/cluster";
 import { prefs } from "@/stores/prefs";
 import { useSession } from "@/stores/session";
-import { openDetail, type PanelRef } from "@/stores/ui";
+import { openDetail, openShell, type PanelRef } from "@/stores/ui";
 import EventsList from "./EventsList.vue";
 import PanelHead from "./PanelHead.vue";
 
@@ -34,6 +34,11 @@ const millis = (v: number) => (v === 0 ? "0" : v >= 1000 ? `${(v / 1000).toFixed
 const mib = (v: number) => (v === 0 ? "0" : v >= 1024 ? `${(v / 1024).toFixed(1)} GiB` : `${v >= 100 ? v.toFixed(0) : v.toFixed(1)} MiB`);
 
 const canLogs = computed(() => s.can("logs.view"));
+const canShell = computed(() => !!pod.value && pod.value.phase === "Running" && s.can("pods.exec") && c.control && !c.isProtected(props.r.namespace));
+function shellNow() {
+  openShell({ clusterId: s.current!.id, clusterName: s.current!.name, namespace: props.r.namespace, pod: props.r.name,
+    containers: pod.value.containers, container: pod.value.containers[0] || "" });
+}
 const canDelete = computed(() => s.can("pods.delete") && c.control);
 </script>
 
@@ -41,6 +46,7 @@ const canDelete = computed(() => s.can("pods.delete") && c.control);
   <PanelHead kind="Pod" :name="r.name" :namespace="r.namespace">
     <template #status><Badge v-if="pod" :level="podLevel(pod)" :label="podLabel(pod)" /><Badge v-else level="neutral" label="Deleted" /></template>
     <template #actions>
+      <button v-if="canShell" class="btn" @click="shellNow"><Icon name="code" /><span>Shell</span></button>
       <button class="btn" @click="openDetail('Pod', r.namespace, r.name, { push: true, tab: 'overview' })"><Icon name="file" /><span>Details &amp; YAML</span></button>
       <button v-if="pod && s.can('ai.use')" class="btn" @click="startAI({ scope: 'object', kind: 'Pod', namespace: r.namespace, name: r.name })"><Icon name="ai" /><span>Ask AI</span></button>
       <button v-if="pod && canDelete" class="btn" :disabled="c.isProtected(r.namespace)" @click="actDelete('pod', pod)"><Icon name="trash" /><span>Delete</span></button>

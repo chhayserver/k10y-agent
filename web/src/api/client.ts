@@ -56,6 +56,7 @@ export const hub = {
   get: <T = any>(path: string, query?: Query) => request<T>(path, { query }),
   post: <T = any>(path: string, body?: unknown, timeout?: number) => request<T>(path, { method: "POST", body: body ?? {}, timeout }),
   patch: <T = any>(path: string, body: unknown) => request<T>(path, { method: "PATCH", body }),
+  put: <T = any>(path: string, body: unknown) => request<T>(path, { method: "PUT", body }),
   del: <T = any>(path: string, query?: Query) => request<T>(path, { method: "DELETE", query }),
 };
 
@@ -66,6 +67,7 @@ export function agent(clusterId: number) {
     get: <T = any>(path: string, query?: Query, timeout?: number) => request<T>(`${base}/${path}`, { query, timeout }),
     text: (path: string, query?: Query) => request<string>(`${base}/${path}`, { query, text: true }),
     post: <T = any>(path: string, body?: unknown) => request<T>(`${base}/${path}`, { method: "POST", body: body ?? {} }),
+    put: <T = any>(path: string, body: unknown) => request<T>(`${base}/${path}`, { method: "PUT", body }),
     del: <T = any>(path: string, query?: Query) => request<T>(`${base}/${path}`, { method: "DELETE", query }),
   };
 }

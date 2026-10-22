@@ -88,3 +88,57 @@ def test_log_stream_merges_pods_with_prefix():
     out = "".join(logstream.stream(Core(), [("a", None), ("b", "app")], "demo", prefix=True))
     lines = sorted(out.strip().split("\n"))
     assert lines == ["[a] hello world", "[a] second line", "[b/app] from b"]
+
+
+def test_pod_exec_bridge_sends_keystrokes_and_resizes():
+    import asyncio, json
+    from k10y_agent import podexec
+
+    class Stream:
+        def __init__(self):
+            self.written, self.out, self.open = [], ["$ "], True
+
+        def is_open(self):
+            return self.open
+
+        def write_channel(self, ch, data):
+            self.written.append((ch, data))
+            if ch == 0:
+                self.out.append(f"you typed {data}")
+
+        def update(self, timeout):
+            import time
+            time.sleep(timeout)
+
+        def peek_channel(self, ch):
+            return ch == 1 and bool(self.out)
+
+        def read_channel(self, ch):
+            return self.out.pop(0)
+
+        def close(self):
+            self.open = False
+
+    class WS:
+        def __init__(self):
+            self.inbox = asyncio.Queue()
+            self.sent = []
+            for m in ({"type": "resize", "cols": 100, "rows": 30}, {"type": "input", "data": "ls\r"}):
+                self.inbox.put_nowait(json.dumps(m))
+
+        async def send_text(self, s):
+            self.sent.append(s)
+            if len(self.sent) == 2:
+                self.inbox.put_nowait(None)
+
+        async def receive_text(self):
+            m = await self.inbox.get()
+            if m is None:
+                raise RuntimeError("client closed")
+            return m
+
+    stream, ws = Stream(), WS()
+    asyncio.run(asyncio.wait_for(podexec.bridge(ws, stream), 5))
+    assert ws.sent == ["$ ", "you typed ls\r"]
+    assert (4, json.dumps({"Width": 100, "Height": 30})) in stream.written and (0, "ls\r") in stream.written
+    assert stream.open is False

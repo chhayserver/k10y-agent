@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { hub } from "@/api/client";
+import { loadAccountPrefs, stopAccountSync } from "./prefs";
 
 export interface ClusterRef { id: number; name: string; permissions: string[] }
 export interface Me {
@@ -38,21 +39,25 @@ export const useSession = defineStore("session", {
   actions: {
     async load(): Promise<Me | null> {
       try { this.me = await hub.get<Me>("/auth/me"); } catch { this.me = null; }
+      if (this.me && !this.me.user.must_change_password) await loadAccountPrefs();
       this.checked = true;
       this.fixCurrent();
       return this.me;
     },
     async login(username: string, password: string) {
       this.me = await hub.post<Me>("/auth/login", { username, password });
+      if (!this.me!.user.must_change_password) await loadAccountPrefs();
       this.checked = true;
       this.fixCurrent();
     },
     async logout() {
+      stopAccountSync();
       try { await hub.post("/auth/logout"); } catch { /* already gone */ }
       this.me = null;
     },
     async changePassword(current_password: string, new_password: string) {
       this.me = await hub.post<Me>("/auth/password", { current_password, new_password });
+      await loadAccountPrefs();
     },
     setCluster(id: number) {
       this.currentId = id;

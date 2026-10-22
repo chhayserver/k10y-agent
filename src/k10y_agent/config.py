@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     # "agent": talks to its cluster and serves the cluster API.
     # "hub": central server: web UI, login, users/roles, clusters, audit, alerts (PostgreSQL);
-    #        proxies to agents. "dashboard": legacy UI-only mode.
+    #        proxies to agents.
     mode: str = "agent"
     # HTTPS. With no cert/key files a self-signed certificate is generated in tls_dir.
     tls: bool = False
@@ -46,9 +46,9 @@ class Settings(BaseSettings):
     control_enabled: bool = False
     # Comma-separated namespaces no control action may touch.
     protected_namespaces: str = "kube-system"
-    # Browser origins allowed to call this agent directly (dashboard cluster switcher).
-    # "*" is safe here because auth is a bearer token, never a cookie. Empty disables CORS.
-    cors_origins: str = "*"
+    # Browser origins allowed to call this agent directly. Empty (default) disables CORS: browsers
+    # go through the hub, which calls agents server-side.
+    cors_origins: str = ""
     # AI assistant defaults; the dashboard's AI settings (stored in Secret k10y-ai) override them.
     ai_provider: str = ""
     ai_api_key: str = ""

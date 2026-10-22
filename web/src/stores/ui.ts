@@ -61,3 +61,8 @@ export function openMenu(anchor: HTMLElement, items: MenuItem[]) {
   menu.items = items; menu.anchor = anchor;
 }
 export function closeMenu() { menu.anchor = null; menu.items = []; }
+
+// Pod shell (terminal) window.
+export interface ShellRef { clusterId: number; clusterName: string; namespace: string; pod: string; containers: string[]; container: string }
+export const shell = reactive<{ current: ShellRef | null }>({ current: null });
+export function openShell(ref: ShellRef) { shell.current = ref; }

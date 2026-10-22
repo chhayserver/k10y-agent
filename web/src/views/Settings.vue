@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, ref } from "vue";
+import { hub } from "@/api/client";
+import SessionsList from "@/components/SessionsList.vue";
 import Icon from "@/components/Icon.vue";
 import { NAV } from "@/lib/nav";
 import { applyTheme, prefs, resetPrefs } from "@/stores/prefs";
@@ -16,6 +18,14 @@ function toggle(id: string, on: boolean) {
   toast(true, `${NAV.find((n) => n.id === id)!.label} ${on ? "shown" : "hidden"}`, "prefs");
 }
 function theme(t: "system" | "light" | "dark") { prefs.theme = t; applyTheme(); }
+const sessions = ref<any[] | null>(null);
+async function loadSessions() { try { sessions.value = await hub.get("/auth/sessions"); } catch { sessions.value = []; } }
+onMounted(loadSessions);
+async function endSession(x: any) { await hub.del(`/auth/sessions/${x.id}`); toast(true, "Signed out that device"); loadSessions(); }
+async function endOthers() {
+  if (!confirm("Sign out every other device where you're signed in?")) return;
+  const r = await hub.post("/auth/sessions/revoke-others"); toast(true, `Signed out ${r.revoked} other session(s)`); loadSessions();
+}
 function reset() { if (confirm("Reset all your dashboard preferences to their defaults?")) { resetPrefs(); applyTheme(); toast(true, "Preferences reset", "prefs"); } }
 </script>
 <template>
@@ -43,7 +53,11 @@ function reset() { if (confirm("Reset all your dashboard preferences to their de
         <div class="pref-row"><div class="lbl">Reset preferences<div>Pages, theme, refresh, start page, table sorting and filters. Your account is not affected.</div></div>
           <button class="btn" @click="reset">Reset</button></div>
       </div></section>
-      <p class="hint" style="margin:0">These preferences are saved in this browser only.</p>
+      <section class="card"><div class="card-head"><h2>Signed-in devices</h2><div class="right">
+        <button v-if="(sessions?.length || 0) > 1" class="btn sm" @click="endOthers">Sign out all others</button></div></div>
+        <div class="card-body"><SessionsList :sessions="sessions" can-end @end="endSession" />
+          <p class="hint" style="margin:10px 0 0">Don't recognise a device? Sign it out and change your password.</p></div></section>
+      <p class="hint" style="margin:0"><Icon name="ok" style="width:13px;height:13px;vertical-align:-2px" /> Sidebar pages, theme, refresh, start page and chart range are saved to your account and follow you to any device. Table sorting and filters stay in this browser.</p>
     </div>
   </div>
 </template>

@@ -15,6 +15,9 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
     settings = Settings()
+    if settings.mode not in ("agent", "hub"):
+        raise SystemExit(f"K10Y_MODE={settings.mode!r} is not supported (use agent or hub). "
+                         "The standalone dashboard was replaced by the k10y hub in 2.0; see the README.")
     app = "k10y_agent.hub.app:app" if settings.mode == "hub" else "k10y_agent.api:app"
     ssl = {}
     if settings.tls:

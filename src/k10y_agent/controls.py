@@ -298,6 +298,37 @@ class Controller:
 
     # --- apply ---------------------------------------------------------------
 
+    def replace_object(self, manifest: str, kind: str, namespace: Optional[str], name: str,
+                       dry_run: bool = False) -> Dict[str, Any]:
+        """Save an edited object (like kubectl edit): a full replace guarded by its resourceVersion."""
+        if kind == "Secret":
+            raise ActionError("Secrets cannot be edited here: their values are never sent to the browser")
+        try:
+            docs = [d for d in yaml.safe_load_all(manifest) if d]
+        except yaml.YAMLError as e:
+            raise ActionError(f"invalid YAML: {e}")
+        if len(docs) != 1 or not isinstance(docs[0], dict):
+            raise ActionError("the YAML must contain exactly one object")
+        doc = docs[0]
+        meta = doc.get("metadata") or {}
+        if doc.get("kind") != kind or meta.get("name") != name or (meta.get("namespace") or None) != (namespace or None):
+            raise ActionError(f"kind, name and namespace cannot change (expected {kind} {namespace or ''}/{name})")
+        if not meta.get("resourceVersion"):
+            raise ActionError("metadata.resourceVersion is missing; reload the object and edit again")
+        self.guard(namespace if namespace else (name if kind == "Namespace" else None))
+        try:
+            resource = self.dynamic.resources.get(api_version=doc.get("apiVersion"), kind=kind)
+        except ResourceNotFoundError:
+            raise ActionError(f"unknown kind {doc.get('apiVersion')}/{kind}")
+        try:
+            self.dynamic.replace(resource, body=doc, name=name, namespace=namespace, field_manager=FIELD_MANAGER,
+                                 **self._dry(dry_run))
+        except ApiException as e:
+            if e.status == 409:
+                raise ActionError("the object was changed by someone else since you opened it; reload and edit again")
+            raise
+        return {"message": f"saved {kind} {namespace + '/' if namespace else ''}{name}"}
+
     def apply(self, manifest: str, dry_run: bool = False) -> Dict[str, Any]:
         """Server-side apply of one or more YAML documents."""
         try:

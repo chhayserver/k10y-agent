@@ -213,6 +213,13 @@ rules:
 - apiGroups:
   - ''
   resources:
+  - pods/exec
+  verbs:
+  - get
+  - create
+- apiGroups:
+  - ''
+  resources:
   - services
   verbs:
   - create

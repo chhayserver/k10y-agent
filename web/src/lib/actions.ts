@@ -8,7 +8,7 @@ import { aiRequest, type AIRequest } from "@/stores/aiRequest";
 import { useCluster } from "@/stores/cluster";
 import { prefs } from "@/stores/prefs";
 import { useSession } from "@/stores/session";
-import { closePanel, openAction, openDetail, panel, type MenuItem } from "@/stores/ui";
+import { closePanel, openAction, openDetail, openShell, panel, type MenuItem } from "@/stores/ui";
 import { esc } from "./format";
 
 const ref = (o: { namespace?: string; name: string }) => `<b>${esc(o.namespace ? `${o.namespace}/` : "")}${esc(o.name)}</b>`;
@@ -169,6 +169,9 @@ export function menuFor(kind: string, o: any): MenuItem[] {
   } else if (kind === "pv" || kind === "hpa") {
     items.push(...ai);
   } else if (kind === "pod") {
+    if (s.can("pods.exec") && c.control && o.phase === "Running" && !prot)
+      items.push({ label: "Open shell", icon: "code", run: () => openShell({ clusterId: s.current!.id, clusterName: s.current!.name,
+        namespace: o.namespace, pod: o.name, containers: o.containers || [], container: (o.containers || [])[0] || "" }) });
     items.push(map, ...ai);
     if (can("pods.delete")) items.push({ sep: true }, { label: "Delete pod…", icon: "trash", danger: true, run: () => actDelete("pod", o) });
   } else if (kind === "service") {

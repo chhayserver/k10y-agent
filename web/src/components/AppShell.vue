@@ -11,6 +11,7 @@ import { useCluster } from "@/stores/cluster";
 import { useSession } from "@/stores/session";
 import { closePanel, openMenu, type MenuItem } from "@/stores/ui";
 import ActionDialog from "./ActionDialog.vue";
+import PodShell from "./PodShell.vue";
 import Badge from "./Badge.vue";
 import Icon from "./Icon.vue";
 import MenuPopover from "./MenuPopover.vue";
@@ -163,6 +164,7 @@ const canApply = computed(() => navItem.value?.cluster && s.can("apply.yaml") &&
   </div>
   <PanelHost />
   <ActionDialog />
+  <PodShell />
   <MenuPopover />
   <Toasts />
 </template>

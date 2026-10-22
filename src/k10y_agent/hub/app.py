@@ -4,15 +4,20 @@ The browser only talks to the hub. The hub holds each agent's token (encrypted) 
 proxies API calls to the agents over HTTPS, checking the user's permissions first.
 """
 
+import asyncio
 import json
 import logging
+import ssl
+import time
 import secrets as pysecrets
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
+from urllib.parse import quote, urlsplit
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
+from websockets.asyncio.client import connect as ws_connect
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
@@ -21,7 +26,8 @@ from sqlalchemy.orm import Session
 from .. import __version__, ai
 from . import alerts
 from ..config import Settings
-from .db import AuditEntry, Cluster, Database, Role, RoleAssignment, SessionRow, User, get_setting, utcnow
+from .db import (AuditEntry, Cluster, Database, Role, RoleAssignment, SessionRow, User, UserPreference, get_setting,
+                 utcnow)
 from .permissions import ALL_PERMISSIONS, BUILTIN_ROLES, CLUSTER_PERMISSIONS, GLOBAL_PERMISSIONS, required_permission
 from .security import (Crypto, LoginLimiter, check_password_policy, hash_password, new_session_token, token_digest,
                        verify_password)
@@ -100,9 +106,10 @@ def crypto() -> Crypto:
 # --- auth -----------------------------------------------------------------------------
 
 class Principal:
-    def __init__(self, user: User, grants: Dict[Optional[int], Set[str]]):
+    def __init__(self, user: User, grants: Dict[Optional[int], Set[str]], session_id: Optional[int] = None):
         self.user = user
         self.grants = grants  # cluster_id (None = all clusters) -> permissions
+        self.session_id = session_id
 
     def global_perms(self) -> Set[str]:
         return set(self.grants.get(None, set()))
@@ -126,8 +133,8 @@ def load_grants(s: Session, user: User) -> Dict[Optional[int], Set[str]]:
     return grants
 
 
-def current(request: Request, s: Session = Depends(db_session)) -> Principal:
-    token = request.cookies.get(COOKIE)
+def authenticate(s: Session, token: Optional[str]) -> Principal:
+    """Session cookie -> Principal. Shared by HTTP routes and the pod-shell WebSocket."""
     if not token:
         raise HTTPException(status_code=401, detail="not logged in")
     row = s.execute(select(SessionRow).where(SessionRow.token_hash == token_digest(token))).scalar_one_or_none()
@@ -137,16 +144,21 @@ def current(request: Request, s: Session = Depends(db_session)) -> Principal:
     user = s.get(User, row.user_id)
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="account disabled")
-    # Sliding expiry, written at most once a minute.
+    # Sliding expiry and "last active", written at most once a minute.
     new_exp = now + timedelta(hours=settings.session_hours)
     if (new_exp - _aware(row.expires_at)).total_seconds() > 60:
         row.expires_at = new_exp
+        row.last_seen_at = now
         s.commit()
+    return Principal(user, load_grants(s, user), row.id)
+
+
+def current(request: Request, s: Session = Depends(db_session)) -> Principal:
+    p = authenticate(s, request.cookies.get(COOKIE))
     if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get("x-k10y-csrf") != "1":
         raise HTTPException(status_code=403, detail="missing CSRF header")
-    p = Principal(user, load_grants(s, user))
-    if user.must_change_password and request.url.path not in ("/api/hub/auth/me", "/api/hub/auth/password",
-                                                              "/api/hub/auth/logout"):
+    if p.user.must_change_password and request.url.path not in ("/api/hub/auth/me", "/api/hub/auth/password",
+                                                                "/api/hub/auth/logout"):
         raise HTTPException(status_code=403, detail="password change required")
     return p
 
@@ -211,7 +223,7 @@ def login(body: LoginBody, request: Request, response: Response, s: Session = De
     token = new_session_token()
     s.add(SessionRow(token_hash=token_digest(token), user_id=user.id,
                      expires_at=utcnow() + timedelta(hours=settings.session_hours),
-                     ip=ip, user_agent=(request.headers.get("user-agent") or "")[:255]))
+                     ip=ip, user_agent=(request.headers.get("user-agent") or "")[:255], last_seen_at=utcnow()))
     user.last_login_at = utcnow()
     s.execute(delete(SessionRow).where(SessionRow.expires_at < utcnow()))
     s.commit()
@@ -257,6 +269,72 @@ def change_password(body: PasswordBody, request: Request, p: Principal = Depends
     return me_payload(s, Principal(user, p.grants))
 
 
+# --- personal preferences and sessions ------------------------------------------------
+
+MAX_PREFS_BYTES = 16_000
+
+
+@api.get("/auth/preferences")
+def get_preferences(p: Principal = Depends(current), s: Session = Depends(db_session)) -> dict:
+    row = s.get(UserPreference, p.user.id)
+    return {"data": row.data if row else None}
+
+
+@api.put("/auth/preferences")
+async def put_preferences(request: Request, p: Principal = Depends(current), s: Session = Depends(db_session)) -> dict:
+    raw = await request.body()
+    if len(raw) > MAX_PREFS_BYTES:
+        raise HTTPException(status_code=413, detail="preferences too large")
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="preferences must be an object")
+    row = s.get(UserPreference, p.user.id)
+    if row is None:
+        s.add(UserPreference(user_id=p.user.id, data=data))
+    else:
+        row.data = data
+    s.commit()
+    return {"ok": True}
+
+
+def session_view(r: SessionRow, current_id: Optional[int]) -> dict:
+    iso = lambda d: _aware(d).isoformat() if d else None
+    return {"id": r.id, "created_at": iso(r.created_at), "last_seen_at": iso(r.last_seen_at or r.created_at),
+            "expires_at": iso(r.expires_at), "ip": r.ip, "user_agent": r.user_agent, "current": r.id == current_id}
+
+
+def _live_sessions(s: Session, user_id: int) -> List[SessionRow]:
+    return [r for r in s.execute(select(SessionRow).where(SessionRow.user_id == user_id)
+                                 .order_by(SessionRow.created_at.desc())).scalars() if _aware(r.expires_at) > utcnow()]
+
+
+@api.get("/auth/sessions")
+def my_sessions(p: Principal = Depends(current), s: Session = Depends(db_session)) -> list:
+    return [session_view(r, p.session_id) for r in _live_sessions(s, p.user.id)]
+
+
+@api.delete("/auth/sessions/{session_id}")
+def end_my_session(session_id: int, request: Request, p: Principal = Depends(current), s: Session = Depends(db_session)) -> dict:
+    row = s.get(SessionRow, session_id)
+    if row is None or row.user_id != p.user.id:
+        raise HTTPException(status_code=404, detail="session not found")
+    s.delete(row)
+    s.commit()
+    audit(s, request, p, "session-revoke", p.user.username, message=f"signed out {row.ip or 'a device'}")
+    return {"ok": True}
+
+
+@api.post("/auth/sessions/revoke-others")
+def end_other_sessions(request: Request, p: Principal = Depends(current), s: Session = Depends(db_session)) -> dict:
+    n = s.execute(delete(SessionRow).where(SessionRow.user_id == p.user.id, SessionRow.id != p.session_id)).rowcount
+    s.commit()
+    audit(s, request, p, "session-revoke", p.user.username, message=f"signed out {n} other session(s)")
+    return {"ok": True, "revoked": n}
+
+
 # --- users and roles ------------------------------------------------------------------
 
 class AssignmentBody(BaseModel):
@@ -284,6 +362,7 @@ def user_view(u: User) -> dict:
             "must_change_password": u.must_change_password,
             "created_at": u.created_at.isoformat() if u.created_at else None,
             "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
+            "sessions": getattr(u, "live_sessions", None), "last_seen_at": getattr(u, "last_seen_at", None),
             "assignments": [{"role_id": a.role_id, "role": a.role.name, "cluster_id": a.cluster_id} for a in u.assignments]}
 
 
@@ -315,7 +394,18 @@ def _set_assignments(s: Session, user: User, items: List[AssignmentBody]) -> Non
 
 @api.get("/users")
 def list_users(p: Principal = Depends(require("users.manage")), s: Session = Depends(db_session)) -> list:
-    return [user_view(u) for u in s.execute(select(User).order_by(User.username)).scalars()]
+    now, live = utcnow(), {}
+    for r in s.execute(select(SessionRow)).scalars():
+        if _aware(r.expires_at) > now:
+            seen = _aware(r.last_seen_at or r.created_at)
+            n, last = live.get(r.user_id, (0, None))
+            live[r.user_id] = (n + 1, max(last, seen) if last else seen)
+    out = []
+    for u in s.execute(select(User).order_by(User.username)).scalars():
+        u.live_sessions, seen = live.get(u.id, (0, None))
+        u.last_seen_at = seen.isoformat() if seen else None
+        out.append(user_view(u))
+    return out
 
 
 @api.post("/users")
@@ -375,6 +465,28 @@ def update_user(user_id: int, body: UserBody, request: Request, p: Principal = D
     s.commit()
     audit(s, request, p, "user-update", user.username, params={"changes": changes})
     return user_view(user)
+
+
+@api.get("/users/{user_id}/sessions")
+def user_sessions(user_id: int, p: Principal = Depends(require("users.manage")), s: Session = Depends(db_session)) -> list:
+    if s.get(User, user_id) is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    return [session_view(r, p.session_id) for r in _live_sessions(s, user_id)]
+
+
+@api.post("/users/{user_id}/sessions/revoke")
+def revoke_user_sessions(user_id: int, request: Request, p: Principal = Depends(require("users.manage")),
+                         s: Session = Depends(db_session)) -> dict:
+    user = s.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    q = delete(SessionRow).where(SessionRow.user_id == user_id)
+    if user_id == p.user.id:
+        q = q.where(SessionRow.id != p.session_id)  # keep the admin's own current session
+    n = s.execute(q).rowcount
+    s.commit()
+    audit(s, request, p, "session-revoke", user.username, message=f"signed out {n} session(s)")
+    return {"ok": True, "revoked": n}
 
 
 @api.delete("/users/{user_id}")
@@ -586,7 +698,7 @@ def _describe_result(r: httpx.Response) -> str:
     return 
 
 
-@api.api_route("/clusters/{cluster_id}/api/{path:path}", methods=["GET", "POST", "DELETE"])
+@api.api_route("/clusters/{cluster_id}/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy(cluster_id: int, path: str, request: Request, p: Principal = Depends(current),
                 s: Session = Depends(db_session)) -> Response:
     perm = required_permission(request.method, path)
@@ -616,8 +728,15 @@ async def proxy(cluster_id: int, path: str, request: Request, p: Principal = Dep
                     params["yaml_bytes"] = len(parsed["yaml"])
             except (ValueError, AttributeError):
                 pass
-        audit(s, request, p, path.split("/")[-1] if request.method == "POST" else "delete",
-              f"{request.method} {path}", ok=ok, message=message, params=params, cluster=c, dry_run=dry)
+        target = f"{request.method} {path}"
+        if request.method == "PUT" and path == "resource" and body:
+            try:
+                b = json.loads(body)
+                target = f"{b.get('kind', '')} {b['namespace'] + '/' if b.get('namespace') else ''}{b.get('name', '')}"
+            except (ValueError, AttributeError, TypeError):
+                pass
+        audit(s, request, p, {"POST": path.split("/")[-1], "PUT": "edit"}.get(request.method, "delete"),
+              target, ok=ok, message=message, params=params, cluster=c, dry_run=dry)
 
     if request.method == "GET" and path.endswith("/logs/stream"):
         return await _proxy_stream(c, url, request, headers)
@@ -897,6 +1016,86 @@ def diagnose(cluster_id: int, body: DiagnoseBody, request: Request, p: Principal
     audit(s, request, p, "ai-diagnose", target, cluster=c, params={"model": result["model"], "steps": len(result["steps"])},
           message=f"{len(result['issues'])} issue(s), {len(result['actions'])} proposed action(s), {result['seconds']}s")
     return {**result, "control_enabled": bool(info.get("control_enabled"))}
+
+
+# --- pod shell (WebSocket) -------------------------------------------------------------
+
+@app.websocket("/api/hub/clusters/{cluster_id}/exec/{namespace}/{pod}")
+async def pod_shell(ws: WebSocket, cluster_id: int, namespace: str, pod: str, container: Optional[str] = None) -> None:
+    """Browser <-> hub <-> agent terminal. Logged-in users with pods.exec only; every session is audited."""
+    # Cross-site WebSocket hijacking guard: the page must come from this hub.
+    origin, host = ws.headers.get("origin", ""), ws.headers.get("host", "")
+    if not origin or urlsplit(origin).netloc != host:
+        await ws.close(code=4403, reason="origin not allowed")
+        return
+    with state["db"].session() as s:
+        try:
+            p = authenticate(s, ws.cookies.get(COOKIE))
+        except HTTPException as e:
+            await ws.close(code=4401, reason=str(e.detail))
+            return
+        c = s.get(Cluster, cluster_id)
+        if c is None or not p.can("cluster.view", cluster_id) or p.user.must_change_password:
+            await ws.close(code=4404, reason="cluster not found")
+            return
+        if not p.can("pods.exec", cluster_id):
+            await ws.close(code=4403, reason="missing permission: pods.exec")
+            return
+        token, verify, base, username = crypto().decrypt(c.token_encrypted), c.verify_tls, c.url.rstrip("/"), p.user.username
+        cluster_name, user_id = c.name, p.user.id
+    target = f"pod/{namespace}/{pod}" + (f"/{container}" if container else "")
+    client_ip = ws.client.host if ws.client else ""
+
+    def record(ok: bool, message: str, params: Optional[dict] = None) -> None:
+        with state["db"].session() as s2:
+            s2.add(AuditEntry(user_id=user_id, username=username, cluster_id=cluster_id, cluster_name=cluster_name,
+                              action="exec", target=target, params=params or {}, ok=ok, message=message[:2000],
+                              client_ip=client_ip))
+            s2.commit()
+
+    await ws.accept()
+    url = ("wss://" + base[len("https://"):] if base.startswith("https://") else "ws://" + base.split("://", 1)[-1]) + \
+        f"/api/v1/pods/{quote(namespace)}/{quote(pod)}/exec" + (f"?container={quote(container)}" if container else "")
+    ssl_ctx = None
+    if url.startswith("wss://"):
+        ssl_ctx = ssl.create_default_context()
+        if not verify:
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+    started = time.monotonic()
+    try:
+        agent_ws = await ws_connect(url, ssl=ssl_ctx, open_timeout=10, max_size=2 ** 22,
+                                    additional_headers={"Authorization": f"Bearer {token}", "X-K10Y-Actor": f"hub:{username}"[:64]})
+    except Exception as e:
+        record(False, f"cannot open shell: {e}")
+        await ws.send_text(f"\r\n\x1b[31mCannot open a shell: {e}\x1b[0m\r\n")
+        await ws.close(code=1011)
+        return
+    record(True, "shell opened")
+
+    async def to_agent() -> None:
+        while True:
+            await agent_ws.send(await ws.receive_text())
+
+    async def to_browser() -> None:
+        async for msg in agent_ws:
+            await ws.send_text(msg if isinstance(msg, str) else msg.decode("utf-8", "replace"))
+
+    tasks = [asyncio.create_task(to_agent()), asyncio.create_task(to_browser())]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in tasks:
+            task.cancel()
+        reason = agent_ws.close_reason if getattr(agent_ws, "close_reason", None) else ""
+        await agent_ws.close()
+        try:
+            if reason:
+                await ws.send_text(f"\r\n\x1b[33m{reason}\x1b[0m\r\n")
+            await ws.close()
+        except (RuntimeError, WebSocketDisconnect):
+            pass
+        record(True, "shell closed" + (f": {reason}" if reason else ""), {"seconds": int(time.monotonic() - started)})
 
 
 # --- alerts ---------------------------------------------------------------------------

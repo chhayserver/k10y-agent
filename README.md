@@ -41,10 +41,15 @@ turned on for each cluster. No Ingress is needed; agents use a NodePort and the 
   filter, pause, copy and download, and switch to a snapshot or the previous crashed container.
 - **Details panel for every resource:** an overview, related objects to drill into, the live YAML
   and events. Workloads also have a **Logs** tab.
+- **Edit YAML in place** (like `kubectl edit`): edit, review a line-by-line diff, dry run, save.
+  A concurrent change by someone else is detected instead of overwritten. Secrets can't be edited.
+- **Pod shell:** open an interactive terminal (bash, or sh) in any running container from the pod
+  panel or the row menu. Every session is recorded in Activity.
 - **Map:** a per-namespace relationship diagram of Ingress → Service → workload → Pod →
   ConfigMap, Secret or PVC.
 - **My settings:** each user can hide pages from the sidebar and choose theme, refresh interval and
-  start page.
+  start page. These are saved to the account, so they follow you to any device. You can also see
+  your signed-in devices and sign them out.
 
 **Control** (each action needs its own permission; see [Roles](#users-roles-and-permissions))
 
@@ -55,9 +60,10 @@ turned on for each cluster. No Ingress is needed; agents use a NodePort and the 
 | DaemonSets | Restart |
 | CronJobs | **Run now**, suspend, resume |
 | Jobs | Delete (with its pods) |
-| Pods | Delete (a controller recreates it) |
+| Pods | Open a shell, delete (a controller recreates it) |
 | Services, ConfigMaps, Secrets | Delete (warns if still in use) |
 | Nodes | Cordon, uncordon, drain |
+| Any object except Secrets | Edit YAML with diff review |
 | Any manifest | Apply YAML (server-side apply, multiple documents) |
 
 Every action has a dry run. `kube-system` and `k10y` are protected namespaces. Destructive
@@ -111,8 +117,16 @@ once. Log in with the admin from `.env`; you must set a new password at first lo
 **Where the data lives:** folders on the host, next to `docker-compose.yml`:
 `./data/postgres` (the PostgreSQL database: users, roles, clusters, settings, audit, alerts) and
 `./data/hub` (the hub's HTTPS certificate). Set `K10Y_DATA_DIR=/some/path` in `.env` to use another
-location. Back up by stopping the stack (`docker compose stop`) and copying the folder, or at any
-time with `docker compose exec postgres pg_dump -U k10y k10y > k10y.sql`.
+location.
+
+**Backups** run automatically: the `backup` service writes a compressed dump to `./data/backups`
+every 24 hours and keeps the newest 14. Change this with `K10Y_BACKUP_EVERY_HOURS` and
+`K10Y_BACKUP_KEEP`.
+
+```bash
+make hub-backup                                          # back up now
+make hub-restore FILE=data/backups/k10y-<date>.sql.gz    # restore (replaces the current data)
+```
 
 > **Back up `.env`.** `K10Y_SECRET_KEY` encrypts the agent tokens, AI keys and Telegram tokens stored
 > in PostgreSQL. Without it, those secrets cannot be decrypted.
@@ -164,8 +178,10 @@ assignments. Clusters a user has no role on are invisible to them.
 | `secrets.view` | Secrets page (names and key names only) |
 | `logs.view` | Pod logs and live logs |
 | `workloads.scale` / `.restart` / `.update_image` / `.rollback` / `.delete` | Workload actions (`restart` also covers CronJob run, suspend and resume) |
+| `pods.exec` | Open a shell in a container (not in Operator or Viewer by default) |
 | `pods.delete`, `services.delete`, `config.delete` | Delete those objects |
 | `nodes.manage` | Cordon, uncordon, drain |
+| `resources.edit` | Edit an object's YAML in its details panel |
 | `apply.yaml` | Apply YAML |
 | `ai.use` | AI Assistant |
 | `audit.view` | Activity page |
@@ -183,6 +199,10 @@ removed from the last admin. **Operator** and **Viewer** are starting points you
     sliding 12-hour expiry.
   - Changes require a CSRF header.
   - Login attempts are limited to 5 failures per 5 minutes per user and IP.
+  - Users can see and sign out their devices. Admins can sign a user out everywhere or disable the
+    account, which ends all of its sessions at once.
+- **Agents are API-only.** They serve no web page and allow no cross-origin browser calls by
+  default, so the hub is the only way in for people. The CLI uses agent tokens directly.
 - **Permissions are enforced in the hub** on every request forwarded to an agent. The browser never
   sees agent tokens. Write requests that don't match a known action are refused, and the agent's
   own AI endpoints can't be reached through the hub.
@@ -191,6 +211,9 @@ removed from the last admin. **Operator** and **Viewer** are starting points you
 - **Transport:** the hub and agents serve HTTPS. Both generate a self-signed EC certificate on first
   start, or you can mount your own with `K10Y_TLS_CERT` / `K10Y_TLS_KEY`. The hub skips agent
   certificate checks unless *Verify TLS* is on for that cluster.
+- **Pod shells** need `pods.exec`, control enabled on the agent, and a namespace that isn't
+  protected. The WebSocket only accepts pages from the hub itself, which blocks cross-site
+  WebSocket hijacking. Opening and closing a shell, with its duration, is audited.
 - **Audit:** every control attempt (including dry runs, refusals and unreachable agents), every login
   and every admin change is stored in PostgreSQL with user, cluster, target, parameters, result and
   client IP. Agents keep their own local log too.
@@ -217,7 +240,8 @@ Hub (`docker-compose.yml` / `.env`):
 | `K10Y_ALERTS_ENABLED` | `true` | Run the alert engine (rules are evaluated every 30 s) |
 | `K10Y_TLS`, `K10Y_TLS_CERT`, `K10Y_TLS_KEY`, `K10Y_TLS_DIR` | `false`, —, —, `/tmp/k10y-tls` | HTTPS; a self-signed certificate is generated when no cert or key is given |
 | `K10Y_HUB_PORT` | `8443` | Published port (compose) |
-| `K10Y_DATA_DIR` | `./data` | Host folder for the database and certificate (compose) |
+| `K10Y_DATA_DIR` | `./data` | Host folder for the database, certificate and backups (compose) |
+| `K10Y_BACKUP_EVERY_HOURS`, `K10Y_BACKUP_KEEP` | `24`, `14` | Automatic backup interval and how many to keep (compose) |
 
 Agent (`deploy/k8s/agent.yaml`):
 
@@ -245,7 +269,7 @@ k10y audit
 
 ## Agent API
 
-Interactive docs are at `https://<agent>:30800/docs`. Every route needs `Authorization: Bearer
+The agent serves no web page. Interactive API docs are at `https://<agent>:30800/docs`. Every route needs `Authorization: Bearer
 <token>`. Through the hub, the same routes are at `/api/hub/clusters/{id}/api/<route>`.
 
 | Route | Description |
@@ -262,6 +286,8 @@ Interactive docs are at `https://<agent>:30800/docs`. Every route needs `Authori
 | `POST /api/v1/cronjobs/{ns}/{name}/{trigger,suspend,resume}` | CronJob actions |
 | `DELETE /api/v1/{deployments,jobs,pods,services,configmaps,secrets}/{ns}/{name}` | Delete |
 | `POST /api/v1/nodes/{name}/{cordon,uncordon,drain}`, `POST /api/v1/apply` | Nodes, apply YAML |
+| `PUT /api/v1/resource` | `{"kind", "namespace", "name", "yaml", "dry_run"}`: replace one object, checked by its resourceVersion |
+| `WS /api/v1/pods/{ns}/{pod}/exec?container=` | Interactive shell. Client sends `{"type":"input","data"}` / `{"type":"resize","cols","rows"}` |
 
 ## Development
 
@@ -305,6 +331,8 @@ pinned). **edge** is k3d with NodePort 30800 mapped to `localhost:30801`.
 - [x] AI assistant (Gemini / OpenAI-compatible) with human-approved fixes
 - [x] Hub with PostgreSQL: login, custom roles, encrypted secrets, permanent audit log
 - [x] Alerts with Telegram
+- [x] Edit YAML, pod shell, per-user settings, session management, automatic backups
 - [ ] More alert channels (Slack, email, webhooks)
+- [ ] Two-factor login (TOTP)
 - [ ] Long-term metrics (Prometheus integration)
 - [ ] Single sign-on (OIDC)

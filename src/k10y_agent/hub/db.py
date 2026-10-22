@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 from sqlalchemy import (JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine,
-                        event, select)
+                        event, inspect, select, text)
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 
@@ -70,6 +70,15 @@ class SessionRow(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     ip: Mapped[str] = mapped_column(String(64), default="")
     user_agent: Mapped[str] = mapped_column(String(255), default="")
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UserPreference(Base):
+    """Personal dashboard settings (hidden pages, theme, refresh, start page...), so they follow the user."""
+    __tablename__ = "user_preferences"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    data: Mapped[Any] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class Setting(Base):
@@ -114,6 +123,18 @@ class Database:
 
     def create_all(self) -> None:
         Base.metadata.create_all(self.engine)
+        self._add_missing_columns()
+
+    # Columns added after a table first shipped. create_all() only creates missing tables, so older
+    # databases get these with ALTER TABLE ... ADD COLUMN (nullable, so it is safe on existing rows).
+    ADDED_COLUMNS = [("sessions", "last_seen_at", "TIMESTAMP WITH TIME ZONE")]
+
+    def _add_missing_columns(self) -> None:
+        insp = inspect(self.engine)
+        with self.engine.begin() as conn:
+            for table, column, ddl in self.ADDED_COLUMNS:
+                if table in insp.get_table_names() and column not in {c["name"] for c in insp.get_columns(table)}:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
     def session(self) -> Session:
         return self.Session()

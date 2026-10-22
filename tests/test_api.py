@@ -18,25 +18,13 @@ def test_module_names_not_shadowed():
     assert api.secrets is secrets
 
 
-def test_cors_preflight_allows_dashboard_on_other_origin():
+def test_agent_serves_no_ui_and_no_cors_by_default():
     client = TestClient(api.app)
-    r = client.options("/api/v1/summary", headers={
-        "Origin": "http://192.168.64.2:30800",
-        "Access-Control-Request-Method": "GET",
-        "Access-Control-Request-Headers": "authorization,x-k10y-actor",
-    })
-    assert r.status_code == 200
-    assert r.headers["access-control-allow-origin"] in ("*", "http://192.168.64.2:30800")
-
-
-def test_dashboard_mode_serves_ui_but_no_cluster_api(monkeypatch):
-    monkeypatch.setattr(api.settings, "mode", "dashboard")
-    monkeypatch.setattr(api.settings, "api_token", "")
-    client = TestClient(api.app)
-    page = client.get("/")
-    assert page.status_code == 200
-    assert '<meta name="k10y-mode" content="dashboard">' in page.text
-    assert client.get("/api/v1/summary").status_code == 404
+    root = client.get("/")
+    assert root.status_code == 200 and root.json()["service"] == "k10y-agent"
+    assert "<html" not in root.text.lower()
+    r = client.options("/api/v1/summary", headers={"Origin": "http://evil.example", "Access-Control-Request-Method": "GET"})
+    assert "access-control-allow-origin" not in r.headers
 
 
 def test_fails_closed_when_token_secret_cannot_be_read(monkeypatch):
@@ -74,3 +62,55 @@ def test_token_created_then_reused(monkeypatch, tmp_path):
         api.provision_token()
         assert api.settings.api_token == store["k10y-agent"] and len(store["k10y-agent"]) == 48
     assert len(store) == 1
+
+
+def test_edit_resource_goes_through_control_and_audit(monkeypatch):
+    calls = []
+
+    class FakeController:
+        def replace_object(self, manifest, kind, namespace, name, dry_run):
+            calls.append((kind, namespace, name, dry_run))
+            return {"message": f"saved {kind} {namespace}/{name}"}
+
+    monkeypatch.setattr(api.settings, "api_token", "")
+    monkeypatch.setattr(api.settings, "control_enabled", True)
+    monkeypatch.setattr(api, "get_controller", lambda: FakeController())
+    client = TestClient(api.app)
+    r = client.put("/api/v1/resource", json={"kind": "ConfigMap", "namespace": "demo", "name": "app", "yaml": "x: 1", "dry_run": True})
+    assert r.status_code == 200 and r.json()["dry_run"] is True
+    assert calls == [("ConfigMap", "demo", "app", True)]
+    monkeypatch.setattr(api.settings, "control_enabled", False)
+    assert client.put("/api/v1/resource", json={"kind": "ConfigMap", "namespace": "demo", "name": "app", "yaml": "x"}).status_code == 403
+
+
+def test_replace_object_rejects_renames_secrets_and_missing_version():
+    from k10y_agent.controls import ActionError, Controller
+    ctl = Controller.__new__(Controller)
+    ctl.protected = {"kube-system"}
+    good = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app, namespace: demo, resourceVersion: '5'}\n"
+    for manifest, kind, ns, name, err in [
+        (good, "Secret", "demo", "app", "Secrets cannot be edited"),
+        (good, "ConfigMap", "demo", "other", "cannot change"),
+        (good.replace(", resourceVersion: '5'", ""), "ConfigMap", "demo", "app", "resourceVersion"),
+        (good + "---\n" + good, "ConfigMap", "demo", "app", "exactly one"),
+    ]:
+        with __import__("pytest").raises(ActionError, match=err):
+            ctl.replace_object(manifest, kind, ns, name)
+    from k10y_agent.controls import ProtectedNamespaceError
+    with __import__("pytest").raises(ProtectedNamespaceError):
+        ctl.replace_object(good.replace("demo", "kube-system"), "ConfigMap", "kube-system", "app")
+
+
+def test_exec_websocket_needs_token_and_control(monkeypatch):
+    from starlette.websockets import WebSocketDisconnect
+    monkeypatch.setattr(api.settings, "api_token", "t0ken")
+    monkeypatch.setattr(api.settings, "control_enabled", True)
+    client = TestClient(api.app)
+    with __import__("pytest").raises(WebSocketDisconnect) as e:
+        with client.websocket_connect("/api/v1/pods/demo/p/exec"):
+            pass
+    assert e.value.code == 4401
+    with __import__("pytest").raises(WebSocketDisconnect) as e:
+        with client.websocket_connect("/api/v1/pods/kube-system/p/exec", headers={"Authorization": "Bearer t0ken"}):
+            pass
+    assert e.value.code == 4403

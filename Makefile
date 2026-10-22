@@ -1,5 +1,5 @@
 IMAGE        ?= k10y/k10y-agent
-TAG          ?= 2.0.0
+TAG          ?= 2.1.0
 VM           ?= rke2
 CLUSTER_NAME ?= lab
 KUBECONFIG   ?= $(HOME)/.kube/rke2.yaml
@@ -13,7 +13,7 @@ export KUBECONFIG
 CTR = limactl shell $(VM) sudo /var/lib/rancher/rke2/bin/ctr \
       --address /run/k3s/containerd/containerd.sock -n k8s.io
 
-.PHONY: build test load deploy restart up token logs undeploy dashboard dashboard-stop load-k3d push manifests hub-init hub-up hub-down hub-logs
+.PHONY: build test load deploy restart up token logs undeploy load-k3d push manifests hub-init hub-up hub-down hub-logs hub-backup hub-restore
 
 build:            ## Build the agent image with Docker
 	docker build -t $(IMAGE):$(TAG) .
@@ -77,18 +77,6 @@ undeploy:         ## Remove the agent from the cluster
 	kubectl delete -f deploy/k8s/rbac-self.yaml --ignore-not-found
 	kubectl delete -f deploy/k8s/rbac.yaml --ignore-not-found
 
-DASHBOARD_PORT ?= 8080
-
-dashboard: build  ## Run the standalone dashboard (UI only, no cluster access) in Docker
-	docker rm -f k10y-dashboard >/dev/null 2>&1 || true
-	docker run -d --name k10y-dashboard --restart unless-stopped -p $(DASHBOARD_PORT):8080 \
-	  -e K10Y_MODE=dashboard --read-only --cap-drop ALL --security-opt no-new-privileges \
-	  $(IMAGE):$(TAG)
-	@echo "Dashboard: http://localhost:$(DASHBOARD_PORT)"
-
-dashboard-stop:   ## Stop and remove the standalone dashboard container
-	docker rm -f k10y-dashboard
-
 # --- hub (docker compose: hub + PostgreSQL) -------------------------------------------
 hub-init:         ## Create .env with random database password, secret key and admin password
 	@test -f .env || ( \
@@ -108,3 +96,16 @@ hub-down:         ## Stop hub + PostgreSQL (data stays in $(K10Y_DATA_DIR), defa
 
 hub-logs:         ## Follow hub logs
 	docker compose logs -f hub
+
+hub-backup:       ## Back up the hub database now into $(K10Y_DATA_DIR)/backups (default ./data/backups)
+	@mkdir -p $${K10Y_DATA_DIR:-./data}/backups
+	@f=$${K10Y_DATA_DIR:-./data}/backups/k10y-$$(date -u +%Y%m%d-%H%M%S)-manual.sql.gz; \
+	  docker compose exec -T postgres pg_dump -U k10y --clean --if-exists --no-owner k10y | gzip > $$f.part && mv $$f.part $$f && chmod 600 $$f && echo "wrote $$f"
+
+hub-restore:      ## Restore the hub database from FILE=data/backups/<file>.sql.gz (replaces current data)
+	@test -n "$(FILE)" || (echo "usage: make hub-restore FILE=data/backups/<file>.sql.gz" && exit 1)
+	@test -f "$(FILE)" || (echo "no such file: $(FILE)" && exit 1)
+	docker compose stop hub
+	gunzip -c "$(FILE)" | docker compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U k10y -d k10y
+	docker compose start hub
+	@echo "restored $(FILE)"

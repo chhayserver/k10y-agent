@@ -24,6 +24,10 @@ rules:
   - apiGroups: [""]
     resources: [pods/eviction]
     verbs: [create]
+  # Pod shell (exec). The hub only allows it to users with the pods.exec permission.
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [get, create]
   - apiGroups: [""]
     resources: [services]
     verbs: [create, patch, update, delete]

@@ -5,6 +5,8 @@ import Badge from "@/components/Badge.vue";
 import Chips from "@/components/Chips.vue";
 import Icon from "@/components/Icon.vue";
 import LogViewer from "@/components/LogViewer.vue";
+import YamlEditor from "@/components/YamlEditor.vue";
+import { useCluster } from "@/stores/cluster";
 import RowMenu from "@/components/RowMenu.vue";
 import Skeleton from "@/components/Skeleton.vue";
 import { menuFor } from "@/lib/actions";
@@ -72,6 +74,10 @@ const related = computed(() => {
   return g;
 });
 const host = computed(() => location.hostname);
+const editing = ref(false);
+const cl = useCluster();
+const canEdit = computed(() => props.r.kind !== "Secret" && s.can("resources.edit") && cl.control && !cl.isProtected(props.r.namespace || (props.r.kind === "Namespace" ? props.r.name : null)));
+function editDone(saved: boolean) { editing.value = false; if (saved) load(); }
 const copied = ref(false);
 async function copyYaml() { try { await navigator.clipboard.writeText(d.value.yaml); copied.value = true; setTimeout(() => (copied.value = false), 1500); } catch { /* denied */ } }
 </script>
@@ -90,9 +96,11 @@ async function copyYaml() { try { await navigator.clipboard.writeText(d.value.ya
   <div class="drawer-body">
     <div v-if="error" class="empty"><Icon name="crit" /><div class="title">Could not load {{ r.kind }}</div><div>{{ error }}</div></div>
     <Skeleton v-else-if="!d" :rows="8" />
+    <YamlEditor v-else-if="tab === 'yaml' && editing" :kind="r.kind" :namespace="r.namespace" :name="r.name" :yaml="d.yaml" @done="editDone" />
     <template v-else-if="tab === 'yaml'">
-      <div style="display:flex;gap:8px;align-items:center"><span class="hint" style="flex:1">{{ r.kind === "Secret" ? "Secret values are hidden." : "Live object, read-only. managedFields omitted." }}</span>
-        <button class="btn sm" @click="copyYaml"><Icon name="copy" /><span>{{ copied ? "Copied" : "Copy" }}</span></button></div>
+      <div style="display:flex;gap:8px;align-items:center"><span class="hint" style="flex:1">{{ r.kind === "Secret" ? "Secret values are hidden." : canEdit ? "Live object. managedFields omitted." : "Live object, read-only. managedFields omitted." }}</span>
+        <button class="btn sm" @click="copyYaml"><Icon name="copy" /><span>{{ copied ? "Copied" : "Copy" }}</span></button>
+        <button v-if="canEdit" class="btn sm primary" @click="editing = true"><Icon name="file" /><span>Edit</span></button></div>
       <pre class="logs" style="max-height:none;white-space:pre">{{ d.yaml }}</pre>
     </template>
     <EventsList v-else-if="tab === 'events'" :events="d.events" />

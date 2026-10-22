@@ -6,6 +6,7 @@ import Badge from "@/components/Badge.vue";
 import DataTable from "@/components/DataTable.vue";
 import Icon from "@/components/Icon.vue";
 import Modal from "@/components/Modal.vue";
+import SessionsList from "@/components/SessionsList.vue";
 import Skeleton from "@/components/Skeleton.vue";
 import { fmt } from "@/lib/format";
 import { page } from "@/stores/prefs";
@@ -25,7 +26,19 @@ const rows = computed(() => { const q = state.q.trim().toLowerCase(); return (us
 
 const edit = reactive({ open: false, id: 0, username: "", display_name: "", password: "", is_active: true, must_change_password: true, assignments: [] as { role_id: number; cluster_id: number | null }[], err: "", busy: false });
 function openNew() { Object.assign(edit, { open: true, id: 0, username: "", display_name: "", password: "", is_active: true, must_change_password: true, assignments: [{ role_id: roles.value.find((r) => r.name === "Viewer")?.id || roles.value[0]?.id, cluster_id: null }], err: "" }); }
-function openEdit(u: any) { Object.assign(edit, { open: true, id: u.id, username: u.username, display_name: u.display_name, password: "", is_active: u.is_active, must_change_password: u.must_change_password, assignments: u.assignments.map((a: any) => ({ role_id: a.role_id, cluster_id: a.cluster_id })), err: "" }); }
+const userSessions = ref<any[] | null>(null);
+async function loadUserSessions(id: number) { userSessions.value = null; try { userSessions.value = await hub.get(`/users/${id}/sessions`); } catch { userSessions.value = []; } }
+async function signOutEverywhere(u: { id: number; username: string }) {
+  if (!confirm(`Sign ${u.username} out of every device?`)) return;
+  try { const r = await hub.post(`/users/${u.id}/sessions/revoke`); toast(true, `Signed ${u.username} out of ${r.revoked} session(s)`); load(); if (edit.open) loadUserSessions(u.id); }
+  catch (e: any) { toast(false, e.message); }
+}
+async function setActive(u: any, active: boolean) {
+  if (!active && !confirm(`Disable ${u.username}? They are signed out now and cannot sign in until enabled again.`)) return;
+  try { await hub.patch(`/users/${u.id}`, { is_active: active }); toast(true, `${u.username} ${active ? "enabled" : "disabled"}`); load(); }
+  catch (e: any) { toast(false, e.message); }
+}
+function openEdit(u: any) { loadUserSessions(u.id); Object.assign(edit, { open: true, id: u.id, username: u.username, display_name: u.display_name, password: "", is_active: u.is_active, must_change_password: u.must_change_password, assignments: u.assignments.map((a: any) => ({ role_id: a.role_id, cluster_id: a.cluster_id })), err: "" }); }
 async function save() {
   edit.err = ""; edit.busy = true;
   const body: any = { display_name: edit.display_name, is_active: edit.is_active, assignments: edit.assignments.filter((a) => a.role_id) };
@@ -41,7 +54,8 @@ async function remove(u: any) {
   try { await hub.del(`/users/${u.id}`); toast(true, `Deleted ${u.username}`); load(); } catch (e: any) { toast(false, e.message); }
 }
 const columns = [{ key: "username", label: "Username", cls: "primary" }, { key: "display_name", label: "Name" }, { key: "is_active", label: "Status" },
-  { key: "assignments", label: "Roles", cls: "wrap", nosort: true }, { key: "last_login_at", label: "Last login" }, { key: "_a", label: "Actions", nosort: true, cls: "actions" }];
+  { key: "assignments", label: "Roles", cls: "wrap", nosort: true }, { key: "last_seen_at", label: "Last active", sort: (u: any) => u.last_seen_at || u.last_login_at || "" },
+  { key: "sessions", label: "Sessions", num: true }, { key: "_a", label: "Actions", nosort: true, cls: "actions" }];
 </script>
 <template>
   <div class="toolbar"><label class="search"><Icon name="search" /><input v-model="state.q" class="input" placeholder="Search users" aria-label="Search"></label>
@@ -52,8 +66,13 @@ const columns = [{ key: "username", label: "Username", cls: "primary" }, { key: 
     <DataTable v-else-if="users" v-model:sort="state.sort" :rows="rows" :columns="columns" :row-key="(u) => String(u.id)" clickable empty-title="No users" @row="openEdit">
       <template #is_active="{ row }"><Badge :level="row.is_active ? 'good' : 'neutral'" :label="row.is_active ? 'Active' : 'Disabled'" /> <span v-if="row.must_change_password" class="pill-tag">must change password</span></template>
       <template #assignments="{ row }"><span v-for="(a, i) in row.assignments" :key="i" class="chip">{{ a.role }} · {{ clusterName(a.cluster_id) }}</span><span v-if="!row.assignments.length" class="dim">no access</span></template>
-      <template #last_login_at="{ row }">{{ row.last_login_at ? fmt.dateTime(row.last_login_at) : "never" }}</template>
-      <template #_a="{ row }"><button v-if="row.id !== s.me?.user.id" class="btn ghost sm" style="color:var(--critical)" @click="remove(row)">Delete</button></template>
+      <template #last_seen_at="{ row }"><span v-if="row.last_seen_at">{{ fmt.ago(row.last_seen_at) }}</span>
+        <span v-else class="dim">{{ row.last_login_at ? `last login ${fmt.ago(row.last_login_at)}` : "never signed in" }}</span></template>
+      <template #sessions="{ row }"><span :class="{ dim: !row.sessions }">{{ row.sessions || 0 }}</span></template>
+      <template #_a="{ row }"><template v-if="row.id !== s.me?.user.id">
+        <button v-if="row.sessions" class="btn ghost sm" @click="signOutEverywhere(row)">Sign out</button>
+        <button class="btn ghost sm" @click="setActive(row, !row.is_active)">{{ row.is_active ? "Disable" : "Enable" }}</button>
+        <button class="btn ghost sm" style="color:var(--critical)" @click="remove(row)">Delete</button></template></template>
     </DataTable>
   </div></section>
 
@@ -75,6 +94,9 @@ const columns = [{ key: "username", label: "Username", cls: "primary" }, { key: 
       </div>
       <button class="btn sm" style="align-self:flex-start" @click="edit.assignments.push({ role_id: roles[0]?.id, cluster_id: null })">Add role</button>
     </div>
+    <div v-if="edit.id" class="form-row"><div style="display:flex;align-items:center;gap:8px"><span class="lbl" style="flex:1">Signed-in devices</span>
+      <button v-if="userSessions?.length" class="btn sm" type="button" @click="signOutEverywhere({ id: edit.id, username: edit.username })">Sign out everywhere</button></div>
+      <SessionsList :sessions="userSessions" /></div>
     <div v-if="edit.err" class="act-result show err">{{ edit.err }}</div>
     <template #actions><button class="btn ghost" type="button" @click="edit.open = false">Cancel</button><span style="flex:1" />
       <button class="btn primary" :disabled="edit.busy || !edit.username || (!edit.id && !edit.password)" @click="save">Save</button></template>
