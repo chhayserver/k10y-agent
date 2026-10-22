@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { agent } from "@/api/client";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import Badge from "@/components/Badge.vue";
 import Icon from "@/components/Icon.vue";
 import LineChart from "@/components/LineChart.vue";
+import LogViewer from "@/components/LogViewer.vue";
 import { actDelete, startAI } from "@/lib/actions";
 import { fmt, podLabel, podLevel } from "@/lib/format";
 import { useCluster } from "@/stores/cluster";
@@ -26,29 +26,14 @@ async function poll() {
   if (!s.can("cluster.view") || c.paused || document.hidden) return;
   try { metrics.value = await c.loadMetrics("pod", { namespace: props.r.namespace, name: props.r.name }); } catch { /* agent busy */ }
 }
-onMounted(() => { poll(); timer = window.setInterval(poll, 5000); loadLogs(); });
+onMounted(() => { poll(); timer = window.setInterval(poll, 5000); });
 onBeforeUnmount(() => clearInterval(timer));
 const cpuRefs = computed(() => [pod.value?.cpu_request_m != null && { v: pod.value.cpu_request_m, label: "request" }, pod.value?.cpu_limit_m != null && { v: pod.value.cpu_limit_m, label: "limit" }].filter(Boolean) as any[]);
 const memRefs = computed(() => [pod.value?.memory_request_bytes != null && { v: pod.value.memory_request_bytes / 2 ** 20, label: "request" }, pod.value?.memory_limit_bytes != null && { v: pod.value.memory_limit_bytes / 2 ** 20, label: "limit" }].filter(Boolean) as any[]);
 const millis = (v: number) => (v === 0 ? "0" : v >= 1000 ? `${(v / 1000).toFixed(2)} cores` : `${v < 10 ? v.toFixed(1) : v.toFixed(0)}m`);
 const mib = (v: number) => (v === 0 ? "0" : v >= 1024 ? `${(v / 1024).toFixed(1)} GiB` : `${v >= 100 ? v.toFixed(0) : v.toFixed(1)} MiB`);
 
-// logs
 const canLogs = computed(() => s.can("logs.view"));
-const container = ref(""), tail = ref(200), previous = ref(false), wrap = ref(true), logs = ref<string | null>(null), logsErr = ref("");
-const pre = ref<HTMLElement | null>(null);
-watch(pod, (p) => { if (p && !container.value) container.value = p.containers[0]; }, { immediate: true });
-async function loadLogs() {
-  if (!canLogs.value) return;
-  logs.value = null; logsErr.value = "";
-  try {
-    logs.value = await agent(s.current!.id).text(`pods/${props.r.namespace}/${props.r.name}/logs`, { container: container.value, tail: tail.value, previous: previous.value });
-    setTimeout(() => { if (pre.value) pre.value.scrollTop = pre.value.scrollHeight; }, 0);
-  } catch (e: any) { logsErr.value = previous.value ? `No previous container logs: ${e.message}` : e.message; }
-}
-watch([container, tail, previous], loadLogs);
-const copied = ref(false);
-async function copy() { try { await navigator.clipboard.writeText(logs.value || ""); copied.value = true; setTimeout(() => (copied.value = false), 1500); } catch { /* denied */ } }
 const canDelete = computed(() => s.can("pods.delete") && c.control);
 </script>
 
@@ -84,16 +69,7 @@ const canDelete = computed(() => s.can("pods.delete") && c.control);
       </div>
       <div v-if="canLogs">
         <h3 class="section-title">Logs</h3>
-        <div class="logs-bar">
-          <select v-if="pod.containers.length > 1" v-model="container" class="select" aria-label="Container"><option v-for="x in pod.containers" :key="x">{{ x }}</option></select>
-          <select v-model.number="tail" class="select" aria-label="Lines"><option v-for="n in [100, 200, 500, 1000, 5000]" :key="n" :value="n">Last {{ n }} lines</option></select>
-          <label><input v-model="previous" type="checkbox"> Previous container</label>
-          <label><input v-model="wrap" type="checkbox"> Wrap</label>
-          <span style="flex:1" />
-          <button class="btn" @click="copy"><Icon name="copy" /><span>{{ copied ? "Copied" : "Copy" }}</span></button>
-          <button class="btn" @click="loadLogs"><Icon name="refresh" /><span>Reload</span></button>
-        </div>
-        <pre ref="pre" class="logs" :class="{ wrap }" tabindex="0" aria-label="Pod logs">{{ logsErr || (logs === null ? "Loading logs…" : logs || "(no log output)") }}</pre>
+        <LogViewer :path="`pods/${r.namespace}/${r.name}/logs`" :containers="pod.containers" :label="`${r.namespace}-${r.name}`" />
       </div>
       <div>
         <h3 class="section-title">Containers</h3>

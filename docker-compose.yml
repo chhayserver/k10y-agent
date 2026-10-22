@@ -18,7 +18,7 @@ services:
     # Not published on the host: only the hub can reach the database.
 
   hub:
-    image: ${K10Y_IMAGE:-docker.io/k10y/k10y-agent:1.6.0}
+    image: ${K10Y_IMAGE:-docker.io/k10y/k10y-agent:2.0.0}
     depends_on:
       postgres:
         condition: service_healthy

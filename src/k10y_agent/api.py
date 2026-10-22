@@ -10,7 +10,7 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from kubernetes.config.config_exception import ConfigException
@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from . import __version__
 from .collectors import Collector
 from .config import Settings
-from . import ai
+from . import ai, logstream
 from .metrics_history import MetricsHistory
 from .resources import NotSupported, ResourceViewer
 from .controls import ActionError, AuditLog, Controller, ProtectedNamespaceError, api_error_message, now_iso
@@ -197,6 +197,31 @@ def daemonsets(namespace: Optional[str] = None) -> list:
 @api.get("/jobs")
 def jobs(namespace: Optional[str] = None) -> list:
     return get_collector().jobs(namespace)
+
+
+@api.get("/cronjobs")
+def cronjobs(namespace: Optional[str] = None) -> list:
+    return get_collector().cronjobs(namespace)
+
+
+@api.get("/ingresses")
+def ingresses(namespace: Optional[str] = None) -> list:
+    return get_collector().ingresses(namespace)
+
+
+@api.get("/persistentvolumes")
+def persistentvolumes() -> list:
+    return get_collector().persistentvolumes()
+
+
+@api.get("/persistentvolumeclaims")
+def persistentvolumeclaims(namespace: Optional[str] = None) -> list:
+    return get_collector().persistentvolumeclaims(namespace)
+
+
+@api.get("/hpas")
+def hpas(namespace: Optional[str] = None) -> list:
+    return get_collector().hpas(namespace)
 
 
 @api.get("/services")
@@ -420,6 +445,44 @@ def logs(
     return get_collector().logs(namespace, pod, container, tail, previous)
 
 
+STREAM_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+
+@api.get("/pods/{namespace}/{pod}/logs/stream")
+def logs_stream(
+    namespace: str,
+    pod: str,
+    container: Optional[str] = None,
+    tail: int = Query(100, ge=0, le=5000),
+    since_seconds: Optional[int] = Query(None, ge=1),
+    timestamps: bool = False,
+) -> StreamingResponse:
+    """Follow one container's logs (like kubectl logs -f)."""
+    gen = logstream.stream(get_collector().core, [(pod, container)], namespace, tail, since_seconds, timestamps)
+    return StreamingResponse(gen, media_type="text/plain; charset=utf-8", headers=STREAM_HEADERS)
+
+
+@api.get("/{kind}/{namespace}/{name}/logs/stream")
+def workload_logs_stream(
+    kind: str,
+    namespace: str,
+    name: str,
+    container: Optional[str] = None,
+    tail: int = Query(50, ge=0, le=1000),
+    since_seconds: Optional[int] = Query(None, ge=1),
+    timestamps: bool = False,
+) -> StreamingResponse:
+    """Follow the logs of every pod of a Deployment, StatefulSet, DaemonSet or Job, each line tagged with its pod."""
+    if kind not in ("deployments", "statefulsets", "daemonsets", "jobs"):
+        raise HTTPException(status_code=404, detail="logs are available for deployments, statefulsets, daemonsets and jobs")
+    pods = logstream.workload_pods(get_collector(), kind, namespace, name)
+    if not pods:
+        raise HTTPException(status_code=404, detail=f"{name} has no pods")
+    gen = logstream.stream(get_collector().core, [(p, container) for p in pods], namespace, tail, since_seconds, timestamps,
+                           prefix=True)
+    return StreamingResponse(gen, media_type="text/plain; charset=utf-8", headers=STREAM_HEADERS)
+
+
 @api.get("/deployments/{namespace}/{name}/history")
 def deployment_history(namespace: str, name: str) -> list:
     return get_controller().history(namespace, name)
@@ -554,6 +617,24 @@ def restart_statefulset(namespace: str, name: str, body: DryRun, request: Reques
 def restart_daemonset(namespace: str, name: str, body: DryRun, request: Request) -> dict:
     return run_action(request, "restart", f"daemonset/{namespace}/{name}", body.dry_run,
                       lambda: get_controller().restart_workload("daemonset", namespace, name, body.dry_run))
+
+
+@api.post("/cronjobs/{namespace}/{name}/suspend")
+def suspend_cronjob(namespace: str, name: str, body: DryRun, request: Request) -> dict:
+    return run_action(request, "suspend", f"cronjob/{namespace}/{name}", body.dry_run,
+                      lambda: get_controller().suspend_cronjob(namespace, name, True, body.dry_run))
+
+
+@api.post("/cronjobs/{namespace}/{name}/resume")
+def resume_cronjob(namespace: str, name: str, body: DryRun, request: Request) -> dict:
+    return run_action(request, "resume", f"cronjob/{namespace}/{name}", body.dry_run,
+                      lambda: get_controller().suspend_cronjob(namespace, name, False, body.dry_run))
+
+
+@api.post("/cronjobs/{namespace}/{name}/trigger")
+def trigger_cronjob(namespace: str, name: str, body: DryRun, request: Request) -> dict:
+    return run_action(request, "trigger", f"cronjob/{namespace}/{name}", body.dry_run,
+                      lambda: get_controller().trigger_cronjob(namespace, name, body.dry_run))
 
 
 @api.delete("/jobs/{namespace}/{name}")

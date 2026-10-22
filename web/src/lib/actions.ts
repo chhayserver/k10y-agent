@@ -41,6 +41,16 @@ export function actRestart(o: any, kind = "deployment") {
   openAction({ title: `Restart ${kind}`, desc: `Rolling restart of ${ref(o)}: ${how}.`, confirmLabel: "Restart",
     request: (_m, dry) => ({ path: `${plural[kind]}/${o.namespace}/${o.name}/restart`, body: { dry_run: dry } }) });
 }
+export function actSuspend(o: any, suspend: boolean) {
+  openAction({ title: `${suspend ? "Suspend" : "Resume"} CronJob`, confirmLabel: suspend ? "Suspend" : "Resume",
+    desc: suspend ? `${ref(o)} stops creating new jobs. Jobs already running keep going.` : `${ref(o)} creates jobs on its schedule again.`,
+    request: (_m, dry) => ({ path: `cronjobs/${o.namespace}/${o.name}/${suspend ? "suspend" : "resume"}`, body: { dry_run: dry } }) });
+}
+export function actTrigger(o: any) {
+  openAction({ title: "Run CronJob now", confirmLabel: "Run now",
+    desc: `Creates a job from ${ref(o)} right away, like <code>kubectl create job --from=cronjob/${esc(o.name)}</code>. The schedule is not changed.`,
+    request: (_m, dry) => ({ path: `cronjobs/${o.namespace}/${o.name}/trigger`, body: { dry_run: dry } }) });
+}
 export function actImage(o: any) {
   const containers = o.containers || [];
   openAction({
@@ -131,6 +141,8 @@ export function menuFor(kind: string, o: any): MenuItem[] {
   const details = safe({ label: kind === "pod" ? "Details & logs" : "Open details", icon: "file", run: () => openDetail(KIND_, o.namespace, o.name) });
   const map = safe({ label: "Show on map", icon: "map", run: () => showOnMap(KIND_, o) });
   const items: MenuItem[] = [details];
+  if (["deployment", "statefulset", "daemonset", "job"].includes(kind) && s.can("logs.view"))
+    items.push(safe({ label: "Live logs", icon: "events", run: () => openDetail(KIND_, o.namespace, o.name, { tab: "logs" }) }));
   if (kind === "deployment") {
     if (can("workloads.scale")) items.push({ label: "Scale…", icon: "scale", run: () => actScale(o) });
     if (can("workloads.restart")) items.push({ label: "Restart", icon: "refresh", run: () => actRestart(o) });
@@ -148,6 +160,14 @@ export function menuFor(kind: string, o: any): MenuItem[] {
   } else if (kind === "job") {
     items.push(map);
     if (can("workloads.delete")) items.push({ sep: true }, { label: "Delete job…", icon: "trash", danger: true, run: () => actDelete("job", o) });
+  } else if (kind === "cronjob") {
+    if (can("workloads.restart")) items.push({ label: "Run now…", icon: "play", run: () => actTrigger(o) },
+      o.suspended ? { label: "Resume", icon: "play", run: () => actSuspend(o, false) } : { label: "Suspend", icon: "pause", run: () => actSuspend(o, true) });
+    items.push(...ai);
+  } else if (kind === "ingress" || kind === "pvc") {
+    items.push(map, ...ai);
+  } else if (kind === "pv" || kind === "hpa") {
+    items.push(...ai);
   } else if (kind === "pod") {
     items.push(map, ...ai);
     if (can("pods.delete")) items.push({ sep: true }, { label: "Delete pod…", icon: "trash", danger: true, run: () => actDelete("pod", o) });
@@ -169,4 +189,5 @@ export function menuFor(kind: string, o: any): MenuItem[] {
   return guard(items);
 }
 export const KIND: Record<string, string> = { deployment: "Deployment", statefulset: "StatefulSet", daemonset: "DaemonSet", job: "Job",
-  pod: "Pod", service: "Service", configmap: "ConfigMap", secret: "Secret", node: "Node", namespace: "Namespace" };
+  pod: "Pod", service: "Service", configmap: "ConfigMap", secret: "Secret", node: "Node", namespace: "Namespace", cronjob: "CronJob",
+  ingress: "Ingress", pvc: "PersistentVolumeClaim", pv: "PersistentVolume", hpa: "HorizontalPodAutoscaler" };

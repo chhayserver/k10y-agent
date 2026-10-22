@@ -66,7 +66,7 @@ export const KIND_ICON: Record<string, string> = {
   PersistentVolumeClaim: "disk", PersistentVolume: "disk", HorizontalPodAutoscaler: "scale",
 };
 export const DETAIL_KINDS = new Set(["Pod", "Service", "ConfigMap", "PersistentVolumeClaim", "Node", "Namespace", "Deployment",
-  "StatefulSet", "DaemonSet", "ReplicaSet", "Job", "Ingress", "Secret"]);
+  "StatefulSet", "DaemonSet", "ReplicaSet", "Job", "Ingress", "Secret", "CronJob", "PersistentVolume", "HorizontalPodAutoscaler"]);
 
 export function readyLevel(x: { ready: number; desired: number }): [Level, string] {
   if (x.desired === 0) return ["neutral", "Scaled to 0"];

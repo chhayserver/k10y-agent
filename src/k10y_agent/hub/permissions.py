@@ -9,7 +9,7 @@ CLUSTER_PERMISSIONS: Dict[str, str] = {
     "secrets.view": "See Secrets (names, types and key names; values are never shown)",
     "logs.view": "Read pod logs",
     "workloads.scale": "Scale Deployments and StatefulSets",
-    "workloads.restart": "Restart Deployments, StatefulSets and DaemonSets",
+    "workloads.restart": "Restart workloads; suspend, resume and run CronJobs",
     "workloads.update_image": "Change a Deployment's container image",
     "workloads.rollback": "Roll back Deployments",
     "workloads.delete": "Delete Deployments and Jobs",
@@ -41,7 +41,8 @@ BUILTIN_ROLES: List[Tuple[str, str, List[str]]] = [
 # (method, path regex relative to /api/v1/, permission). First match wins.
 _RULES: List[Tuple[str, re.Pattern, str]] = [(m, re.compile(p), perm) for m, p, perm in [
     ("GET", r"^secrets(/|$)", "secrets.view"),
-    ("GET", r"^pods/[^/]+/[^/]+/logs$", "logs.view"),
+    ("GET", r"^pods/[^/]+/[^/]+/logs(/stream)?$", "logs.view"),
+    ("GET", r"^(deployments|statefulsets|daemonsets|jobs)/[^/]+/[^/]+/logs/stream$", "logs.view"),
     ("GET", r"^resource$", "cluster.view"),           # Secret objects re-checked in the hub
     ("GET", r"^audit$", "audit.view"),
     ("GET", r"^ai(/|$)", "__deny__"),                 # AI runs in the hub
@@ -50,6 +51,7 @@ _RULES: List[Tuple[str, re.Pattern, str]] = [(m, re.compile(p), perm) for m, p, 
     ("POST", r"^(deployments|statefulsets|daemonsets)/[^/]+/[^/]+/restart$", "workloads.restart"),
     ("POST", r"^deployments/[^/]+/[^/]+/image$", "workloads.update_image"),
     ("POST", r"^deployments/[^/]+/[^/]+/rollback$", "workloads.rollback"),
+    ("POST", r"^cronjobs/[^/]+/[^/]+/(suspend|resume|trigger)$", "workloads.restart"),
     ("POST", r"^nodes/[^/]+/(cordon|uncordon|drain)$", "nodes.manage"),
     ("POST", r"^apply$", "apply.yaml"),
     ("DELETE", r"^(deployments|jobs)/[^/]+/[^/]+$", "workloads.delete"),

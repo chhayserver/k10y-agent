@@ -1,359 +1,303 @@
 # k10y-agent
 
-Monitor and control Kubernetes clusters from one dashboard.
+Monitor and control Kubernetes clusters from one dashboard, with user accounts, roles, alerts and an
+AI assistant.
 
-Each cluster runs a small **k10y-agent**. It reads the Kubernetes API and metrics-server and
-exposes a REST API. A **web dashboard** and a **CLI** talk to any number of agents, so one
-screen covers all your clusters. Control actions (scale, restart, roll back, delete, drain,
-apply YAML) go through guardrails: protected namespaces, dry run, confirmation and an audit log.
+Each cluster runs a small **k10y agent**. It reads the Kubernetes API and metrics-server and serves an
+HTTPS API. The **k10y hub** (Docker Compose with PostgreSQL) is where people log in. It stores
+users, roles, cluster connections, settings, the audit log and alert history in PostgreSQL. It also
+serves the dashboard, and forwards each request to the right agent after checking the user's
+permissions.
 
 ```
- Docker on your machine: k10y-dashboard :8080   (UI only; no cluster access, no credentials)
-        │ your browser
-        ├──► cluster "lab"   k10y-agent  http://<node-ip>:30800 ──► Kubernetes API + metrics-server
-        └──► cluster "edge"  k10y-agent  http://<node-ip>:30800 ──► Kubernetes API + metrics-server
-
- k10y CLI ──────────────────► the same agents
+ Browser ──HTTPS──► k10y hub :8443  (Vue dashboard, login, roles, audit, alerts, AI)
+                      │   └── PostgreSQL 17 (users, roles, clusters, encrypted secrets, audit, alerts)
+                      ├──HTTPS──► cluster "lab"   k10y agent :30800 ──► Kubernetes API + metrics-server
+                      └──HTTPS──► cluster "edge"  k10y agent :30800 ──► Kubernetes API + metrics-server
+ Telegram ◄── alerts ─┘
+ k10y CLI ──HTTPS──► agents directly (token per cluster)
 ```
+
+Agents use a self-signed certificate. Certificate verification is off by default and can be
+turned on for each cluster. No Ingress is needed; agents use a NodePort and the hub publishes a port.
 
 ## Features
 
 **Monitoring**
 - Cluster health (`healthy`, `degraded` or `critical`) with a problem list. Problems include
   NotReady nodes, node pressure, CrashLoopBackOff, ImagePull and OOM errors, long-pending pods,
-  pods with many restarts, and under-replicated deployments.
+  pods with many restarts, and under-replicated workloads.
 - **Live CPU and memory charts** for the cluster, each node and each pod. Pod charts show the pod's
-  request and limit. Ranges are 5m, 15m and 1h.
-- Nodes, deployments, pods, services, ConfigMaps, Secrets (key names only), events and pod logs,
-  including the previous crashed container.
-- **Namespaces page:** status, running/total pods, problems, deployments, services, CPU and memory,
-  labels and protected marker per namespace; open details, show on map, or diagnose with AI.
-- **Settings (per browser):** choose which pages appear in the sidebar, theme (system, light or
-  dark), auto-refresh interval (5–60s) and start page; reset to defaults at any time.
-- **Workload pages:** Deployments, StatefulSets (scale, restart), DaemonSets (restart) and Jobs
-  (status, completions, failed pods, duration, created-by CronJob; delete with its pods).
-  Under-replicated StatefulSets and DaemonSets, and failed Jobs, appear under Problems.
-- **Details panel for every resource:** click any row (node, deployment, pod, service, event,
-  ConfigMap, Secret or activity entry) to open it, like Kubernetes Dashboard. The **Overview** tab
-  shows metadata, labels and annotations; kind-specific spec and status (replicas and strategy,
-  containers with images, resources and probes, node capacity and taints, service ports with NodePort
-  links); conditions; and **related objects** (ReplicaSets, pods, services, owner, node, ConfigMaps
-  and Secrets). Click any related object to drill down, and use **Back** to return. The **YAML** tab
-  shows the live object, read-only, with Secret values hidden. The **Events** tab shows that object's
-  events.
-- **Map**: a per-namespace relationship diagram of Ingress → Service → Deployment, StatefulSet,
-  DaemonSet or Job → (ReplicaSet) → Pod → ConfigMap, Secret or PVC. Click anything to highlight
-  what it depends on and what depends on it. Missing references and services that select no pods
-  are flagged.
+  request and limit.
+- **Pages:**
+  - Cluster: Overview, Map, AI Assistant, Nodes, Namespaces
+  - Workloads: Deployments, StatefulSets, DaemonSets, Jobs, **CronJobs**,
+    **Autoscalers (HPA)**, Pods
+  - Network & config: Services, **Ingresses**, **Storage (PVCs and PVs)**, ConfigMaps,
+    Secrets (key names only)
+  - Activity: Events, **Alerts**, Activity (audit)
+- **Live logs** that follow new lines like `kubectl logs -f`, for one pod or **every pod of a
+  Deployment, StatefulSet, DaemonSet or Job**. Each line is tagged and coloured by pod. You can
+  filter, pause, copy and download, and switch to a snapshot or the previous crashed container.
+- **Details panel for every resource:** an overview, related objects to drill into, the live YAML
+  and events. Workloads also have a **Logs** tab.
+- **Map:** a per-namespace relationship diagram of Ingress → Service → workload → Pod →
+  ConfigMap, Secret or PVC.
+- **My settings:** each user can hide pages from the sidebar and choose theme, refresh interval and
+  start page.
 
-**Control**
+**Control** (each action needs its own permission; see [Roles](#users-roles-and-permissions))
 
 | Resource | Actions |
 |---|---|
-| Deployments | Scale, restart, update image, roll back (pick a revision), delete |
+| Deployments | Scale, restart, update image, roll back, delete |
 | StatefulSets | Scale, restart |
 | DaemonSets | Restart |
+| CronJobs | **Run now**, suspend, resume |
 | Jobs | Delete (with its pods) |
 | Pods | Delete (a controller recreates it) |
 | Services, ConfigMaps, Secrets | Delete (warns if still in use) |
 | Nodes | Cordon, uncordon, drain |
 | Any manifest | Apply YAML (server-side apply, multiple documents) |
 
-**AI assistant** (Google Gemini or CodeCraft API / any OpenAI-compatible API)
-- **Investigate** the whole cluster, one namespace, or a specific pod or deployment, optionally with
-  your own question. The AI uses read-only tools: problems, events, object specs, logs (including
-  crashed containers) and ConfigMap data. Secret values are never read.
-- You get a summary, each issue's root cause and evidence, and **proposed fixes**: scale, restart,
-  set image, roll back, delete pod, or apply YAML.
-- **Nothing is changed automatically.** Each fix has *Review & apply*, which goes through dry run,
-  protected namespaces, confirmation and the audit log. Read-only agents show the equivalent
-  `kubectl` command instead.
-- **Setup:** AI Assistant → Settings. Each provider tab keeps its own key and model, so you can save
-  **both** Gemini and CodeCraft and switch between them with one click on the AI page. Keys are stored
-  in Secret `k10y-ai` in that cluster's `k10y` namespace and never returned to the browser. The
-  default model is `gemini-3.8-flash`; for CodeCraft, choose a model that supports tool calling.
-- Each cluster's agent has its own AI settings. Cluster data the AI reads is sent to the chosen provider.
+Every action has a dry run. `kube-system` and `k10y` are protected namespaces. Destructive
+actions require typing the name. Every attempt is written to the audit log with the user who made
+it.
 
-**Multi-cluster**
-- Cluster switcher with a live health dot per cluster, and an **All clusters** overview.
-- A standalone dashboard container that keeps working when any one cluster is down.
-- Multi-cluster CLI: `k10y status --all`.
+**Alerts** (in the hub)
+- Rules for **cluster problems** (filter by kind and namespace), **CPU or memory thresholds** (per
+  node or for the whole cluster), and **cluster unreachable**. A rule covers all clusters or just one.
+- A **hold time** keeps short blips from sending messages. You can also choose reminders while an
+  alert is firing, a message when it resolves, and an optional **AI diagnosis** in the message.
+- **Telegram** notifications. Create a bot with @BotFather, paste the token, and press *Find chats*
+  to get the chat ID. Bot tokens are stored encrypted.
+- Alert history is kept in PostgreSQL and shown on the Alerts page.
 
-## Install (users: one command per cluster)
+**AI assistant** (Google Gemini, or CodeCraft API / any OpenAI-compatible API)
+- Investigates the whole cluster, a namespace, or one object, using read-only tools. It never reads
+  Secret values. It returns a summary, root causes and **proposed fixes**. Nothing is applied until a
+  person reviews it.
+- Keys for both providers are stored encrypted in the hub (System settings), and you can switch
+  between them with one click.
 
-**Requirements:** `kubectl` with admin access to the cluster, and metrics-server for the CPU and
-memory charts (included in RKE2, k3s, EKS, GKE and AKS). Nodes must be able to pull
-`docker.io/k10y/k10y-agent` (amd64 or arm64), and your browser must be able to reach port **30800**
-on a node.
+## Quick start
 
-**1. Install the agent.** Choose one:
+### 1. Start the hub (Docker Compose)
+
+Requirements: Docker with Compose.
 
 ```bash
-# Monitoring + control (scale, restart, roll back, delete, drain, apply YAML)
-kubectl apply -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install.yaml
-
-# Read-only monitoring
-kubectl apply -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install-readonly.yaml
+git clone https://github.com/zorouzumaki1111-cmd/k10y-agent.git && cd k10y-agent
+make hub-up          # first run creates .env with a random DB password, secret key and admin password
 ```
 
-**2. Wait for it, name the cluster, and get the API token.** The agent creates its own random
-token on first start.
+Without `make`, download
+[`docker-compose.yml`](https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/docker-compose.yml)
+and create `.env` next to it:
 
 ```bash
+cat > .env <<EOF
+POSTGRES_PASSWORD=$(openssl rand -hex 24)
+K10Y_SECRET_KEY=$(openssl rand -base64 48 | tr -d '\n')
+K10Y_ADMIN_USER=admin
+K10Y_ADMIN_PASSWORD=$(openssl rand -base64 12 | tr -d '/+=\n')
+EOF
+chmod 600 .env && docker compose up -d && grep ADMIN .env
+```
+
+Open **https://\<server\>:8443**. The certificate is self-signed, so accept the browser warning
+once. Log in with the admin from `.env`; you must set a new password at first login.
+
+> **Back up `.env`.** `K10Y_SECRET_KEY` encrypts the agent tokens, AI keys and Telegram tokens stored
+> in PostgreSQL. Without it, those secrets cannot be decrypted.
+
+### 2. Install an agent on each cluster
+
+Requirements: `kubectl` with admin access, and metrics-server for the charts (included in RKE2,
+k3s, EKS, GKE and AKS). The hub must be able to reach port **30800** on a node.
+
+```bash
+# Monitoring + control
+kubectl apply -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install.yaml
+# or read-only monitoring
+kubectl apply -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install-readonly.yaml
+
 kubectl -n k10y rollout status deploy/k10y-agent
 kubectl -n k10y create configmap k10y-settings --from-literal=cluster-name=prod   # optional display name
 kubectl -n k10y rollout restart deploy/k10y-agent
-kubectl -n k10y get secret k10y-agent -o jsonpath='{.data.api-token}' | base64 -d; echo
+kubectl -n k10y get secret k10y-agent -o jsonpath='{.data.api-token}' | base64 -d; echo   # API token
 ```
 
-**3. Open it.** Either:
-- open the agent's own dashboard at `http://<any-node-ip>:30800` and paste the token, or
-- use one dashboard for all your clusters:
-  ```bash
-  docker run -d --name k10y-dashboard --restart unless-stopped -p 8080:8080 \
-    -e K10Y_MODE=dashboard k10y/k10y-agent:latest
-  ```
-  Then open `http://<server>:8080`, choose **Add cluster**, and enter `http://<node-ip>:30800` and the token.
+### 3. Add the cluster in the hub
+
+**Administration → Clusters → Add cluster**: enter `https://<node-ip>:30800` and the token, then
+**Test connection**. Leave *Verify TLS* off for the agent's self-signed certificate.
 
 **Other tasks:**
 
 ```bash
-# Upgrade: apply the newer release's install.yaml (the token is kept)
+# Upgrade an agent: apply the newer install.yaml (the token is kept)
 kubectl apply -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install.yaml
-
-# Rotate the token
+# Upgrade the hub: change the image tag in docker-compose.yml, then
+docker compose pull && docker compose up -d
+# Rotate an agent token (then update it in Administration → Clusters)
 kubectl -n k10y delete secret k10y-agent && kubectl -n k10y rollout restart deploy/k10y-agent
-
-# Uninstall
+# Uninstall an agent
 kubectl delete -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install.yaml
 ```
 
-> The agent serves plain HTTP on a NodePort. Keep port 30800 limited to your network, or put the
-> agent behind an Ingress or LoadBalancer with TLS before exposing it beyond a private network.
+## Users, roles and permissions
 
-The installers are generated from `deploy/k8s/` by `make manifests` (`scripts/gen_install.py`).
+Roles are fully custom: an admin chooses any combination of permissions. A user gets roles either
+for **all clusters** or for **one cluster**, so "operator on staging, viewer on production" is two
+assignments. Clusters a user has no role on are invisible to them.
 
-## Quick start (build from source)
+| Permission | Allows |
+|---|---|
+| `cluster.view` | See the cluster: every page except Secrets, logs, AI and audit |
+| `secrets.view` | Secrets page (names and key names only) |
+| `logs.view` | Pod logs and live logs |
+| `workloads.scale` / `.restart` / `.update_image` / `.rollback` / `.delete` | Workload actions (`restart` also covers CronJob run, suspend and resume) |
+| `pods.delete`, `services.delete`, `config.delete` | Delete those objects |
+| `nodes.manage` | Cordon, uncordon, drain |
+| `apply.yaml` | Apply YAML |
+| `ai.use` | AI Assistant |
+| `audit.view` | Activity page |
+| `clusters.manage`, `users.manage`, `settings.manage`, `alerts.manage` | Administration (only when assigned for all clusters) |
 
-Requirements: Docker, `kubectl`, `make`, and a Kubernetes cluster with metrics-server. RKE2, k3s,
-EKS, GKE and AKS include metrics-server.
-
-### 1. Build the image
-
-```bash
-make build        # docker build -t k10y/k10y-agent:1.5.0 .
-make test         # unit tests, run inside the image
-```
-
-### 2. Get the image into the cluster
-
-Choose the option that matches your cluster:
-
-```bash
-make load                         # RKE2 inside a Lima VM (VM=rke2): imports into the node's containerd
-make load-k3d K3D_CLUSTER=edge    # k3d / k3s-in-Docker
-```
-
-Any other cluster pulls `docker.io/k10y/k10y-agent:1.5.0` from Docker Hub, so this step can be skipped.
-To publish your own build (multi-arch amd64 + arm64):
-
-```bash
-docker login
-make push                                             # → docker.io/k10y/k10y-agent:1.5.0 and :latest
-make push REGISTRY_IMAGE=ghcr.io/<you>/k10y-agent     # or another registry, then set image: in deploy/k8s/agent.yaml
-```
-
-### 3. Deploy the agent
-
-```bash
-make deploy KUBECONFIG=~/.kube/<cluster>.yaml CLUSTER_NAME=<name>
-make token  KUBECONFIG=~/.kube/<cluster>.yaml      # API token for the dashboard and CLI
-```
-
-`make deploy` creates the following in namespace `k10y`:
-- a ServiceAccount with read RBAC, plus write RBAC when `CONTROL=true`
-- a ConfigMap
-- a Secret holding a random API token, created once
-- the agent Deployment (one pod, about 130 MiB)
-- a NodePort Service on **30800**
-
-To deploy read-only, use `make deploy CONTROL=false ...`.
-
-`make up` runs build, load, deploy and restart in one step for the default Lima cluster.
-
-### 4. Open the dashboard
-
-**Standalone (recommended):**
-
-```bash
-make dashboard                    # docker run ... -e K10Y_MODE=dashboard -p 8080:8080
-open http://localhost:8080        # "Add your first cluster" → agent URL + token
-make dashboard-stop
-```
-
-**Built in:** every agent also serves the dashboard at `http://<node-ip>:30800`, with that cluster
-preselected.
-
-Add more clusters from the sidebar's cluster switcher (**Add cluster…**). The connection is tested
-before saving. The cluster list and tokens are kept only in your browser's local storage. Each
-address you open the dashboard from keeps its own list.
-
-## CLI
-
-```bash
-python3 -m venv .venv && .venv/bin/pip install -e .     # Python ≥ 3.9; CLI deps only
-source .venv/bin/activate
-k10y cluster add lab http://<node-ip>:30800 --token <token>
-
-k10y status --all                 # every registered cluster
-k10y nodes | pods --problems | deployments | services | events --warnings
-k10y logs <ns> <pod> --tail 100 [--previous]
-
-# control (add --dry-run to validate only; delete and drain ask for confirmation)
-k10y scale demo web 3
-k10y restart demo web
-k10y set-image demo web nginx:1.28
-k10y history demo web
-k10y rollback demo web [--to-revision N]
-k10y delete deployment|pod|service demo <name>
-k10y cordon <node> / uncordon <node> / drain <node> --dry-run
-k10y apply -f app.yaml
-k10y audit
-```
-
-Pass `-C <cluster>` to target a cluster other than the current one. The CLI stores its config in
-`~/.k10y/config.yaml` with mode 600.
+There are three built-in roles. **Admin** always has every permission and cannot be edited or
+removed from the last admin. **Operator** and **Viewer** are starting points you can change.
 
 ## Security model
 
-- **Auth**: every `/api/v1/*` route requires `Authorization: Bearer <token>`. Each cluster has its
-  own token in the `k10y-agent` Secret.
-- **Least-privilege RBAC**:
-  - `deploy/k8s/rbac.yaml` is read access.
-  - `deploy/k8s/rbac-control.yaml` is the opt-in write access. It has no RBAC or CRD permissions, so
-    Apply YAML cannot be used to escalate privileges.
-- **Protected namespaces** (`kube-system` and `k10y` by default, set with `PROTECTED=`): every
-  control action targeting them is rejected, including objects inside an applied manifest. Drain
-  skips their pods.
-- **Dry run** is available for every action. Deleting a deployment, service, ConfigMap or Secret,
-  or draining a node, requires typing its name.
-- **Audit log**: every action is recorded with time, source, target and result. This includes dry
-  runs and rejected attempts. View it on the Activity page, with `k10y audit`, or at
-  `GET /api/v1/audit`. It is stored at `/data/audit.jsonl` on an emptyDir, so it survives container
-  restarts but not pod replacement.
-- **Secrets**: the API returns names, type and key names only, never values. Listing Secrets
-  requires the `list secrets` permission, and Kubernetes cannot grant "metadata only". To hide
-  Secrets entirely, remove that rule from `rbac.yaml`.
-- **Container hardening**: the agent runs as non-root with a read-only root filesystem, all Linux
-  capabilities dropped and the RuntimeDefault seccomp profile.
-- **CORS**: agents allow cross-origin requests (`K10Y_CORS_ORIGINS`, default `*`) so that a
-  dashboard served from another address can call them. This is safe because auth is a bearer
-  token, never a cookie.
-- **Standalone dashboard**: holds no kubeconfig, no RBAC and no tokens. Its `/api` routes return 404.
+- **Login:**
+  - Passwords are hashed with argon2id, and there is a password policy and a forced change at first
+    login.
+  - Sessions are stored server-side, with an `HttpOnly`, `Secure`, `SameSite=Strict` cookie and a
+    sliding 12-hour expiry.
+  - Changes require a CSRF header.
+  - Login attempts are limited to 5 failures per 5 minutes per user and IP.
+- **Permissions are enforced in the hub** on every request forwarded to an agent. The browser never
+  sees agent tokens. Write requests that don't match a known action are refused, and the agent's
+  own AI endpoints can't be reached through the hub.
+- **Secrets at rest:** agent tokens, AI keys and Telegram bot tokens are encrypted (Fernet) with
+  `K10Y_SECRET_KEY`. PostgreSQL is not published on the host.
+- **Transport:** the hub and agents serve HTTPS. Both generate a self-signed EC certificate on first
+  start, or you can mount your own with `K10Y_TLS_CERT` / `K10Y_TLS_KEY`. The hub skips agent
+  certificate checks unless *Verify TLS* is on for that cluster.
+- **Audit:** every control attempt (including dry runs, refusals and unreachable agents), every login
+  and every admin change is stored in PostgreSQL with user, cluster, target, parameters, result and
+  client IP. Agents keep their own local log too.
+- **Least-privilege RBAC** on each cluster:
+  - Read access is always granted.
+  - Write access is opt-in (`rbac-control.yaml`). It has no RBAC or CRD permissions, so Apply YAML
+    cannot be used to escalate privileges.
+  - Protected namespaces are enforced by the agent itself.
+- **Containers** run as non-root with a read-only filesystem, all capabilities dropped and
+  `no-new-privileges` set.
 
 ## Configuration
 
-Agent environment variables (set via `make deploy` or `deploy/k8s/agent.yaml`):
+Hub (`docker-compose.yml` / `.env`):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `K10Y_MODE` | `agent` | `agent`, or `dashboard` (UI only, no cluster access) |
-| `K10Y_CLUSTER_NAME` | `default` | Name shown in the dashboard and CLI |
-| `K10Y_API_TOKEN` | *(empty)* | Bearer token. Empty means no auth, unless `K10Y_TOKEN_SECRET` is set |
-| `K10Y_TOKEN_SECRET` | *(empty)* | Read the token from this Secret in the agent's namespace, creating it if missing. Fails closed (503) if that's impossible |
+| `K10Y_MODE` | `agent` | `hub` for the hub |
+| `K10Y_DATABASE_URL` | — | `postgresql://user:pw@host:5432/db` |
+| `K10Y_SECRET_KEY` | — | Encrypts stored secrets. Keep it safe and stable |
+| `K10Y_ADMIN_USER`, `K10Y_ADMIN_PASSWORD` | `admin`, random | First admin, created only when there are no users. A random password is printed in the log |
+| `K10Y_SESSION_HOURS` | `12` | Idle session lifetime |
+| `K10Y_PUBLIC_URL` | — | Hub address used for links in alert messages |
+| `K10Y_ALERTS_ENABLED` | `true` | Run the alert engine (rules are evaluated every 30 s) |
+| `K10Y_TLS`, `K10Y_TLS_CERT`, `K10Y_TLS_KEY`, `K10Y_TLS_DIR` | `false`, —, —, `/tmp/k10y-tls` | HTTPS; a self-signed certificate is generated when no cert or key is given |
+| `K10Y_HUB_PORT` | `8443` | Published port (compose) |
+
+Agent (`deploy/k8s/agent.yaml`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `K10Y_TOKEN_SECRET` | — | Read the API token from this Secret, creating it if missing |
 | `K10Y_CONTROL_ENABLED` | `false` | Allow control actions (also needs `rbac-control.yaml`) |
-| `K10Y_PROTECTED_NAMESPACES` | `kube-system` | Comma-separated; `make deploy` sets `kube-system,k10y` |
-| `K10Y_CORS_ORIGINS` | `*` | Allowed browser origins; empty disables CORS |
-| `K10Y_AI_PROVIDER`, `K10Y_AI_API_KEY`, `K10Y_AI_MODEL`, `K10Y_AI_BASE_URL` | *(empty)* | Optional AI defaults; dashboard settings (Secret `k10y-ai`) override them |
-| `K10Y_METRICS_POLL_S` | `5` | How often to check metrics-server |
-| `K10Y_METRICS_RETENTION_S` | `3600` | In-memory CPU/memory history kept for charts |
-| `K10Y_AUDIT_PATH` | `/data/audit.jsonl` | Audit log file |
-| `K10Y_KUBECONFIG` | — | Only when running outside a cluster |
+| `K10Y_PROTECTED_NAMESPACES` | `kube-system` | Comma-separated; the installer sets `kube-system,k10y` |
+| `K10Y_TLS` | `true` in the manifests | Serve HTTPS on 8443, exposed as NodePort 30800 |
+| `K10Y_METRICS_POLL_S`, `K10Y_METRICS_RETENTION_S` | `5`, `3600` | Live chart sampling and in-memory history |
 
-Run `make manifests` after changing `deploy/k8s/` to regenerate the installers.
+## CLI
 
-Makefile variables: `CLUSTER_NAME`, `KUBECONFIG`, `CONTROL`, `PROTECTED`, `VM`, `K3D_CLUSTER`,
-`IMAGE` (default `k10y/k10y-agent`), `TAG` (default `1.2.0`), `REGISTRY_IMAGE`, `PLATFORMS` and
-`DASHBOARD_PORT`.
+The CLI talks to agents directly with each cluster's token.
 
-### Live charts
+```bash
+python3 -m venv .venv && .venv/bin/pip install -e . && source .venv/bin/activate
+k10y cluster add lab https://<node-ip>:30800 --token <token> --insecure   # -k: self-signed cert
+k10y status --all
+k10y nodes | pods --problems | deployments | services | events --warnings
+k10y logs <ns> <pod> --tail 100 [--previous]
+k10y scale demo web 3 [--dry-run]     # also: restart, set-image, history, rollback, delete, cordon, drain, apply -f
+k10y audit
+```
 
-The agent checks metrics-server every 5 seconds. It records a point only when metrics-server has a
-new measurement, which on RKE2 and k3s is about every 15 seconds, and uses that measurement's
-timestamp. It keeps one hour in memory for the cluster, every node and every pod, and the dashboard
-polls for new points every 5 seconds. History starts empty after an agent restart; long-term
-history is a job for Prometheus.
+## Agent API
 
-## API
-
-Interactive docs are at `http://<agent>/docs`. Control requests may send `X-K10Y-Actor` to label
-their audit entries; the dashboard sends `dashboard` and the CLI sends `cli:<user>`.
+Interactive docs are at `https://<agent>:30800/docs`. Every route needs `Authorization: Bearer
+<token>`. Through the hub, the same routes are at `/api/hub/clusters/{id}/api/<route>`.
 
 | Route | Description |
 |---|---|
-| `GET /api/v1/info` | Cluster name, versions, control setting, protected namespaces |
-| `GET /api/v1/summary` | Health, counts, usage, problems |
-| `GET /api/v1/nodes`, `/pods`, `/deployments`, `/statefulsets`, `/daemonsets`, `/jobs`, `/services`, `/configmaps`, `/secrets` | Resources (`?namespace=`) |
-| `POST /api/v1/statefulsets/{ns}/{name}/{scale,restart}`, `/daemonsets/{ns}/{name}/restart`, `DELETE /api/v1/jobs/{ns}/{name}` | Workload actions (`dry_run` supported) |
-| `GET /api/v1/configmaps/{ns}/{name}` | ConfigMap data |
-| `GET /api/v1/events?namespace=&warnings_only=&limit=` | Events, newest first |
-| `GET /api/v1/pods/{ns}/{pod}/logs?container=&tail=&previous=` | Logs (plain text) |
-| `GET /api/v1/metrics/history?scope=cluster\|nodes\|pod&namespace=&name=&since=` | CPU/memory history (epoch ms) |
-| `GET /api/v1/topology?namespace=` | Relationship graph for the Map |
-| `GET /api/v1/namespaces` | Namespace names |
-| `GET /api/v1/namespaces/details` | Namespaces with pod/deployment/service counts, problems and CPU/memory |
-| `GET /api/v1/resource?kind=&namespace=&name=` | One object: live spec/status, YAML, events, related objects (Pod, Deployment, StatefulSet, DaemonSet, ReplicaSet, Job, Service, Ingress, Node, Namespace, ConfigMap, Secret, PVC) |
-| `GET /api/v1/deployments/{ns}/{name}/history` | Revisions |
-| `GET /api/v1/audit?limit=` | Audit log, newest first |
-| `GET/POST /api/v1/ai/config`, `DELETE /api/v1/ai/config?provider=` | Per-provider AI settings (keys are write-only) |
-| `POST /api/v1/ai/active` | `{"provider": "gemini\|openai"}` switches the provider used for investigations |
-| `POST /api/v1/ai/models` | List the provider's models |
-| `POST /api/v1/ai/diagnose` | `{"scope": "cluster\|namespace\|object", "namespace", "kind", "name", "question"}` returns summary, issues and proposed actions |
-| `POST /api/v1/deployments/{ns}/{name}/scale` | `{"replicas": 3, "dry_run": false}` |
-| `POST /api/v1/deployments/{ns}/{name}/restart` | `{"dry_run": false}` |
-| `POST /api/v1/deployments/{ns}/{name}/image` | `{"container": "app", "image": "nginx:1.28"}` |
-| `POST /api/v1/deployments/{ns}/{name}/rollback` | `{"revision": 2}` (omit for previous) |
-| `DELETE /api/v1/{deployments,pods,services,configmaps,secrets}/{ns}/{name}?dry_run=` | Delete |
-| `POST /api/v1/nodes/{name}/{cordon,uncordon,drain}` | `{"dry_run": false}` |
-| `POST /api/v1/apply` | `{"yaml": "...", "dry_run": true}` |
+| `GET /api/v1/info`, `/summary` | Cluster info; health, counts, usage, problems |
+| `GET /api/v1/nodes`, `/pods`, `/deployments`, `/statefulsets`, `/daemonsets`, `/jobs`, `/cronjobs`, `/hpas`, `/services`, `/ingresses`, `/persistentvolumeclaims`, `/persistentvolumes`, `/configmaps`, `/secrets` | Resources (`?namespace=`) |
+| `GET /api/v1/pods/{ns}/{pod}/logs?container=&tail=&previous=` | Log snapshot |
+| `GET /api/v1/pods/{ns}/{pod}/logs/stream?container=&tail=&since_seconds=` | **Live** logs (chunked text) |
+| `GET /api/v1/{deployments,statefulsets,daemonsets,jobs}/{ns}/{name}/logs/stream` | Live logs of every pod, lines prefixed `[pod]` |
+| `GET /api/v1/resource?kind=&namespace=&name=` | One object: YAML, events, related objects |
+| `GET /api/v1/events`, `/metrics/history`, `/topology`, `/namespaces/details`, `/audit` | Events, chart data, map, namespaces, local audit |
+| `POST /api/v1/deployments/{ns}/{name}/{scale,restart,image,rollback}` | Deployment actions (`dry_run` supported everywhere) |
+| `POST /api/v1/statefulsets/{ns}/{name}/{scale,restart}`, `/daemonsets/{ns}/{name}/restart` | Workload actions |
+| `POST /api/v1/cronjobs/{ns}/{name}/{trigger,suspend,resume}` | CronJob actions |
+| `DELETE /api/v1/{deployments,jobs,pods,services,configmaps,secrets}/{ns}/{name}` | Delete |
+| `POST /api/v1/nodes/{name}/{cordon,uncordon,drain}`, `POST /api/v1/apply` | Nodes, apply YAML |
 
-## Project layout
+## Development
+
+```bash
+make build                  # Docker image (builds the Vue app, then the Python package)
+make test                   # unit tests inside the image
+make hub-up / hub-logs / hub-down
+make load && make deploy    # RKE2 in the Lima VM (VM=rke2); make load-k3d for k3d
+make push                   # multi-arch (amd64 + arm64) to docker.io/k10y/k10y-agent:$(TAG) and :latest
+make manifests              # regenerate deploy/install/*.yaml from deploy/k8s/
+```
+
+Frontend work: `cd web && npm install && npm run dev`. The Vite dev server proxies `/api` to a hub
+on `https://localhost:8443`.
 
 ```
 src/k10y_agent/
-  api.py              FastAPI app: routes, auth, CORS, audit, dashboard mode
-  collectors.py       read-only views of nodes, pods, workloads, services, config, events
-  controls.py         control actions + protected-namespace guard + audit log
-  topology.py         relationship graph for the Map page
-  metrics_history.py  background CPU/memory sampler for the live charts
-  ai.py               AI assistant: providers, read-only tools, investigation loop
-  resources.py        details panel data: object, YAML, events, related objects
-  cli.py              k10y CLI (multi-cluster)
-  config.py           K10Y_* settings
-  static/index.html   the dashboard (single file, no build step)
-deploy/k8s/           namespace, RBAC (read + opt-in control), Deployment, NodePort Service
-tests/                unit tests (`make test`)
-Dockerfile, Makefile
+  api.py, collectors.py, controls.py, resources.py, topology.py, logstream.py, metrics_history.py
+                       agent: REST API, read views, actions, details panel, map, live logs, charts
+  hub/                 hub: app.py (auth, users, roles, clusters, proxy, audit, AI), db.py (models),
+                       security.py, permissions.py, alerts.py (rules, engine, Telegram)
+  ai.py                AI providers, read-only tools, investigation loop
+  tls.py, server.py    self-signed certificates; uvicorn entry point
+  cli.py               k10y CLI
+web/                   dashboard: Vue 3 + TypeScript + Vite + Pinia (built into the image)
+deploy/k8s/            agent namespace, RBAC, Deployment, NodePort Service
+deploy/install/        generated one-file installers
+docker-compose.yml     hub + PostgreSQL
+tests/                 unit tests
 ```
 
-## Lab setup used during development
-
-- **lab**: RKE2 v1.36 in a Lima Ubuntu 24.04 VM on macOS (Apple Silicon). The VM uses Lima's
-  `vzNAT` network so NodePorts are reachable from the Mac, and RKE2's `node-ip` is pinned in
-  `/etc/rancher/rke2/config.yaml`.
-- **edge**: k3s via `k3d cluster create edge -p "30801:30800@server:0"`. Its agent is at
-  `http://localhost:30801`.
+Lab used during development: **lab** is RKE2 v1.36 in a Lima Ubuntu VM on macOS (`vzNAT`, node IP
+pinned). **edge** is k3d with NodePort 30800 mapped to `localhost:30801`.
 
 ## Roadmap
 
-- [x] Read-only monitoring, problems, logs, events
-- [x] Control actions with guardrails and audit log
-- [x] Map, ConfigMaps and Secrets views
-- [x] Multi-cluster dashboard and standalone dashboard container
-- [x] Live CPU/memory charts (cluster, node, pod)
-- [ ] Alerts: a rule engine with Slack, Telegram and email notifications
-- [x] Multi-arch image on Docker Hub (`k10y/k10y-agent`, `make push`)
-- [x] One-command installer (`install.yaml`, `install-readonly.yaml`) with self-provisioned token
-- [ ] Long-term metrics (Prometheus integration) and persistent audit log (PVC)
-- [ ] Per-user authentication instead of one shared token per cluster
-- [x] AI assistant (Gemini / OpenAI-compatible): diagnosis and human-approved fixes
+- [x] Monitoring, problems, logs, events; control actions with guardrails
+- [x] Map, details panels, all common resource pages
+- [x] Multi-cluster, multi-arch image, one-command installer
+- [x] Live CPU/memory charts and live log streaming
+- [x] AI assistant (Gemini / OpenAI-compatible) with human-approved fixes
+- [x] Hub with PostgreSQL: login, custom roles, encrypted secrets, permanent audit log
+- [x] Alerts with Telegram
+- [ ] More alert channels (Slack, email, webhooks)
+- [ ] Long-term metrics (Prometheus integration)
+- [ ] Single sign-on (OIDC)

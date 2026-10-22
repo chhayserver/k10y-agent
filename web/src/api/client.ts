@@ -12,7 +12,7 @@ let onUnauthorized: (() => void) | null = null;
 let onPasswordRequired: (() => void) | null = null;
 export function setAuthHandlers(unauth: () => void, password: () => void) { onUnauthorized = unauth; onPasswordRequired = password; }
 
-function qs(query?: Query): string {
+export function qs(query?: Query): string {
   if (!query) return "";
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) if (v !== null && v !== undefined && v !== "") p.set(k, String(v));

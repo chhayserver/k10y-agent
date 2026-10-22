@@ -17,3 +17,17 @@
 .assign-row .select { flex: 1; min-width: 0; }
 dialog.wide { width: min(880px, calc(100vw - 32px)); }
 .pill-tag { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: var(--neutral-wash); color: var(--text-2); }
+
+/* alerts */
+.count-pill { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 9px; font-size: 11px; line-height: 18px;
+  text-align: center; background: var(--critical); color: #fff; font-variant-numeric: tabular-nums; }
+.count-pill.neutral { background: var(--border); color: var(--text); }
+.banner.info { background: var(--surface-active); border-color: var(--border); color: var(--text); }
+.section-bar .grow { flex: 1; }
+
+/* live logs */
+.live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; background: var(--muted); vertical-align: 1px; }
+.live-dot.on { background: var(--good, #2e9e5b); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good, #2e9e5b) 25%, transparent); }
+.logs-bar .search.sm { min-width: 160px; flex: 0 1 220px; }
+.log-pod { font-weight: 600; }
+pre.logs { max-height: 520px; }

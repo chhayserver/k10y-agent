@@ -17,7 +17,7 @@ metadata:
   name: k10y-agent-read
 rules:
   - apiGroups: [""]
-    resources: [nodes, namespaces, pods, pods/log, events, services, persistentvolumeclaims, configmaps]
+    resources: [nodes, namespaces, pods, pods/log, events, services, persistentvolumeclaims, persistentvolumes, configmaps]
     verbs: [get, list, watch]
   # Secrets page and map. Kubernetes cannot grant "metadata only", so this permission
   # technically allows reading values; the agent API only ever returns names, type
@@ -29,7 +29,10 @@ rules:
     resources: [ingresses]
     verbs: [get, list, watch]
   - apiGroups: [batch]
-    resources: [jobs]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
     verbs: [get, list, watch]
   - apiGroups: [apps]
     resources: [deployments, statefulsets, daemonsets, replicasets]

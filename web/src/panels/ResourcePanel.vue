@@ -4,6 +4,7 @@ import { agent } from "@/api/client";
 import Badge from "@/components/Badge.vue";
 import Chips from "@/components/Chips.vue";
 import Icon from "@/components/Icon.vue";
+import LogViewer from "@/components/LogViewer.vue";
 import RowMenu from "@/components/RowMenu.vue";
 import Skeleton from "@/components/Skeleton.vue";
 import { menuFor } from "@/lib/actions";
@@ -17,6 +18,9 @@ import PanelHead from "./PanelHead.vue";
 const props = defineProps<{ r: PanelRef }>();
 const s = useSession();
 const tab = ref(props.r.tab || "overview");
+const LOG_KINDS: Record<string, string> = { Deployment: "deployments", StatefulSet: "statefulsets", DaemonSet: "daemonsets", Job: "jobs" };
+const logPath = computed(() => (LOG_KINDS[props.r.kind] && s.can("logs.view") ? `${LOG_KINDS[props.r.kind]}/${props.r.namespace}/${props.r.name}/logs` : ""));
+const tabs = computed(() => [["overview", "Overview"], ["yaml", "YAML"], ["events", `Events${d.value ? ` · ${d.value.events.length}` : ""}`], ...(logPath.value ? [["logs", "Logs"]] : [])]);
 const d = ref<any>(null), error = ref("");
 async function load() {
   d.value = null; error.value = "";
@@ -29,7 +33,7 @@ const o = computed(() => d.value?.object || {});
 const meta = computed(() => o.value.metadata || {});
 const sp = computed(() => o.value.spec || {});
 const st = computed(() => o.value.status || {});
-const tmpl = computed(() => sp.value.template?.spec);
+const tmpl = computed(() => sp.value.template?.spec || sp.value.jobTemplate?.spec?.template?.spec);
 const tmplLabels = computed(() => sp.value.template?.metadata?.labels);
 const ann = computed(() => Object.entries<string>(meta.value.annotations || {}));
 const menuKind: Record<string, string> = { Deployment: "deployment", StatefulSet: "statefulset", DaemonSet: "daemonset", Job: "job", Service: "service", Node: "node", ConfigMap: "configmap", Secret: "secret", Pod: "pod" };
@@ -81,7 +85,7 @@ async function copyYaml() { try { await navigator.clipboard.writeText(d.value.ya
     </template>
   </PanelHead>
   <div style="padding:10px 20px 0"><div class="segmented" role="tablist">
-    <button v-for="t in [['overview', 'Overview'], ['yaml', 'YAML'], ['events', `Events${d ? ` · ${d.events.length}` : ''}`]]" :key="t[0]" role="tab" :aria-pressed="tab === t[0]" :aria-selected="tab === t[0]" @click="tab = t[0]">{{ t[1] }}</button>
+    <button v-for="t in tabs" :key="t[0]" role="tab" :aria-pressed="tab === t[0]" :aria-selected="tab === t[0]" @click="tab = t[0]">{{ t[1] }}</button>
   </div></div>
   <div class="drawer-body">
     <div v-if="error" class="empty"><Icon name="crit" /><div class="title">Could not load {{ r.kind }}</div><div>{{ error }}</div></div>
@@ -92,6 +96,8 @@ async function copyYaml() { try { await navigator.clipboard.writeText(d.value.ya
       <pre class="logs" style="max-height:none;white-space:pre">{{ d.yaml }}</pre>
     </template>
     <EventsList v-else-if="tab === 'events'" :events="d.events" />
+    <div v-else-if="tab === 'logs' && logPath"><p class="hint" style="margin:0 0 10px">Live logs from every pod of this {{ r.kind }}, each line tagged with its pod.</p>
+      <LogViewer :path="logPath" workload :label="`${r.namespace}-${r.name}`" /></div>
     <template v-else>
       <div class="kv">
         <div><span>Created</span><b>{{ meta.creationTimestamp ? new Date(meta.creationTimestamp).toLocaleString() : "–" }} <span class="dim">({{ fmt.ago(meta.creationTimestamp) }})</span></b></div>
@@ -151,6 +157,26 @@ async function copyYaml() { try { await navigator.clipboard.writeText(d.value.ya
           <template v-else-if="r.kind === 'PersistentVolumeClaim'">
             <div><span>Phase</span><b>{{ st.phase }}</b></div><div><span>Capacity</span><b>{{ qty(st.capacity) }}</b></div>
             <div><span>Access modes</span><b>{{ (sp.accessModes || []).join(", ") }}</b></div><div><span>Storage class</span><b>{{ sp.storageClassName || "–" }}</b></div>
+          </template>
+          <template v-else-if="r.kind === 'CronJob'">
+            <div><span>Schedule</span><b style="font-family:var(--mono)">{{ sp.schedule }}{{ sp.timeZone ? ` (${sp.timeZone})` : "" }}</b></div>
+            <div><span>Suspended</span><b>{{ sp.suspend ? "Yes" : "No" }}</b></div><div><span>Concurrency</span><b>{{ sp.concurrencyPolicy || "Allow" }}</b></div>
+            <div><span>Last run</span><b>{{ fmt.ago(st.lastScheduleTime) }}</b></div><div><span>Last success</span><b>{{ fmt.ago(st.lastSuccessfulTime) }}</b></div>
+            <div><span>Running jobs</span><b>{{ (st.active || []).length }}</b></div>
+            <div><span>History kept</span><b>{{ sp.successfulJobsHistoryLimit ?? 3 }} ok · {{ sp.failedJobsHistoryLimit ?? 1 }} failed</b></div>
+          </template>
+          <template v-else-if="r.kind === 'PersistentVolume'">
+            <div><span>Phase</span><b>{{ st.phase }}</b></div><div><span>Capacity</span><b>{{ sp.capacity?.storage || "–" }}</b></div>
+            <div><span>Access modes</span><b>{{ (sp.accessModes || []).join(", ") }}</b></div><div><span>Reclaim policy</span><b>{{ sp.persistentVolumeReclaimPolicy }}</b></div>
+            <div><span>Storage class</span><b>{{ sp.storageClassName || "–" }}</b></div>
+            <div><span>Source</span><b style="font-family:var(--mono)">{{ sp.hostPath?.path || sp.local?.path || sp.csi?.driver || sp.nfs?.server || Object.keys(sp).find((k) => !["capacity", "accessModes", "claimRef", "persistentVolumeReclaimPolicy", "storageClassName", "volumeMode", "nodeAffinity", "mountOptions"].includes(k)) || "–" }}</b></div>
+          </template>
+          <template v-else-if="r.kind === 'HorizontalPodAutoscaler'">
+            <div><span>Scales</span><b><OpenLink :kind="sp.scaleTargetRef?.kind" :namespace="r.namespace" :name="sp.scaleTargetRef?.name" /></b></div>
+            <div><span>Replicas</span><b>{{ st.currentReplicas ?? "–" }} current · {{ st.desiredReplicas ?? "–" }} desired · {{ sp.minReplicas ?? 1 }}–{{ sp.maxReplicas }}</b></div>
+            <div v-for="(m, i) in sp.metrics || []" :key="i"><span>{{ m.type }} metric</span><b>{{ m.resource?.name || m.pods?.metric?.name || m.object?.metric?.name || m.external?.metric?.name }} target
+              {{ m.resource?.target?.averageUtilization != null ? `${m.resource.target.averageUtilization}%` : (m.resource?.target?.averageValue || m.pods?.target?.averageValue || m.object?.target?.value || m.external?.target?.value || "") }}</b></div>
+            <div><span>Last scaled</span><b>{{ fmt.ago(st.lastScaleTime) }}</b></div>
           </template>
           <template v-else-if="r.kind === 'Ingress'"><div><span>Class</span><b>{{ sp.ingressClassName || "–" }}</b></div></template>
           <template v-else-if="r.kind === 'ConfigMap' || r.kind === 'Secret'"><div><span>Keys</span><b><Chips :keys="Object.keys(o.data || {})" /></b></div></template>

@@ -38,12 +38,16 @@ export const useCluster = defineStore("cluster", {
       try {
         if (!this.info) this.info = await a.get<Info>("info");
         const opt = <T>(p: Promise<T>, fallback: T) => p.catch(() => fallback);
-        const [summary, nodes, pods, deployments, services, events, statefulsets, daemonsets, jobs] = await Promise.all([
+        const [summary, nodes, pods, deployments, services, events, statefulsets, daemonsets, jobs, cronjobs, ingresses, pvcs, pvs, hpas] = await Promise.all([
           a.get("summary"), a.get("nodes"), a.get("pods"), a.get("deployments"), a.get("services"),
           a.get("events", { limit: 300 }), opt(a.get("statefulsets"), []), opt(a.get("daemonsets"), []), opt(a.get("jobs"), []),
+          // added in agent 2.0; older agents simply show empty pages
+          opt(a.get("cronjobs"), []), opt(a.get("ingresses"), []), opt(a.get("persistentvolumeclaims"), []),
+          opt(a.get("persistentvolumes"), []), opt(a.get("hpas"), []),
         ]);
         if (gen !== this.gen) return;
-        this.data = { summary, nodes, pods, deployments, services, events, statefulsets, daemonsets, jobs, canSecrets: can("secrets.view") };
+        this.data = { summary, nodes, pods, deployments, services, events, statefulsets, daemonsets, jobs, cronjobs, ingresses, pvcs, pvs, hpas,
+          canSecrets: can("secrets.view") };
         this.error = "";
         this.lastUpdated = Date.now();
       } catch (e: any) {

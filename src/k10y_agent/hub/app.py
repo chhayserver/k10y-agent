@@ -13,12 +13,13 @@ from typing import Any, Dict, List, Optional, Set
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .. import __version__, ai
+from . import alerts
 from ..config import Settings
 from .db import AuditEntry, Cluster, Database, Role, RoleAssignment, SessionRow, User, get_setting, utcnow
 from .permissions import ALL_PERMISSIONS, BUILTIN_ROLES, CLUSTER_PERMISSIONS, GLOBAL_PERMISSIONS, required_permission
@@ -77,6 +78,14 @@ def init(database_url: Optional[str] = None, secret: Optional[str] = None, data_
 def _startup() -> None:
     if "db" not in state:
         init()
+    if settings.alerts_enabled:
+        alert_engine().start()
+
+
+@app.on_event("shutdown")
+def _shutdown() -> None:
+    if "engine" in state:
+        state["engine"].stop()
 
 
 def db_session():
@@ -610,6 +619,8 @@ async def proxy(cluster_id: int, path: str, request: Request, p: Principal = Dep
         audit(s, request, p, path.split("/")[-1] if request.method == "POST" else "delete",
               f"{request.method} {path}", ok=ok, message=message, params=params, cluster=c, dry_run=dry)
 
+    if request.method == "GET" and path.endswith("/logs/stream"):
+        return await _proxy_stream(c, url, request, headers)
     try:
         async with httpx.AsyncClient(verify=c.verify_tls, timeout=httpx.Timeout(120.0, connect=8.0)) as client:
             r = await client.request(request.method, url, params=request.query_params, content=body, headers=headers)
@@ -620,6 +631,33 @@ async def proxy(cluster_id: int, path: str, request: Request, p: Principal = Dep
         record(r.status_code < 400, _describe_result(r))
     passthrough = {k: v for k, v in r.headers.items() if k.lower() in ("content-type",)}
     return Response(content=r.content, status_code=r.status_code, headers=passthrough)
+
+
+async def _proxy_stream(c: Cluster, url: str, request: Request, headers: Dict[str, str]) -> Response:
+    """Pass a live log stream through chunk by chunk; closing the browser tab closes the agent stream."""
+    client = httpx.AsyncClient(verify=c.verify_tls, timeout=httpx.Timeout(None, connect=8.0))
+    try:
+        r = await client.send(client.build_request("GET", url, params=request.query_params, headers=headers), stream=True)
+    except httpx.HTTPError as e:
+        await client.aclose()
+        return JSONResponse(status_code=502, content={"detail": f"Cannot reach agent {c.name}: {e}"})
+    if r.status_code >= 400:
+        content = await r.aread()
+        await r.aclose()
+        await client.aclose()
+        return Response(content=content, status_code=r.status_code, media_type=r.headers.get("content-type"))
+
+    async def body():
+        try:
+            async for chunk in r.aiter_raw():
+                yield chunk
+        except httpx.HTTPError:
+            pass
+        finally:
+            await r.aclose()
+            await client.aclose()
+    return StreamingResponse(body(), media_type="text/plain; charset=utf-8",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # --- audit ----------------------------------------------------------------------------
@@ -859,6 +897,48 @@ def diagnose(cluster_id: int, body: DiagnoseBody, request: Request, p: Principal
     audit(s, request, p, "ai-diagnose", target, cluster=c, params={"model": result["model"], "steps": len(result["steps"])},
           message=f"{len(result['issues'])} issue(s), {len(result['actions'])} proposed action(s), {result['seconds']}s")
     return {**result, "control_enabled": bool(info.get("control_enabled"))}
+
+
+# --- alerts ---------------------------------------------------------------------------
+
+def _agent_get(c: Cluster, path: str) -> Any:
+    with agent_client(c) as client:
+        r = client.get(f"/{path}")
+    if r.status_code >= 400:
+        raise RuntimeError(f"agent {r.status_code}: {_describe_result(r)}")
+    return r.json()
+
+
+def _alert_diagnose(c: Cluster, resource: str) -> str:
+    """Short AI diagnosis of a firing alert's object (kind/namespace/name), if an AI key is configured."""
+    kind, ns, name = (resource.split("/", 2) + ["", ""])[:3]
+    with state["db"].session() as s:
+        cfg = HubAIStore(s).load()
+    if not cfg.get("api_key"):
+        return ""
+    where = f" in namespace '{ns}'" if ns else ""
+    with agent_client(c) as client:
+        result = ai.diagnose(cfg, RemoteClusterTools(client), f"Investigate {kind} '{name}'{where}: what is wrong and "
+                             "how to fix it? Keep the summary under 600 characters.", [])
+    return result.get("summary", "")
+
+
+def alert_engine() -> alerts.AlertEngine:
+    if "engine" not in state:
+        state["engine"] = alerts.AlertEngine(state["db"].session, lambda v: crypto().decrypt(v), _agent_get,
+                                             _alert_diagnose, lambda: settings.public_url)
+    return state["engine"]
+
+
+class _EngineRef(dict):
+    def get(self, key, default=None):
+        return alert_engine() if key == "engine" and "db" in state else default
+
+    def __getitem__(self, key):
+        return alert_engine()
+
+
+app.include_router(alerts.build_router(db_session, current, require, audit, crypto, _EngineRef()))
 
 
 # --- web UI ---------------------------------------------------------------------------

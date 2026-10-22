@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     admin_user: str = "admin"
     admin_password: str = ""
     session_hours: int = 12
+    public_url: str = ""          # hub address used in alert links, e.g. https://k10y.example:8443
+    alerts_enabled: bool = True
     # Name this agent reports for its cluster; must be unique across clusters.
     cluster_name: str = "kubernetes"
     # Bearer token required on /api/*. Empty disables auth (local dev only),

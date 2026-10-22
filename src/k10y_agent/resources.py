@@ -24,6 +24,9 @@ KINDS: Dict[str, tuple] = {
     "ReplicaSet": ("apps", "read_namespaced_replica_set", True, "apps/v1"),
     "Job": ("batch", "read_namespaced_job", True, "batch/v1"),
     "Ingress": ("networking", "read_namespaced_ingress", True, "networking.k8s.io/v1"),
+    "CronJob": ("batch", "read_namespaced_cron_job", True, "batch/v1"),
+    "PersistentVolume": ("core", "read_persistent_volume", False, "v1"),
+    "HorizontalPodAutoscaler": ("autoscaling", "read_namespaced_horizontal_pod_autoscaler", True, "autoscaling/v2"),
     "Secret": (None, None, True, "v1"),  # listed by name; values are never returned
 }
 
@@ -155,6 +158,8 @@ class ResourceViewer:
         elif kind == "Node":
             pods = self._pods(None, field_selector=f"spec.nodeName={obj.metadata.name}")
         elif kind in ("ConfigMap", "Secret", "PersistentVolumeClaim"):
+            if kind == "PersistentVolumeClaim" and obj.spec.volume_name:
+                related.append(_ref("PersistentVolume", None, obj.spec.volume_name, "Bound to"))
             users = []
             for p in self.c.core.list_namespaced_pod(ns).items:
                 if any(k == kind and n == obj.metadata.name for k, n, _, _ in config_refs(p.spec)):
@@ -172,6 +177,21 @@ class ResourceViewer:
                     if p.backend and p.backend.service:
                         related.append(_ref("Service", ns, p.backend.service.name, "Routes to",
                                             f"{r.host or '*'}{p.path or '/'}"))
+        elif kind == "CronJob":
+            jobs = [j for j in self.c.batch.list_namespaced_job(ns).items
+                    if any(o.uid == obj.metadata.uid for o in j.metadata.owner_references or [])]
+            jobs.sort(key=lambda j: j.metadata.creation_timestamp, reverse=True)
+            from .collectors import job_info
+            for j in jobs[:10]:
+                related.append(_ref("Job", ns, j.metadata.name, "Recent jobs", job_info(j)["status"]))
+            for k, name, how, _ in sorted(config_refs(obj.spec.job_template.spec.template.spec)):
+                related.append(_ref(k, ns, name, "Uses", how))
+        elif kind == "PersistentVolume":
+            if obj.spec.claim_ref:
+                related.append(_ref("PersistentVolumeClaim", obj.spec.claim_ref.namespace, obj.spec.claim_ref.name, "Bound to"))
+        elif kind == "HorizontalPodAutoscaler":
+            ref = obj.spec.scale_target_ref
+            related.append(_ref(ref.kind, ns, ref.name, "Scales"))
         elif kind == "Namespace":
             name = obj.metadata.name
             related.append(_ref("Namespace", None, name, "Contains",

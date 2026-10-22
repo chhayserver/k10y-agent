@@ -198,6 +198,111 @@ def job_info(j: Any) -> Dict[str, Any]:
     }
 
 
+def cronjob_info(cj: Any) -> Dict[str, Any]:
+    st = cj.status
+    return {
+        "namespace": cj.metadata.namespace, "name": cj.metadata.name, "schedule": cj.spec.schedule,
+        "timezone": getattr(cj.spec, "time_zone", None), "suspended": bool(cj.spec.suspend),
+        "active": len(st.active or []) if st else 0,
+        "last_schedule_s": _age_seconds(st.last_schedule_time) if st else None,
+        "last_success_s": _age_seconds(getattr(st, "last_successful_time", None)) if st else None,
+        "concurrency": cj.spec.concurrency_policy, "containers": _containers(cj.spec.job_template.spec.template.spec),
+        "images": [c.image for c in cj.spec.job_template.spec.template.spec.containers],
+        "age_s": _age_seconds(cj.metadata.creation_timestamp),
+    }
+
+
+def ingress_info(ing: Any) -> Dict[str, Any]:
+    rules = []
+    for r in ing.spec.rules or []:
+        for p in (r.http.paths if r.http else []) or []:
+            svc = p.backend.service if p.backend else None
+            port = (svc.port.number or svc.port.name) if svc and svc.port else None
+            rules.append({"host": r.host or "*", "path": p.path or "/", "service": svc.name if svc else None, "port": port})
+    tls_hosts = sorted({h for t in ing.spec.tls or [] for h in t.hosts or []})
+    lb = (ing.status.load_balancer.ingress or []) if ing.status and ing.status.load_balancer else []
+    return {
+        "namespace": ing.metadata.namespace, "name": ing.metadata.name, "class": ing.spec.ingress_class_name,
+        "hosts": sorted({r["host"] for r in rules}), "rules": rules, "tls_hosts": tls_hosts,
+        "address": [x.ip or x.hostname for x in lb],
+        "default_backend": ing.spec.default_backend.service.name if ing.spec.default_backend and ing.spec.default_backend.service else None,
+        "age_s": _age_seconds(ing.metadata.creation_timestamp),
+    }
+
+
+def pv_info(pv: Any) -> Dict[str, Any]:
+    claim = pv.spec.claim_ref
+    return {
+        "name": pv.metadata.name, "capacity": (pv.spec.capacity or {}).get("storage"),
+        "capacity_bytes": _bytes((pv.spec.capacity or {}).get("storage")), "access_modes": pv.spec.access_modes or [],
+        "reclaim_policy": pv.spec.persistent_volume_reclaim_policy, "status": pv.status.phase if pv.status else None,
+        "claim": f"{claim.namespace}/{claim.name}" if claim else None, "storage_class": pv.spec.storage_class_name,
+        "age_s": _age_seconds(pv.metadata.creation_timestamp),
+    }
+
+
+def pvc_info(pvc: Any) -> Dict[str, Any]:
+    cap = (pvc.status.capacity or {}).get("storage") if pvc.status else None
+    req = ((pvc.spec.resources.requests or {}) if pvc.spec.resources else {}).get("storage")
+    return {
+        "namespace": pvc.metadata.namespace, "name": pvc.metadata.name, "status": pvc.status.phase if pvc.status else None,
+        "volume": pvc.spec.volume_name, "capacity": cap or req, "capacity_bytes": _bytes(cap or req),
+        "access_modes": pvc.spec.access_modes or [], "storage_class": pvc.spec.storage_class_name,
+        "age_s": _age_seconds(pvc.metadata.creation_timestamp),
+    }
+
+
+def hpa_info(h: Any) -> Dict[str, Any]:
+    st = h.status
+    targets = []
+    current = {(m.type, _metric_name(m)): m for m in (st.current_metrics or [])} if st else {}
+    for m in h.spec.metrics or []:
+        name, target = _metric_name(m), _metric_target(m)
+        cur = current.get((m.type, name))
+        targets.append({"type": m.type, "name": name, "target": target, "current": _metric_current(cur) if cur else None})
+    conds = {c.type: c for c in (st.conditions or [])} if st else {}
+    limited = conds.get("ScalingLimited")
+    able = conds.get("AbleToScale")
+    return {
+        "namespace": h.metadata.namespace, "name": h.metadata.name,
+        "target": f"{h.spec.scale_target_ref.kind}/{h.spec.scale_target_ref.name}",
+        "target_kind": h.spec.scale_target_ref.kind, "target_name": h.spec.scale_target_ref.name,
+        "min": h.spec.min_replicas or 1, "max": h.spec.max_replicas,
+        "current": st.current_replicas if st else None, "desired": st.desired_replicas if st else None,
+        "metrics": targets, "limited": bool(limited and limited.status == "True"),
+        "problem": (able.reason if able and able.status == "False" else None) or
+                   next((c.reason for c in conds.values() if c.type == "ScalingActive" and c.status == "False"), None),
+        "age_s": _age_seconds(h.metadata.creation_timestamp),
+    }
+
+
+def _metric_name(m: Any) -> str:
+    src = m.resource or m.container_resource or m.pods or m.object or m.external
+    if src is None:
+        return m.type
+    return getattr(src, "name", None) or (src.metric.name if getattr(src, "metric", None) else m.type)
+
+
+def _metric_target(m: Any) -> str:
+    src = m.resource or m.container_resource or m.pods or m.object or m.external
+    t = getattr(src, "target", None)
+    if t is None:
+        return ""
+    if t.average_utilization is not None:
+        return f"{t.average_utilization}%"
+    return str(t.average_value or t.value or "")
+
+
+def _metric_current(m: Any) -> str:
+    src = m.resource or m.container_resource or m.pods or m.object or m.external
+    c = getattr(src, "current", None)
+    if c is None:
+        return ""
+    if c.average_utilization is not None:
+        return f"{c.average_utilization}%"
+    return str(c.average_value or c.value or "")
+
+
 def service_info(svc: client.V1Service) -> Dict[str, Any]:
     spec = svc.spec
     ingress = (svc.status.load_balancer.ingress or []) if svc.status and svc.status.load_balancer else []
@@ -245,6 +350,7 @@ class Collector:
         self.version_api = client.VersionApi(api_client)
         self.networking = client.NetworkingV1Api(api_client)
         self.batch = client.BatchV1Api(api_client)
+        self.autoscaling = client.AutoscalingV2Api(api_client)
 
     def topology(self, namespace: str) -> Dict[str, Any]:
         from .topology import build_topology
@@ -440,6 +546,28 @@ class Collector:
     def jobs(self, namespace: Optional[str] = None) -> List[Dict[str, Any]]:
         items = (self.batch.list_namespaced_job(namespace) if namespace else self.batch.list_job_for_all_namespaces()).items
         return [job_info(j) for j in items]
+
+    def cronjobs(self, namespace: Optional[str] = None) -> List[Dict[str, Any]]:
+        items = (self.batch.list_namespaced_cron_job(namespace) if namespace else self.batch.list_cron_job_for_all_namespaces()).items
+        return [cronjob_info(x) for x in items]
+
+    def ingresses(self, namespace: Optional[str] = None) -> List[Dict[str, Any]]:
+        items = (self.networking.list_namespaced_ingress(namespace) if namespace
+                 else self.networking.list_ingress_for_all_namespaces()).items
+        return [ingress_info(x) for x in items]
+
+    def persistentvolumes(self) -> List[Dict[str, Any]]:
+        return [pv_info(x) for x in self.core.list_persistent_volume().items]
+
+    def persistentvolumeclaims(self, namespace: Optional[str] = None) -> List[Dict[str, Any]]:
+        items = (self.core.list_namespaced_persistent_volume_claim(namespace) if namespace
+                 else self.core.list_persistent_volume_claim_for_all_namespaces()).items
+        return [pvc_info(x) for x in items]
+
+    def hpas(self, namespace: Optional[str] = None) -> List[Dict[str, Any]]:
+        items = (self.autoscaling.list_namespaced_horizontal_pod_autoscaler(namespace) if namespace
+                 else self.autoscaling.list_horizontal_pod_autoscaler_for_all_namespaces()).items
+        return [hpa_info(x) for x in items]
 
     def services(self, namespace: Optional[str] = None) -> List[Dict[str, Any]]:
         items = (

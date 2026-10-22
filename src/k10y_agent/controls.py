@@ -2,6 +2,7 @@
 protected-namespace guard lives in one place; the API layer adds auditing."""
 
 import json
+import time
 import logging
 import os
 import threading
@@ -197,6 +198,31 @@ class Controller:
         fn = {"statefulset": self.apps.patch_namespaced_stateful_set, "daemonset": self.apps.patch_namespaced_daemon_set}[kind]
         fn(name, namespace, patch, **self._dry(dry_run))
         return {"message": f"rolling restart of {kind} {namespace}/{name} started"}
+
+    def suspend_cronjob(self, namespace: str, name: str, suspend: bool, dry_run: bool = False) -> Dict[str, Any]:
+        self.guard(namespace)
+        client.BatchV1Api(self.api_client).patch_namespaced_cron_job(
+            name, namespace, {"spec": {"suspend": suspend}}, **self._dry(dry_run))
+        return {"message": f"{'suspended' if suspend else 'resumed'} cronjob {namespace}/{name}"}
+
+    def trigger_cronjob(self, namespace: str, name: str, dry_run: bool = False) -> Dict[str, Any]:
+        """Run a CronJob now (same as kubectl create job --from=cronjob/NAME)."""
+        self.guard(namespace)
+        batch = client.BatchV1Api(self.api_client)
+        cj = batch.read_namespaced_cron_job(name, namespace)
+        tmpl = cj.spec.job_template
+        job_name = f"{name[:40]}-manual-{int(time.time()) % 100000:05d}"
+        annotations = dict((tmpl.metadata.annotations or {}) if tmpl.metadata else {})
+        annotations["cronjob.kubernetes.io/instantiate"] = "manual"
+        job = client.V1Job(
+            metadata=client.V1ObjectMeta(
+                name=job_name, namespace=namespace, annotations=annotations,
+                labels=(tmpl.metadata.labels if tmpl.metadata else None),
+                owner_references=[client.V1OwnerReference(api_version="batch/v1", kind="CronJob", name=name,
+                                                          uid=cj.metadata.uid, controller=True)]),
+            spec=tmpl.spec)
+        batch.create_namespaced_job(namespace, job, **self._dry(dry_run))
+        return {"message": f"started job {namespace}/{job_name} from cronjob {name}", "job": job_name}
 
     def delete_job(self, namespace: str, name: str, dry_run: bool = False) -> Dict[str, Any]:
         self.guard(namespace)
