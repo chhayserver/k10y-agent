@@ -73,7 +73,8 @@ def _request(
         headers["Authorization"] = f"Bearer {endpoint['token']}"
     params = {k: v for k, v in (params or {}).items() if v is not None}
     resp = httpx.request(
-        method, endpoint["url"].rstrip("/") + path, headers=headers, params=params, json=body, timeout=60
+        method, endpoint["url"].rstrip("/") + path, headers=headers, params=params, json=body, timeout=60,
+        verify=not endpoint.get("insecure", False),
     )
     resp.raise_for_status()
     return resp
@@ -143,10 +144,11 @@ def cluster_add(
     name: str,
     url: str = typer.Argument(..., help="Agent URL, e.g. http://192.168.64.2:30800"),
     token: str = typer.Option("", "--token", "-t", help="Agent API token."),
+    insecure: bool = typer.Option(False, "--insecure", "-k", help="Skip TLS verification (self-signed agent certificate)."),
 ) -> None:
     """Register an agent endpoint (and make it current if it is the first)."""
     cfg = load_config()
-    cfg["clusters"][name] = {"url": url, "token": token}
+    cfg["clusters"][name] = {"url": url, "token": token, "insecure": insecure}
     if not cfg["current"]:
         cfg["current"] = name
     save_config(cfg)

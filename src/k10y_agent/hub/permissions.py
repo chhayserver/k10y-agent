@@ -1,0 +1,67 @@
+"""Permission catalog, built-in roles, and which permission each proxied agent call needs."""
+
+import re
+from typing import Dict, List, Optional, Tuple
+
+# Cluster-scoped permissions can be granted on all clusters or on one cluster.
+CLUSTER_PERMISSIONS: Dict[str, str] = {
+    "cluster.view": "See the cluster: overview, nodes, workloads, pods, services, ConfigMaps, events, map, charts",
+    "secrets.view": "See Secrets (names, types and key names; values are never shown)",
+    "logs.view": "Read pod logs",
+    "workloads.scale": "Scale Deployments and StatefulSets",
+    "workloads.restart": "Restart Deployments, StatefulSets and DaemonSets",
+    "workloads.update_image": "Change a Deployment's container image",
+    "workloads.rollback": "Roll back Deployments",
+    "workloads.delete": "Delete Deployments and Jobs",
+    "pods.delete": "Delete pods",
+    "services.delete": "Delete Services",
+    "config.delete": "Delete ConfigMaps and Secrets",
+    "nodes.manage": "Cordon, uncordon and drain nodes",
+    "apply.yaml": "Create or update objects with Apply YAML",
+    "ai.use": "Run AI investigations",
+    "audit.view": "See the activity log",
+}
+# Global permissions only count when granted on all clusters.
+GLOBAL_PERMISSIONS: Dict[str, str] = {
+    "clusters.manage": "Add, edit and remove clusters",
+    "users.manage": "Manage users, roles and role assignments",
+    "settings.manage": "Manage system settings (AI providers, alert channels)",
+    "alerts.manage": "Create and edit alert rules",
+}
+ALL_PERMISSIONS = {**CLUSTER_PERMISSIONS, **GLOBAL_PERMISSIONS}
+
+BUILTIN_ROLES: List[Tuple[str, str, List[str]]] = [
+    ("Admin", "Everything, including users, roles, clusters and settings", sorted(ALL_PERMISSIONS)),
+    ("Operator", "View clusters, read logs, run control actions and AI",
+     ["cluster.view", "logs.view", "secrets.view", "workloads.scale", "workloads.restart", "workloads.update_image",
+      "workloads.rollback", "pods.delete", "apply.yaml", "ai.use", "audit.view"]),
+    ("Viewer", "Read-only access to clusters and logs", ["cluster.view", "logs.view", "audit.view"]),
+]
+
+# (method, path regex relative to /api/v1/, permission). First match wins.
+_RULES: List[Tuple[str, re.Pattern, str]] = [(m, re.compile(p), perm) for m, p, perm in [
+    ("GET", r"^secrets(/|$)", "secrets.view"),
+    ("GET", r"^pods/[^/]+/[^/]+/logs$", "logs.view"),
+    ("GET", r"^resource$", "cluster.view"),           # Secret objects re-checked in the hub
+    ("GET", r"^audit$", "audit.view"),
+    ("GET", r"^ai(/|$)", "__deny__"),                 # AI runs in the hub
+    ("GET", r".*", "cluster.view"),
+    ("POST", r"^(deployments|statefulsets)/[^/]+/[^/]+/scale$", "workloads.scale"),
+    ("POST", r"^(deployments|statefulsets|daemonsets)/[^/]+/[^/]+/restart$", "workloads.restart"),
+    ("POST", r"^deployments/[^/]+/[^/]+/image$", "workloads.update_image"),
+    ("POST", r"^deployments/[^/]+/[^/]+/rollback$", "workloads.rollback"),
+    ("POST", r"^nodes/[^/]+/(cordon|uncordon|drain)$", "nodes.manage"),
+    ("POST", r"^apply$", "apply.yaml"),
+    ("DELETE", r"^(deployments|jobs)/[^/]+/[^/]+$", "workloads.delete"),
+    ("DELETE", r"^pods/[^/]+/[^/]+$", "pods.delete"),
+    ("DELETE", r"^services/[^/]+/[^/]+$", "services.delete"),
+    ("DELETE", r"^(configmaps|secrets)/[^/]+/[^/]+$", "config.delete"),
+]]
+
+
+def required_permission(method: str, path: str) -> Optional[str]:
+    """Permission needed to proxy `method path` to an agent; None means not allowed at all."""
+    for m, pattern, perm in _RULES:
+        if m == method.upper() and pattern.search(path):
+            return None if perm == "__deny__" else perm
+    return None

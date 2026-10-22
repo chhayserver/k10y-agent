@@ -21,7 +21,7 @@ spec:
         - name: agent
           # Published on Docker Hub (multi-arch: amd64 + arm64). For local builds,
           # `make load` / `make load-k3d` import the same name so no pull is needed.
-          image: docker.io/k10y/k10y-agent:1.5.0
+          image: docker.io/k10y/k10y-agent:1.6.0
           imagePullPolicy: IfNotPresent
           ports:
             - {name: http, containerPort: 8080}
@@ -40,11 +40,15 @@ spec:
                 configMapKeyRef: {name: k10y-agent, key: protected-namespaces}
             - name: K10Y_AUDIT_PATH
               value: /data/audit.jsonl
+            # HTTPS with a self-signed certificate generated at start-up (no Ingress needed).
+            # The hub connects with certificate verification off unless you enable it per cluster.
+            - name: K10Y_TLS
+              value: "true"
           readinessProbe:
-            httpGet: {path: /healthz, port: http}
+            httpGet: {path: /healthz, port: http, scheme: HTTPS}
             periodSeconds: 10
           livenessProbe:
-            httpGet: {path: /healthz, port: http}
+            httpGet: {path: /healthz, port: http, scheme: HTTPS}
             periodSeconds: 20
           resources:
             requests: {cpu: 50m, memory: 128Mi}

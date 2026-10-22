@@ -1,5 +1,5 @@
 IMAGE        ?= k10y/k10y-agent
-TAG          ?= 1.5.0
+TAG          ?= 1.6.0
 VM           ?= rke2
 CLUSTER_NAME ?= lab
 KUBECONFIG   ?= $(HOME)/.kube/rke2.yaml
@@ -13,7 +13,7 @@ export KUBECONFIG
 CTR = limactl shell $(VM) sudo /var/lib/rancher/rke2/bin/ctr \
       --address /run/k3s/containerd/containerd.sock -n k8s.io
 
-.PHONY: build test load deploy restart up token logs undeploy dashboard dashboard-stop load-k3d push manifests
+.PHONY: build test load deploy restart up token logs undeploy dashboard dashboard-stop load-k3d push manifests hub-init hub-up hub-down hub-logs
 
 build:            ## Build the agent image with Docker
 	docker build -t $(IMAGE):$(TAG) .
@@ -88,3 +88,23 @@ dashboard: build  ## Run the standalone dashboard (UI only, no cluster access) i
 
 dashboard-stop:   ## Stop and remove the standalone dashboard container
 	docker rm -f k10y-dashboard
+
+# --- hub (docker compose: hub + PostgreSQL) -------------------------------------------
+hub-init:         ## Create .env with random database password, secret key and admin password
+	@test -f .env || ( \
+	  echo "POSTGRES_PASSWORD=$$(openssl rand -hex 24)" > .env && \
+	  echo "K10Y_SECRET_KEY=$$(openssl rand -base64 48 | tr -d '\n')" >> .env && \
+	  echo "K10Y_ADMIN_USER=admin" >> .env && \
+	  echo "K10Y_ADMIN_PASSWORD=$$(openssl rand -base64 12 | tr -d '/+=\n')" >> .env && \
+	  chmod 600 .env && echo "created .env" )
+	@grep K10Y_ADMIN .env
+
+hub-up: hub-init  ## Start hub + PostgreSQL (uses the local build of $(IMAGE):$(TAG))
+	K10Y_IMAGE=$(IMAGE):$(TAG) docker compose up -d
+	@echo "Hub: https://localhost:8443  (self-signed certificate)"
+
+hub-down:         ## Stop hub + PostgreSQL (data is kept in Docker volumes)
+	docker compose down
+
+hub-logs:         ## Follow hub logs
+	docker compose logs -f hub

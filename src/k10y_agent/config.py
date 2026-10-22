@@ -8,9 +8,24 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="K10Y_")
 
-    # "agent": talks to its cluster and serves API + dashboard.
-    # "dashboard": serves only the web UI (no cluster access); the browser talks to agents.
+    # "agent": talks to its cluster and serves the cluster API.
+    # "hub": central server: web UI, login, users/roles, clusters, audit, alerts (PostgreSQL);
+    #        proxies to agents. "dashboard": legacy UI-only mode.
     mode: str = "agent"
+    # HTTPS. With no cert/key files a self-signed certificate is generated in tls_dir.
+    tls: bool = False
+    tls_cert: str = ""
+    tls_key: str = ""
+    tls_dir: str = "/tmp/k10y-tls"
+    # Hub only.
+    database_url: str = ""
+    # Master key that encrypts stored secrets (agent tokens, AI keys, alert tokens).
+    # If empty, a key is generated once and kept in <data_dir>/secret.key.
+    secret_key: str = ""
+    data_dir: str = "/data"
+    admin_user: str = "admin"
+    admin_password: str = ""
+    session_hours: int = 12
     # Name this agent reports for its cluster; must be unique across clusters.
     cluster_name: str = "kubernetes"
     # Bearer token required on /api/*. Empty disables auth (local dev only),

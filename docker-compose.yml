@@ -1,0 +1,48 @@
+# k10y hub + PostgreSQL.  Start:  make hub-up   (creates .env with random secrets on first run)
+# Then open https://localhost:8443 (self-signed certificate) and log in as the admin from .env.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: k10y
+      POSTGRES_USER: k10y
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run make hub-init first}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U k10y -d k10y"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    # Not published on the host: only the hub can reach the database.
+
+  hub:
+    image: ${K10Y_IMAGE:-docker.io/k10y/k10y-agent:1.6.0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      K10Y_MODE: hub
+      K10Y_PORT: "8443"
+      K10Y_TLS: "true"
+      K10Y_TLS_DIR: /data/tls
+      K10Y_DATABASE_URL: postgresql://k10y:${POSTGRES_PASSWORD}@postgres:5432/k10y
+      # Encrypts agent tokens, AI keys and alert credentials stored in PostgreSQL. Keep it safe:
+      # without it the stored secrets cannot be decrypted.
+      K10Y_SECRET_KEY: ${K10Y_SECRET_KEY:?run make hub-init first}
+      K10Y_ADMIN_USER: ${K10Y_ADMIN_USER:-admin}
+      K10Y_ADMIN_PASSWORD: ${K10Y_ADMIN_PASSWORD:-}
+    ports:
+      - "${K10Y_HUB_PORT:-8443}:8443"
+    volumes:
+      - hubdata:/data          # self-signed certificate (so the browser exception stays valid)
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  hubdata:
