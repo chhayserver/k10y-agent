@@ -26,6 +26,10 @@ apply YAML) go through guardrails: protected namespaces, dry run, confirmation a
   request and limit. Ranges are 5m, 15m and 1h.
 - Nodes, deployments, pods, services, ConfigMaps, Secrets (key names only), events and pod logs,
   including the previous crashed container.
+- **Namespaces page:** status, running/total pods, problems, deployments, services, CPU and memory,
+  labels and protected marker per namespace; open details, show on map, or diagnose with AI.
+- **Settings (per browser):** choose which pages appear in the sidebar, theme (system, light or
+  dark), auto-refresh interval (5–60s) and start page; reset to defaults at any time.
 - **Workload pages:** Deployments, StatefulSets (scale, restart), DaemonSets (restart) and Jobs
   (status, completions, failed pods, duration, created-by CronJob; delete with its pods).
   Under-replicated StatefulSets and DaemonSets, and failed Jobs, appear under Problems.
@@ -137,7 +141,7 @@ EKS, GKE and AKS include metrics-server.
 ### 1. Build the image
 
 ```bash
-make build        # docker build -t k10y/k10y-agent:1.4.0 .
+make build        # docker build -t k10y/k10y-agent:1.5.0 .
 make test         # unit tests, run inside the image
 ```
 
@@ -150,12 +154,12 @@ make load                         # RKE2 inside a Lima VM (VM=rke2): imports int
 make load-k3d K3D_CLUSTER=edge    # k3d / k3s-in-Docker
 ```
 
-Any other cluster pulls `docker.io/k10y/k10y-agent:1.4.0` from Docker Hub, so this step can be skipped.
+Any other cluster pulls `docker.io/k10y/k10y-agent:1.5.0` from Docker Hub, so this step can be skipped.
 To publish your own build (multi-arch amd64 + arm64):
 
 ```bash
 docker login
-make push                                             # → docker.io/k10y/k10y-agent:1.4.0 and :latest
+make push                                             # → docker.io/k10y/k10y-agent:1.5.0 and :latest
 make push REGISTRY_IMAGE=ghcr.io/<you>/k10y-agent     # or another registry, then set image: in deploy/k8s/agent.yaml
 ```
 
@@ -297,6 +301,7 @@ their audit entries; the dashboard sends `dashboard` and the CLI sends `cli:<use
 | `GET /api/v1/metrics/history?scope=cluster\|nodes\|pod&namespace=&name=&since=` | CPU/memory history (epoch ms) |
 | `GET /api/v1/topology?namespace=` | Relationship graph for the Map |
 | `GET /api/v1/namespaces` | Namespace names |
+| `GET /api/v1/namespaces/details` | Namespaces with pod/deployment/service counts, problems and CPU/memory |
 | `GET /api/v1/resource?kind=&namespace=&name=` | One object: live spec/status, YAML, events, related objects (Pod, Deployment, StatefulSet, DaemonSet, ReplicaSet, Job, Service, Ingress, Node, Namespace, ConfigMap, Secret, PVC) |
 | `GET /api/v1/deployments/{ns}/{name}/history` | Revisions |
 | `GET /api/v1/audit?limit=` | Audit log, newest first |

@@ -338,6 +338,35 @@ class Collector:
     def namespaces(self) -> List[str]:
         return sorted(n.metadata.name for n in self.core.list_namespace().items)
 
+    def namespace_details(self) -> List[Dict[str, Any]]:
+        """Every namespace with workload counts, problems and current CPU/memory use."""
+        out: Dict[str, Dict[str, Any]] = {}
+        for n in self.core.list_namespace().items:
+            out[n.metadata.name] = {
+                "name": n.metadata.name, "status": n.status.phase if n.status else "Unknown",
+                "labels": {k: v for k, v in (n.metadata.labels or {}).items() if k != "kubernetes.io/metadata.name"},
+                "age_s": _age_seconds(n.metadata.creation_timestamp),
+                "pods": 0, "running": 0, "problems": 0, "deployments": 0, "services": 0,
+                "cpu_usage_m": None, "memory_usage_bytes": None,
+            }
+        for p in self.pods():
+            ns = out.get(p["namespace"])
+            if ns is None:
+                continue
+            ns["pods"] += 1
+            ns["running"] += p["phase"] == "Running"
+            ns["problems"] += bool(p["problem"])
+            if p["cpu_usage_m"] is not None:
+                ns["cpu_usage_m"] = (ns["cpu_usage_m"] or 0) + p["cpu_usage_m"]
+                ns["memory_usage_bytes"] = (ns["memory_usage_bytes"] or 0) + p["memory_usage_bytes"]
+        for d in self.deployments():
+            if d["namespace"] in out:
+                out[d["namespace"]]["deployments"] += 1
+        for s in self.services():
+            if s["namespace"] in out:
+                out[s["namespace"]]["services"] += 1
+        return sorted(out.values(), key=lambda x: x["name"])
+
     def version(self) -> str:
         return self.version_api.get_code().git_version
 

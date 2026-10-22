@@ -126,6 +126,7 @@
   .brand-mark svg { width: 18px; height: 18px; stroke-width: 2.2; }
   .nav .nav-label:not(:first-child) { margin-top: 10px; }
   .nav-label { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; padding: 8px 10px 4px; }
+  .nav { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; }
   .nav a { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; color: var(--text-2);
            text-decoration: none; font-weight: 500; }
   .nav a:hover { background: var(--surface-hover); color: var(--text); }
@@ -497,6 +498,22 @@
   .ai-running .spinner { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--track); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
   @media (max-width: 1100px) { .ai-grid { grid-template-columns: minmax(0, 1fr); } }
 
+  /* ---------- settings ---------- */
+  .settings-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  .tab-groups { display: grid; gap: 14px; }
+  .tab-groups h4 { margin: 0 0 6px; font-size: 12px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+  .tab-toggle { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; cursor: pointer; }
+  .tab-toggle:hover { background: var(--surface-hover); }
+  .tab-toggle input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
+  .tab-toggle .icon { color: var(--text-2); }
+  .tab-toggle .hint { margin-left: auto; }
+  .tab-toggle.locked { cursor: default; opacity: .75; }
+  .pref-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 0; border-top: 1px solid var(--border); }
+  .pref-row:first-child { border-top: 0; padding-top: 0; }
+  .pref-row .lbl { flex: 1; min-width: 160px; }
+  .pref-row .lbl div { color: var(--muted); font-size: 12px; font-weight: 400; }
+  @media (max-width: 1100px) { .settings-grid { grid-template-columns: minmax(0, 1fr); } }
+
   /* ---------- responsive ---------- */
   @media (max-width: 1280px) { .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
   @media (max-width: 1100px) {
@@ -509,7 +526,8 @@
     .brand { padding: 0 8px 0 0; }
     .brand span, .nav-label, .sidebar-foot, .cluster-switch .cs-label { display: none; }
     .cluster-switch { width: auto; margin: 0; padding: 5px 8px; flex: none; max-width: 160px; }
-    .nav { display: flex; gap: 2px; }
+    .nav { display: flex; gap: 2px; overflow: visible; flex: none; }
+    .nav .nav-label { display: none; }
     .nav a { padding: 6px 10px; white-space: nowrap; }
     .nav a .count { display: none; }
     .topbar { position: static; padding: 10px 16px; gap: 6px; }
@@ -567,6 +585,8 @@
     <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 3h7v7M21 3l-9 9M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></symbol>
     <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></symbol>
     <symbol id="i-ai" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
     <symbol id="i-map" viewBox="0 0 24 24"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></symbol>
     <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
     <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
@@ -808,6 +828,8 @@ const state = {
 const saveUi = () => store.set("k10y-ui", state.ui);
 // Views added after the UI state was first saved in a browser.
 state.ui.range = RANGES[state.ui.range] ? state.ui.range : "15m";
+state.ui.prefs = { hidden: [], refresh: 10, start: "overview", ...(state.ui.prefs || {}) };
+state.ui.namespaces = state.ui.namespaces || { q: "", sort: { key: "name", dir: 1 } };
 state.ui.map = state.ui.map || { ns: "", rs: false, config: true, q: "" };
 for (const k of ["statefulsets", "daemonsets", "jobs"]) state.ui[k] = state.ui[k] || { q: "", ns: "", sort: { key: "namespace", dir: 1 } };
 state.ui.configmaps = state.ui.configmaps || { q: "", ns: "", filter: "all", sort: { key: "namespace", dir: 1 } };
@@ -971,6 +993,7 @@ const NAV = [
   { id: "map", label: "Map", icon: "map", section: "Cluster" },
   { id: "ai", label: "AI Assistant", icon: "ai", section: "Cluster" },
   { id: "nodes", label: "Nodes", icon: "nodes", section: "Cluster" },
+  { id: "namespaces", label: "Namespaces", icon: "folder", section: "Cluster" },
   { id: "deployments", label: "Deployments", icon: "deploy", section: "Workloads" },
   { id: "statefulsets", label: "StatefulSets", icon: "db", section: "Workloads" },
   { id: "daemonsets", label: "DaemonSets", icon: "nodes", section: "Workloads" },
@@ -981,7 +1004,9 @@ const NAV = [
   { id: "secrets", label: "Secrets", icon: "lock", section: "Network & config" },
   { id: "events", label: "Events", icon: "events", section: "Activity" },
   { id: "activity", label: "Activity", icon: "audit", section: "Activity" },
+  { id: "settings", label: "Settings", icon: "gear", section: "You", locked: true },
 ];
+const visibleNav = () => NAV.filter((n) => n.locked || !state.ui.prefs.hidden.includes(n.id));
 
 function renderNav() {
   const d = state.data;
@@ -999,7 +1024,7 @@ function renderNav() {
     clusters: { n: reg.list.length > 1 ? reg.list.length : "", alert: reg.list.some((c) => fleetLevel(c.id) === "critical") },
   } : {};
   let section = null;
-  $("#nav").innerHTML = NAV.filter((item) => cur() || item.id === "clusters").map((item) => {
+  $("#nav").innerHTML = visibleNav().filter((item) => cur() || item.id === "clusters" || item.id === "settings").map((item) => {
     const c = counts[item.id];
     const count = c && c.n !== "" ? `<span class="count ${c.alert ? "alert" : ""}">${c.n}</span>` : "";
     const head = item.section !== section ? `<div class="nav-label">${esc(item.section)}</div>` : "";
@@ -2649,6 +2674,147 @@ VIEWS.jobs = workloadView({
   ],
 });
 
+
+/* ---- Namespaces ---- */
+VIEWS.namespaces = {
+  mount(root) {
+    const ui = state.ui.namespaces;
+    root.innerHTML = `
+      <div class="toolbar">
+        <label class="search">${icon("search")}<input class="input" id="ns-q" placeholder="Search namespaces or labels" value="${esc(ui.q)}" aria-label="Search"><kbd>/</kbd></label>
+        <span class="grow"></span><span class="result-count" id="ns-count"></span>
+      </div>
+      <section class="card flush"><div class="card-body table-wrap" id="ns-table">${skeletonRows(6)}</div></section>`;
+    $("#ns-q").addEventListener("input", (e) => { ui.q = e.target.value; saveUi(); this.render(); });
+    if (this.list) this.render();
+  },
+  async update() {
+    const gen = state.gen;
+    try {
+      const list = await api("/api/v1/namespaces/details");
+      if (gen !== state.gen) return;
+      this.list = list;
+      if (state.view === "namespaces") this.render();
+    } catch (e) {
+      if (state.view === "namespaces" && !this.list) $("#ns-table").innerHTML = emptyState("Could not load namespaces", e.message, "crit");
+    }
+  },
+  render() {
+    if (!this.list || !$("#ns-table")) return;
+    const ui = state.ui.namespaces, q = ui.q.trim().toLowerCase();
+    const rows = this.list.filter((n) => !q || `${n.name} ${n.status} ${Object.entries(n.labels).map(([k, v]) => `${k}=${v}`).join(" ")}`.toLowerCase().includes(q));
+    $("#ns-count").textContent = `${rows.length} of ${this.list.length}`;
+    renderTable($("#ns-table"), {
+      rows, sortState: ui.sort,
+      onSort: (st) => { ui.sort = st; saveUi(); this.render(); },
+      onRow: (n) => openDetail("Namespace", "", n.name),
+      empty: emptyState("No matching namespaces", "Try a different search."),
+      columns: [
+        { key: "name", label: "Name", cls: "primary", render: (n) => `${esc(n.name)}${isProtected(n.name) ? ` <span class="chip" title="Control actions are blocked here">${icon("lock")} protected</span>` : ""}` },
+        { key: "status", label: "Status", render: (n) => badge(n.status === "Active" ? "good" : "warning", n.status) },
+        { key: "pods", label: "Pods", num: true, render: (n) => `${n.running} / ${n.pods}` },
+        { key: "problems", label: "Problems", num: true, render: (n) => (n.problems ? badge("critical", String(n.problems)) : '<span class="dim">0</span>') },
+        { key: "deployments", label: "Deployments", num: true, render: (n) => n.deployments },
+        { key: "services", label: "Services", num: true, render: (n) => n.services },
+        { key: "cpu_usage_m", label: "CPU", num: true, render: (n) => fmt.cpu(n.cpu_usage_m) },
+        { key: "memory_usage_bytes", label: "Memory", num: true, render: (n) => fmt.bytes(n.memory_usage_bytes) },
+        { key: "labels", label: "Labels", cls: "wrap-sm", sort: (n) => Object.keys(n.labels).join(), render: (n) => chips(n.labels) },
+        { key: "age_s", label: "Age", num: true, render: (n) => fmt.age(n.age_s) },
+        { key: "_a", label: "Actions", nosort: true, cls: "actions", render: (n) =>
+            `<button class="btn icon-only ghost menu-btn" data-menu="namespace" data-ns="" data-name="${esc(n.name)}" aria-haspopup="menu" aria-label="Actions for ${esc(n.name)}" title="Actions">${icon("more")}</button>` },
+      ],
+    });
+  },
+};
+
+/* ---- Settings (per browser) ---- */
+function savePrefs(message) {
+  saveUi();
+  renderNav();
+  if (message) toast(true, message, "prefs");
+}
+VIEWS.settings = {
+  mount(root) {
+    const pr = state.ui.prefs;
+    const theme = store.get("k10y-theme", null) || "system";
+    const sections = [];
+    for (const n of NAV) {
+      let g = sections.find((x) => x.name === n.section);
+      if (!g) sections.push(g = { name: n.section, items: [] });
+      g.items.push(n);
+    }
+    root.innerHTML = `
+      <div class="settings-grid">
+        <section class="card">
+          <div class="card-head"><h2>Sidebar pages</h2><div class="right">
+            <button class="btn sm" id="tabs-all">Show all</button></div></div>
+          <div class="card-body">
+            <p class="hint" style="margin:0 0 12px">Choose which pages appear in the sidebar. Hidden pages are still reachable by their link.</p>
+            <div class="tab-groups">${sections.map((g) => `<div><h4>${esc(g.name)}</h4>${g.items.map((n) => `
+              <label class="tab-toggle ${n.locked ? "locked" : ""}">
+                <input type="checkbox" data-tab="${n.id}" ${n.locked || !pr.hidden.includes(n.id) ? "checked" : ""} ${n.locked ? "disabled" : ""}>
+                ${icon(n.icon)}<span>${esc(n.label)}</span>${n.locked ? '<span class="hint">always shown</span>' : ""}</label>`).join("")}</div>`).join("")}</div>
+          </div>
+        </section>
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <section class="card"><div class="card-head"><h2>Preferences</h2></div><div class="card-body">
+            <div class="pref-row"><div class="lbl">Theme<div>Follow your system, or force light or dark.</div></div>
+              <div class="segmented" role="group" aria-label="Theme" id="pref-theme">${["system", "light", "dark"].map((t) =>
+                `<button data-v="${t}" aria-pressed="${t === theme}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}</div></div>
+            <div class="pref-row"><div class="lbl">Auto-refresh<div>How often cluster data reloads. Live charts always update every 5 seconds.</div></div>
+              <div class="segmented" role="group" aria-label="Auto-refresh" id="pref-refresh">${[5, 10, 30, 60].map((v) =>
+                `<button data-v="${v}" aria-pressed="${v === pr.refresh}">${v}s</button>`).join("")}</div></div>
+            <div class="pref-row"><div class="lbl">Start page<div>The page that opens when you visit the dashboard.</div></div>
+              <select class="select" id="pref-start">${NAV.filter((n) => n.id !== "settings").map((n) =>
+                `<option value="${n.id}" ${n.id === pr.start ? "selected" : ""}>${esc(n.label)}</option>`).join("")}</select></div>
+          </div></section>
+          <section class="card"><div class="card-head"><h2>Reset</h2></div><div class="card-body">
+            <p class="hint" style="margin:0 0 12px">Restores the default pages, theme, refresh rate, start page, table sorting and filters.
+              Your clusters and tokens are kept.</p>
+            <button class="btn" id="pref-reset">Reset preferences</button>
+          </div></section>
+          <p class="hint" style="margin:0">Settings are saved in this browser only. Each browser and computer keeps its own.</p>
+        </div>
+      </div>`;
+    root.querySelectorAll("[data-tab]").forEach((cb) => {
+      cb.onchange = () => {
+        const id = cb.dataset.tab, hidden = new Set(pr.hidden);
+        if (cb.checked) hidden.delete(id); else hidden.add(id);
+        pr.hidden = [...hidden];
+        savePrefs(`${NAV.find((n) => n.id === id).label} ${cb.checked ? "shown" : "hidden"}`);
+      };
+    });
+    $("#tabs-all").onclick = () => { pr.hidden = []; savePrefs("All pages shown"); this.mount(root); };
+    root.querySelectorAll("#pref-theme button").forEach((b) => {
+      b.onclick = () => {
+        const v = b.dataset.v === "system" ? null : b.dataset.v;
+        store.set("k10y-theme", v); applyTheme(v);
+        root.querySelectorAll("#pref-theme button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      };
+    });
+    root.querySelectorAll("#pref-refresh button").forEach((b) => {
+      b.onclick = () => {
+        pr.refresh = +b.dataset.v; scheduleRefresh(); savePrefs(`Auto-refresh every ${pr.refresh}s`);
+        root.querySelectorAll("#pref-refresh button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      };
+    });
+    $("#pref-start").onchange = (e) => { pr.start = e.target.value; savePrefs(`Start page: ${NAV.find((n) => n.id === pr.start).label}`); };
+    $("#pref-reset").onclick = () => {
+      openAction({
+        title: "Reset preferences", desc: "Restore all dashboard preferences to their defaults? Your clusters and tokens are kept.",
+        confirmLabel: "Reset", noDryRun: true,
+        run: () => {
+          try { localStorage.removeItem("k10y-ui"); } catch (_) {}
+          store.set("k10y-theme", null);
+          location.hash = "#/overview";
+          location.reload();
+        },
+      });
+    };
+  },
+  update() {},
+};
+
 /* ---- Services ---- */
 const nodeAddress = () => {
   const n = state.data && (state.data.nodes.find((x) => x.ready && x.internal_ip) || state.data.nodes[0]);
@@ -3199,6 +3365,11 @@ function find(kind, ns, name) {
 }
 function menuItems(kind, ns, name) {
   if (kind === "cluster") return switcherItems();
+  if (kind === "namespace") return [
+    { label: "Open details", icon: "file", run: () => openDetail("Namespace", "", name) },
+    { label: "Show on map", icon: "map", run: () => { state.ui.map.ns = name; saveUi(); mapState.selected = null; mapState.sig = ""; location.hash = "#/map"; } },
+    { label: "Diagnose with AI", icon: "ai", run: () => startAI({ scope: "namespace", namespace: name }, true) },
+  ];
   const obj = find(kind, ns, name);
   if (!obj) return [];
   if (kind === "node") {
@@ -3318,9 +3489,11 @@ window.addEventListener("resize", closeMenu);
 window.addEventListener("scroll", (e) => { if ($("#menu").classList.contains("show") && !$("#menu").contains(e.target)) positionMenu(); }, true);
 
 /* ================= control: toasts ================= */
-function toast(ok, message) {
+function toast(ok, message, key) {
+  if (key) document.querySelectorAll(`#toasts .toast[data-key="${key}"]`).forEach((t) => t.remove());
   const el = document.createElement("div");
   el.className = "toast";
+  if (key) el.dataset.key = key;
   el.innerHTML = `<span class="${ok ? "ic-ok" : "ic-err"}">${icon(ok ? "ok" : "crit")}</span><span class="msg">${esc(message)}</span>
     <button class="btn icon-only ghost sm" aria-label="Dismiss">${icon("x")}</button>`;
   el.querySelector("button").onclick = () => el.remove();
@@ -3647,7 +3820,7 @@ let currentView = null;
 function route() {
   const id = (location.hash.match(/^#\/(\w+)/) || [])[1];
   state.view = VIEWS[id] ? id : "overview";
-  if (!cur() && state.view !== "clusters") { state.view = "clusters"; history.replaceState(null, "", "#/clusters"); }
+  if (!cur() && state.view !== "clusters" && state.view !== "settings") { state.view = "clusters"; history.replaceState(null, "", "#/clusters"); }
   if (currentView && currentView.unmount) currentView.unmount();
   currentView = VIEWS[state.view];
   currentView.mount($("#view"));
@@ -3700,15 +3873,21 @@ document.addEventListener("keydown", (e) => {
   if (typing || e.metaKey || e.ctrlKey || e.altKey || modal) return;
   if (e.key === "/") { const s = $(".search input"); if (s) { e.preventDefault(); s.focus(); s.select(); } }
   else if (e.key === "r") refresh();
-  else if (/^[1-9]$/.test(e.key) && NAV[+e.key - 1]) location.hash = `#/${NAV[+e.key - 1].id}`;
+  else if (/^[1-9]$/.test(e.key) && visibleNav()[+e.key - 1]) location.hash = `#/${visibleNav()[+e.key - 1].id}`;
 });
 
-setInterval(() => { if (!state.paused && !document.hidden) refresh(); }, REFRESH_MS);
+let refreshTimer = null;
+function scheduleRefresh() {
+  clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => { if (!state.paused && !document.hidden) refresh(); }, (state.ui.prefs.refresh || 10) * 1000);
+}
+scheduleRefresh();
 setInterval(tickUpdated, 1000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && !state.paused) refresh(); });
 
 /* ================= boot ================= */
 applyTheme(store.get("k10y-theme", null));
+if (!location.hash && VIEWS[state.ui.prefs.start]) history.replaceState(null, "", `#/${state.ui.prefs.start}`);
 route();
 saveReg();
 renderClusterButton();

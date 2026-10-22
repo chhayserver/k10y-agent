@@ -390,6 +390,11 @@ def namespaces() -> list:
     return get_collector().namespaces()
 
 
+@api.get("/namespaces/details")
+def namespace_details() -> list:
+    return get_collector().namespace_details()
+
+
 @api.get("/topology")
 def topology(namespace: str = Query(..., min_length=1)) -> dict:
     return get_collector().topology(namespace)
