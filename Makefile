@@ -13,7 +13,7 @@ export KUBECONFIG
 CTR = limactl shell $(VM) sudo /var/lib/rancher/rke2/bin/ctr \
       --address /run/k3s/containerd/containerd.sock -n k8s.io
 
-.PHONY: build test load deploy restart up token logs undeploy load-k3d push manifests hub-init hub-up hub-down hub-logs hub-backup hub-restore site-build site-dev
+.PHONY: build test load deploy restart up token logs undeploy load-k3d push manifests hub-init hub-up hub-down hub-logs hub-backup hub-restore site-build site-dev site-deploy
 
 build:            ## Build the agent image with Docker
 	docker build -t $(IMAGE):$(TAG) .
@@ -120,3 +120,10 @@ site-dev:         ## Preview the built website at http://localhost:4173
 	docker rm -f k10y-site >/dev/null 2>&1 || true
 	docker run -d --name k10y-site -p 4173:4173 -v $(CURDIR):/repo -w /repo/website node:22-alpine sh -c "npx vitepress preview --host 0.0.0.0 --port 4173"
 	@echo "Website: http://localhost:4173"
+
+CF_ENV     ?= $(HOME)/.cloudflare-k10y.env
+CF_PROJECT ?= k10y
+site-deploy: site-build  ## Deploy the website to Cloudflare Pages (token in $(CF_ENV))
+	@test -f "$(CF_ENV)" || (echo "missing $(CF_ENV) with CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID" && exit 1)
+	docker run --rm --env-file "$(CF_ENV)" -v $(CURDIR)/website/.vitepress/dist:/dist node:22-alpine \
+	  sh -c "npx --yes wrangler@4 pages project create $(CF_PROJECT) --production-branch main >/dev/null 2>&1; npx --yes wrangler@4 pages deploy /dist --project-name $(CF_PROJECT) --branch main --commit-dirty=true"
