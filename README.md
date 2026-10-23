@@ -1,7 +1,10 @@
 # k10y-agent
 
-Monitor and control Kubernetes clusters from one dashboard, with user accounts, roles, alerts and an
-AI assistant.
+**All your DevOps tools, one calm place.** Created and maintained by **Kang Kimchhay**.
+
+k10y brings the tools you run infrastructure with into one control room: **Kubernetes clusters** and
+**HAProxy load balancers** today, more systems next. One dashboard, one login, one set of roles, one audit log, one
+alert pipeline and an AI assistant for all of them.
 
 Each cluster runs a small **k10y agent**. It reads the Kubernetes API and metrics-server and serves an
 HTTPS API. The **k10y hub** (Docker Compose with PostgreSQL) is where people log in. It stores

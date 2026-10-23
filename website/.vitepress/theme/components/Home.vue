@@ -6,18 +6,20 @@ const repo = "https://github.com/zorouzumaki1111-cmd/k10y-agent";
 
 // Hero: real screenshots of the product, switchable like n8n's workflow tabs.
 const demos = [
-  { id: "overview", label: "Live health", icon: "M3 12h4l3-8 4 16 3-8h4", img: "/shots/overview.png", url: "k10y / lab / overview",
+  { id: "home", label: "All systems", icon: "M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z", img: "/shots/home.png", url: "k10y / home",
+    text: "Every cluster and load balancer on one screen: health, problems, firing alerts." },
+  { id: "overview", label: "Kubernetes", icon: "M3 12h4l3-8 4 16 3-8h4", img: "/shots/overview.png", url: "k10y / kubernetes / lab / overview",
     text: "Health, problems, CPU and memory for every cluster, updated live." },
-  { id: "logs", label: "Live logs", icon: "M4 6h16M4 12h10M4 18h13", img: "/shots/logs.png", url: "k10y / lab / deployments / web / logs",
+  { id: "haproxy", label: "HAProxy", icon: "M9 2.5h6v5H9zM2.5 16.5h6v5h-6zM9 16.5h6v5H9zM15.5 16.5h6v5h-6zM12 7.5v9M5.5 16.5V14h13v2.5", img: "/shots/haproxy-overview.png", url: "k10y / haproxy / lab-lb / overview",
+    text: "Live traffic, server health and a service → backend → server topology for each load balancer." },
+  { id: "logs", label: "Live logs", icon: "M4 6h16M4 12h10M4 18h13", img: "/shots/logs.png", url: "k10y / kubernetes / deployments / web / logs",
     text: "Follow the logs of every pod of a workload in one stream, tagged by pod." },
-  { id: "shell", label: "Pod shell", icon: "M4 17l6-5-6-5M12 19h8", img: "/shots/shell.png", url: "k10y / lab / pods / shell",
+  { id: "shell", label: "Pod shell", icon: "M4 17l6-5-6-5M12 19h8", img: "/shots/shell.png", url: "k10y / kubernetes / pods / shell",
     text: "Open a terminal in any container from the browser. Every session is audited." },
-  { id: "yaml", label: "Edit YAML", icon: "M8 6l-6 6 6 6M16 6l6 6-6 6", img: "/shots/yaml.png", url: "k10y / lab / configmaps / app-config",
-    text: "Edit like kubectl edit, review a diff, dry run, then save." },
+  { id: "yaml", label: "Safe changes", icon: "M8 6l-6 6 6 6M16 6l6 6-6 6", img: "/shots/yaml.png", url: "k10y / kubernetes / configmaps / app-config",
+    text: "Review a diff and dry run before anything changes, in Kubernetes and HAProxy alike." },
   { id: "alerts", label: "Alerts", icon: "M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0", img: "/shots/alert-rule.png", url: "k10y / alerts / rules",
-    text: "Rules for broken workloads, CPU and memory, and unreachable clusters, sent to Telegram." },
-  { id: "map", label: "Map", icon: "M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14", img: "/shots/map.png", url: "k10y / lab / map",
-    text: "See how Ingresses, Services, workloads, Pods and config connect." },
+    text: "One alert pipeline for every system: broken pods, down servers, expiring certificates, to Telegram." },
 ];
 const active = ref(0);
 let timer = 0, userPicked = false;
@@ -36,15 +38,31 @@ async function copy(i: number) {
   try { await navigator.clipboard.writeText(install[i].cmd); copied.value = i; setTimeout(() => (copied.value = -1), 1500); } catch { /* blocked */ }
 }
 
-const worksWith = ["Kubernetes", "RKE2", "k3s", "Amazon EKS", "Google GKE", "Azure AKS", "Docker Compose", "PostgreSQL", "Telegram", "Google Gemini", "OpenAI-compatible APIs", "amd64 + arm64"];
+const worksWith = ["Kubernetes", "RKE2", "k3s", "Amazon EKS", "Google GKE", "Azure AKS", "HAProxy 2.x / 3.x", "Docker Compose", "PostgreSQL", "Telegram", "Google Gemini", "OpenAI-compatible APIs", "amd64 + arm64"];
+// The systems k10y manages. "now" are shipped; the others are on the public roadmap (no dates promised).
+const systemsNow = [
+  { name: "Kubernetes", icon: "M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z", points: ["Every workload, pod, service and config page", "Live charts, live logs, pod shell", "Scale, restart, roll back, edit YAML, drain", "AI diagnosis with human-approved fixes"] },
+  { name: "HAProxy", icon: "M9 2.5h6v5H9zM2.5 16.5h6v5h-6zM9 16.5h6v5H9zM15.5 16.5h6v5h-6zM12 7.5v9M5.5 16.5V14h13v2.5", points: ["Services, backends, servers, topology", "Drain, maintenance, rolling deploys, canaries", "Validated config changes, history, rollback", "Certificates, rate limits, logs, Kubernetes sync"] },
+];
+const systemsNext = ["Nginx", "PostgreSQL & MySQL", "Redis", "Docker hosts", "GitLab & Jenkins pipelines", "Prometheus & Grafana", "Cloud accounts (AWS, GCP, Azure)"];
+const shared = [
+  ["One login", "Users, sessions and device sign-out, once for every system."],
+  ["One set of roles", "24 permissions across Kubernetes and HAProxy, per cluster or global."],
+  ["One audit log", "Who changed what, in which system, with the result, in one place."],
+  ["One alert pipeline", "Rules for pods, nodes, load balancers and certificates, sent to Telegram."],
+  ["One Home page", "The health of every system on a single screen."],
+  ["One AI assistant", "Investigates problems with read-only tools; you approve every fix."],
+];
 const stats = [
-  { n: "2", l: "commands to install" }, { n: "38", l: "pages in the dashboard" }, { n: "24", l: "fine-grained permissions" },
+  { n: "2", l: "systems in one place, more coming" }, { n: "38", l: "pages in the dashboard" }, { n: "24", l: "fine-grained permissions" },
   { n: "Every", l: "change audited, with who made it" }, { n: "0", l: "kubeconfigs handed out" },
 ];
 const useCases = [
   { t: "Run many clusters from one screen", d: "Lab, staging and production side by side, with a health dot for each. When one cluster is down, the rest keep working.", tag: "Platform teams" },
   { t: "Give developers access without kubeconfigs", d: "A role per cluster: view and logs on production, scale and restart on staging. Developers never hold credentials, and every click is audited.", tag: "Safe self-service" },
   { t: "Get alerted, then fix it from your phone", d: "A crash loop fires a Telegram message, with an optional AI diagnosis. Open k10y, check the live logs, roll back. Done.", tag: "On-call" },
+  { t: "Ship without downtime", d: "Drain one HAProxy server at a time, deploy, check it's healthy, move on. Or send 5% of traffic, or only requests with a canary header, to the new version.", tag: "Releases" },
+  { t: "Stop switching between tools", d: "kubectl, the HAProxy stats page, config files over SSH, a Telegram bot, a spreadsheet of who changed what: replaced by one dashboard with one login and one audit log.", tag: "Everyone" },
   { t: "Let AI explain a CrashLoopBackOff", d: "The assistant reads events, specs and logs with read-only tools, finds the root cause and proposes a fix. A person reviews it before anything changes.", tag: "Troubleshooting" },
 ];
 const features = [
@@ -56,6 +74,10 @@ const features = [
     ["Dry run everything", "Scale, restart, roll back, drain, apply or edit YAML: see the result before it happens."],
     ["Guardrails", "Protected namespaces, typed confirmation for destructive actions, and conflict checks when editing."],
     ["Least privilege", "Read-only installs are one manifest. Write access is opt-in and can't create RBAC or CRDs."]] },
+  { kicker: "Balance", title: "Balance + ship safely", img: "/shots/haproxy-services.png", url: "k10y / haproxy / lab-lb / services", reverse: true, points: [
+    ["HAProxy, managed", "Services, backends and servers with live health; drain, maintenance and weights for canaries."],
+    ["Every change validated", "Prepared in a transaction, shown as a diff, checked by HAProxy itself, reloaded gracefully, kept in history."],
+    ["Linked to Kubernetes", "A backend can follow a Kubernetes Service: nodes or pods come and go, HAProxy keeps up."]] },
   { kicker: "Respond", title: "Respond + fix fast", img: "/shots/logs-panel.png", url: "k10y / lab / deployments / web / logs", points: [
     ["Alerts that wait", "A hold time keeps blips quiet. Reminders, resolved messages, and history in PostgreSQL."],
     ["Live logs and shell", "Follow every pod of a workload at once, or open a shell in a container. Both in the browser."],
@@ -75,9 +97,9 @@ const security = [
     <section class="hero">
       <div class="hero-grid" aria-hidden="true" /><div class="hero-glow" aria-hidden="true" />
       <div class="wrap">
-        <a class="pill" :href="withBase('/changelog')"><span class="dot" />New in 2.1: pod shell, YAML editing, sessions <span aria-hidden="true">→</span></a>
-        <h1>Every cluster.<br><span class="grad">One calm place.</span></h1>
-        <p class="lead">k10y-agent is an open-source control room for Kubernetes. Monitor, troubleshoot and safely change every cluster from one dashboard, with roles, audit, alerts and an AI assistant built in.</p>
+        <a class="pill" :href="withBase('/changelog')"><span class="dot" />New in 2.2: HAProxy management, one Home for every system <span aria-hidden="true">→</span></a>
+        <h1>All your DevOps tools.<br><span class="grad">One calm place.</span></h1>
+        <p class="lead">k10y-agent brings the tools you run your infrastructure with into one open-source control room. Kubernetes clusters and HAProxy load balancers today, more systems next. Monitor, troubleshoot and safely change all of them with one login, one set of roles, one audit log and one alert pipeline.</p>
         <div class="ctas">
           <a class="btn primary" :href="withBase('/docs/quick-start')">Get started, it's free</a>
           <a class="btn ghost" :href="repo" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.7 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5z"/></svg>Star on GitHub</a>
@@ -112,6 +134,27 @@ const security = [
       <div v-for="s in stats" :key="s.l"><b>{{ s.n }}</b><span>{{ s.l }}</span></div>
     </section>
 
+    <!-- ONE PLACE -->
+    <section class="onebox wrap" id="systems">
+      <div class="sec-head"><span class="kicker">One control room</span><h2>Stop juggling tools. <span class="grad">Run everything from one place.</span></h2>
+        <p>Each system plugs into the same hub. You switch systems in the sidebar; login, roles, audit, alerts and the Home page are shared by all of them.</p></div>
+      <div class="sys-grid">
+        <article v-for="x in systemsNow" :key="x.name" class="sys now">
+          <div class="sys-top"><span class="sys-ic"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path :d="x.icon" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" /></svg></span>
+            <h3>{{ x.name }}</h3><span class="badge-now">Available</span></div>
+          <ul><li v-for="pnt in x.points" :key="pnt">{{ pnt }}</li></ul>
+        </article>
+        <article class="sys next">
+          <div class="sys-top"><span class="sys-ic ghost">+</span><h3>Next systems</h3><span class="badge-next">On the roadmap</span></div>
+          <div class="next-chips"><span v-for="n in systemsNext" :key="n">{{ n }}</span></div>
+          <p>Adding a system reuses the whole hub. <a :href="withBase('/roadmap')">See the roadmap</a> or ask for the one you need.</p>
+        </article>
+      </div>
+      <div class="shared-grid">
+        <div v-for="[st, sd] in shared" :key="st" class="shared"><b>{{ st }}</b><span>{{ sd }}</span></div>
+      </div>
+    </section>
+
     <!-- INSTALL -->
     <section class="install wrap" id="install">
       <div class="sec-head"><span class="kicker">Get started</span><h2>Two commands. <span class="grad">Five minutes.</span></h2>
@@ -128,7 +171,7 @@ const security = [
 
     <!-- USE CASES -->
     <section class="cases wrap" id="use-cases">
-      <div class="sec-head"><span class="kicker">Use cases</span><h2>Built for the people <span class="grad">who keep clusters running</span></h2></div>
+      <div class="sec-head"><span class="kicker">Use cases</span><h2>Built for the people <span class="grad">who keep production running</span></h2></div>
       <div class="case-grid">
         <article v-for="u in useCases" :key="u.t" class="case"><span class="tag">{{ u.tag }}</span><h3>{{ u.t }}</h3><p>{{ u.d }}</p></article>
       </div>
@@ -150,10 +193,10 @@ const security = [
 
     <!-- FEATURE GRID -->
     <section class="grid wrap">
-      <div class="sec-head"><span class="kicker">Everything included</span><h2>One tool instead of <span class="grad">five tabs</span></h2></div>
+      <div class="sec-head"><span class="kicker">Everything included</span><h2>One tool instead of <span class="grad">ten tabs</span></h2></div>
       <div class="cards">
         <div class="card"><h3>Multi-cluster</h3><p>A cluster switcher with live health dots, and an all-clusters overview.</p></div>
-        <div class="card"><h3>HAProxy too</h3><p>Monitor and configure HAProxy load balancers next to your clusters, with validated changes and a live topology.</p></div>
+        <div class="card"><h3>HAProxy</h3><p>Load balancers next to your clusters: topology, live charts and logs, certificates, rate limits, history and rollback.</p></div>
         <div class="card"><h3>Relationship map</h3><p>Ingress → Service → workload → Pod → ConfigMap, Secret or PVC. Broken links are flagged.</p></div>
         <div class="card"><h3>CronJobs</h3><p>Run now, suspend and resume, with readable schedules like "every 5 minutes".</p></div>
         <div class="card"><h3>Per-user settings</h3><p>Hide pages and set your theme and start page. Your settings follow you to every device.</p></div>
@@ -176,10 +219,10 @@ const security = [
     <!-- ROADMAP TEASER -->
     <section class="road wrap">
       <div class="sec-head"><span class="kicker">Roadmap</span><h2>Built in the open, <span class="grad">shipping fast</span></h2>
-        <p>Nine releases so far, from the first agent to multi-cluster, the AI assistant, the hub, alerts and pod shells.</p></div>
+        <p>Ten releases so far: from the first Kubernetes agent to the hub, alerts, the AI assistant and HAProxy, a second system in the same control room.</p></div>
       <div class="road-cols">
-        <div><h3><span class="b done" />Shipped</h3><ul><li>Hub with roles and audit</li><li>Alerts to Telegram</li><li>Pod shell and YAML editing</li><li>Live logs</li></ul></div>
-        <div><h3><span class="b now" />Next</h3><ul><li>Two-factor login (TOTP)</li><li>Slack, email and webhook alerts</li><li>Alert silencing</li></ul></div>
+        <div><h3><span class="b done" />Shipped</h3><ul><li>Kubernetes control room</li><li>HAProxy management</li><li>Roles, audit, alerts, AI</li><li>One Home for every system</li></ul></div>
+        <div><h3><span class="b now" />Next</h3><ul><li>Two-factor login (TOTP)</li><li>Slack, email and webhook alerts</li><li>Next systems: Nginx, databases</li></ul></div>
         <div><h3><span class="b later" />Later</h3><ul><li>Single sign-on (OIDC)</li><li>Long-term metrics (Prometheus)</li><li>Helm chart</li></ul></div>
       </div>
       <p class="more"><a :href="withBase('/roadmap')">See the full roadmap →</a></p>
@@ -188,10 +231,11 @@ const security = [
     <!-- FINAL CTA -->
     <section class="final">
       <div class="wrap">
-        <h2>Bring calm to your clusters <span class="grad">today</span></h2>
+        <h2>Bring your DevOps tools <span class="grad">together today</span></h2>
         <p>Free, self-hosted and running in five minutes.</p>
         <div class="ctas center"><a class="btn primary" :href="withBase('/docs/quick-start')">Get started</a>
           <a class="btn ghost" :href="withBase('/docs/')">Read the docs</a></div>
+        <p class="owner">Created and maintained by <b>Kang Kimchhay</b>.</p>
       </div>
     </section>
   </div>
@@ -255,6 +299,27 @@ h2 { margin: 0; font-size: clamp(30px, 4vw, 46px); line-height: 1.08; letter-spa
 .stats b { display: block; font-size: 36px; line-height: 1.25; padding-bottom: 2px; font-weight: 800; letter-spacing: -0.03em; background: var(--k-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .stats span { font-size: 14px; color: var(--vp-c-text-2); }
 
+/* one control room */
+.onebox { padding-top: 100px; }
+.sys-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px; }
+.sys { padding: 24px; border-radius: 16px; border: 1px solid var(--vp-c-divider); background: var(--vp-c-bg-soft); display: flex; flex-direction: column; gap: 14px; }
+.sys.now { border-color: color-mix(in srgb, var(--vp-c-brand-1) 35%, var(--vp-c-divider)); }
+.sys-top { display: flex; align-items: center; gap: 12px; }
+.sys-top h3 { margin: 0; font-size: 20px; flex: 1; }
+.sys-ic { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; color: #fff; background: var(--k-grad); flex: none; }
+.sys-ic.ghost { background: transparent; border: 1.5px dashed var(--vp-c-divider); color: var(--vp-c-text-2); font-size: 22px; }
+.badge-now, .badge-next { font-size: 12px; font-weight: 650; padding: 3px 10px; border-radius: 999px; }
+.badge-now { color: #0d8a5b; background: rgba(34, 197, 139, .14); }
+.dark .badge-now { color: #5fe0ac; }
+.badge-next { color: var(--vp-c-text-2); background: var(--vp-c-default-soft); }
+.sys ul { margin: 0; padding-left: 18px; color: var(--vp-c-text-2); line-height: 1.8; }
+.sys p { margin: auto 0 0; color: var(--vp-c-text-2); font-size: 14.5px; line-height: 1.6; }
+.next-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.next-chips span { font-size: 13.5px; padding: 5px 12px; border-radius: 999px; border: 1px dashed var(--vp-c-divider); color: var(--vp-c-text-2); }
+.shared-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin-top: 18px; border-radius: 16px; overflow: hidden; border: 1px solid var(--vp-c-divider); background: var(--vp-c-divider); }
+.shared { background: var(--vp-c-bg); padding: 18px 20px; display: flex; flex-direction: column; gap: 4px; }
+.shared b { font-size: 15.5px; } .shared span { color: var(--vp-c-text-2); font-size: 14px; line-height: 1.5; }
+
 /* install */
 .install, .cases, .grid, .road { padding-top: 110px; }
 .cmds { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
@@ -312,16 +377,18 @@ h2 { margin: 0; font-size: clamp(30px, 4vw, 46px); line-height: 1.08; letter-spa
 /* final */
 .final { margin-top: 110px; padding: 90px 0 100px; text-align: center; background: radial-gradient(700px 300px at 50% 100%, rgba(91, 78, 224, .25), transparent 70%); }
 .final p { margin: 14px 0 0; font-size: 18px; color: var(--vp-c-text-2); }
+.final p.owner { margin-top: 36px; font-size: 14.5px; color: var(--vp-c-text-3); }
 .ctas.center .btn.ghost { color: var(--vp-c-text-1); border-color: var(--vp-c-divider); background: var(--vp-c-bg-soft); }
 
 @media (max-width: 960px) {
   .stats { grid-template-columns: repeat(2, 1fr); } .stats div:last-child { grid-column: span 2; }
-  .cmds, .case-grid, .feature, .road-cols { grid-template-columns: 1fr; }
+  .cmds, .case-grid, .feature, .road-cols, .sys-grid { grid-template-columns: 1fr; }
+  .shared-grid { grid-template-columns: 1fr 1fr; }
   .feature { gap: 28px; } .feature.reverse .f-text { order: 0; }
   .cards, .sec-grid { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 600px) {
-  .cards, .sec-grid { grid-template-columns: 1fr; }
+  .cards, .sec-grid, .shared-grid { grid-template-columns: 1fr; }
   .hero { padding-top: 48px; }
   .install, .cases, .grid, .road { padding-top: 72px; }
   .tabs button { padding: 7px 10px; font-size: 13px; }

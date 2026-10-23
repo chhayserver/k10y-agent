@@ -4,7 +4,7 @@ const repo = "https://github.com/zorouzumaki1111-cmd/k10y-agent";
 
 export default defineConfig({
   title: "k10y-agent",
-  description: "Monitor and control every Kubernetes cluster from one dashboard: live metrics, logs, alerts, roles, audit and an AI assistant.",
+  description: "All your DevOps tools in one place: Kubernetes clusters and HAProxy load balancers today, with one login, roles, audit, alerts and an AI assistant.",
   lang: "en-US",
   cleanUrls: true,
   lastUpdated: true,
@@ -12,8 +12,9 @@ export default defineConfig({
   head: [
     ["link", { rel: "icon", href: "/logo.svg", type: "image/svg+xml" }],
     ["meta", { name: "theme-color", content: "#2b2a8f" }],
-    ["meta", { property: "og:title", content: "k10y-agent: every cluster, one calm place" }],
-    ["meta", { property: "og:description", content: "Open-source Kubernetes monitoring and control with roles, audit, alerts, live logs, pod shell and AI." }],
+    ["meta", { name: "author", content: "Kang Kimchhay" }],
+    ["meta", { property: "og:title", content: "k10y-agent: all your DevOps tools, one calm place" }],
+    ["meta", { property: "og:description", content: "Open-source control room for Kubernetes and HAProxy (more systems coming): one login, roles, audit, alerts, live logs and AI." }],
     ["meta", { property: "og:image", content: "/shots/overview.png" }],
   ],
   themeConfig: {
@@ -69,8 +70,8 @@ export default defineConfig({
     editLink: { pattern: `${repo}/edit/main/website/:path`, text: "Edit this page on GitHub" },
     outline: { level: [2, 3] },
     footer: {
-      message: "Free and open source. Kubernetes is a trademark of The Linux Foundation; k10y is not affiliated with it.",
-      copyright: "© 2026 k10y-agent contributors",
+      message: "Free and open source. Created and maintained by Kang Kimchhay. Kubernetes is a trademark of The Linux Foundation and HAProxy of HAProxy Technologies; k10y is not affiliated with either.",
+      copyright: "© 2026 Kang Kimchhay",
     },
   },
 });

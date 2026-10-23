@@ -5,20 +5,23 @@ import { computed, ref } from "vue";
 interface Item { t: string; d: string; area: string; v?: string }
 const columns: { id: string; title: string; hint: string; items: Item[] }[] = [
   { id: "next", title: "Next up", hint: "Being designed or built now", items: [
-    { t: "HAProxy management", d: "Monitor, drain and configure HAProxy with validated changes, live charts and logs, certificates, rate limits, config history and rollback, rolling deploys, groups, alerts and a Kubernetes sync. Built, in testing.", area: "Control" },
     { t: "Two-factor login (TOTP)", d: "Authenticator-app codes for sign-in, with an option to require them for admins.", area: "Security" },
     { t: "More alert channels", d: "Slack, email and generic webhooks next to Telegram.", area: "Alerts" },
     { t: "Silence and acknowledge alerts", d: "Mute a firing alert for a while, and show who acknowledged it.", area: "Alerts" },
     { t: "Alerts for certificate and storage issues", d: "Expiring TLS Secrets, PVCs stuck in Pending, and full volumes.", area: "Alerts" },
   ] },
   { id: "planned", title: "Planned", hint: "Agreed, not started", items: [
+    { t: "More systems in the hub", d: "Nginx first, then databases (PostgreSQL, MySQL) and Redis, each with its own pages but the same login, roles, audit and alerts.", area: "Systems" },
     { t: "Single sign-on (OIDC)", d: "Sign in with Google, Microsoft Entra ID, Keycloak or any OIDC provider, mapping groups to roles.", area: "Security" },
-    { t: "Long-term metrics", d: "Read history from Prometheus so charts go beyond the last hour.", area: "Monitoring" },
+    { t: "Long-term metrics", d: "Keep chart history beyond the last hour (Kubernetes and HAProxy), or read it from Prometheus.", area: "Monitoring" },
     { t: "Helm chart", d: "Install the agent with Helm, and run the hub inside Kubernetes.", area: "Install" },
     { t: "Audit log export", d: "Ship audit entries to a SIEM or object storage, with retention settings.", area: "Security" },
     { t: "CI on every change", d: "Automated tests, type checks and image builds for every pull request.", area: "Project" },
   ] },
   { id: "exploring", title: "Exploring", hint: "Ideas we're researching. Tell us if you need them", items: [
+    { t: "CI/CD pipelines", d: "See and re-run GitLab and Jenkins pipelines next to the clusters they deploy to.", area: "Systems" },
+    { t: "Docker hosts and cloud accounts", d: "Plain Docker hosts, and AWS, GCP and Azure resources, in the same control room.", area: "Systems" },
+    { t: "Prometheus & Grafana", d: "Link dashboards and alerts from your existing monitoring.", area: "Systems" },
     { t: "Port-forward from the browser", d: "Reach a Service or Pod port through the hub without kubectl.", area: "Control" },
     { t: "Cost view", d: "Requests vs. real usage per namespace, to spot over-provisioned workloads.", area: "Monitoring" },
     { t: "GitOps awareness", d: "Show when an object is managed by Argo CD or Flux, and warn before editing it.", area: "Control" },
@@ -28,6 +31,7 @@ const columns: { id: string; title: string; hint: string; items: Item[] }[] = [
 ];
 
 const shipped: { v: string; date: string; items: string[] }[] = [
+  { v: "2.2", date: "Oct 2026", items: ["HAProxy management (second system)", "System switcher and Home for every system", "HAProxy charts, logs, certificates, rate limits", "Config history and rollback, rolling deploys, groups", "HAProxy alerts and Kubernetes sync"] },
   { v: "2.1", date: "Oct 2026", items: ["Pod shell in the browser", "Edit YAML with diff review", "Sessions and device sign-out", "Settings saved to your account", "Automatic backups", "API-only agents", "New sign-in page"] },
   { v: "2.0", date: "Oct 2026", items: ["Hub with PostgreSQL", "Users and custom roles", "HTTPS everywhere", "Alerts to Telegram", "Live log streaming", "CronJobs, autoscalers, Ingresses, storage pages", "Vue 3 + TypeScript dashboard"] },
   { v: "1.5", date: "Oct 2026", items: ["Namespaces page", "Personal settings"] },

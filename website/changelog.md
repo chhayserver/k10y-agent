@@ -6,7 +6,28 @@ title: Changelog
 
 Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached to the [GitHub release](https://github.com/zorouzumaki1111-cmd/k10y-agent/releases).
 
-## 2.1.0 <Badge type="tip" text="latest" />
+## 2.2.0 <Badge type="tip" text="latest" />
+
+**One place for all your DevOps tools**
+- **Systems:** a system switcher in the sidebar (Kubernetes, HAProxy, more to come). Each system has its own pages and picker; Alerts, Activity, Administration and My settings are shared.
+- **Home:** the health of every cluster and HAProxy instance, firing alerts and recent changes on one screen. The default start page.
+- New URLs (`/k8s/…`, `/haproxy/…`, `/admin/…`); old links redirect.
+- A banner offers a reload when a newer dashboard is deployed.
+
+**HAProxy management** (through the HAProxy Data Plane API v3)
+- Services, backends and servers with live health, sessions, request rates and errors; a service → backend → server **topology**.
+- **Live charts** (requests, 5xx, sessions, response time) and **live request logs** (syslog to the hub).
+- **Drain, maintenance, back in service** instantly; **weights** for canaries; a guided **rolling deploy**.
+- Add, edit and remove **services, backends, servers and routes** (path, host, header, client IP), **TLS listeners**, **IP allow-lists**, **HTTPS redirect** and **per-IP rate limits**, or edit the raw config. Every change is a transaction with a **diff**, **HAProxy's own validation**, a graceful reload and a confirmed result.
+- **Certificates** (upload, replace, expiry), **stick tables**, **config history with rollback** (including changes made outside k10y).
+- **Groups:** apply one change to several HAProxy at once.
+- **Alerts** for HAProxy: server down, backend down, 5xx rate, sessions near the limit, certificate expiry, unreachable.
+- **Kubernetes link:** keep a backend in sync with a Kubernetes Service (node ports or pod IPs).
+- New permissions `haproxy.view`, `haproxy.operate`, `haproxy.configure`; Administration → HAProxy instances.
+
+**Upgrade notes:** use the new `docker-compose.yml`: it publishes UDP 5514 for HAProxy logs. The database is upgraded automatically.
+
+## 2.1.0
 
 **New**
 - **Pod shell:** an interactive terminal in any running container, in the browser. Needs the new `pods.exec` permission; every session is audited.
