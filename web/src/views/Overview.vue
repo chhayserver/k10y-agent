@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { to } from "@/lib/nav";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import Badge from "@/components/Badge.vue";
 import EmptyState from "@/components/EmptyState.vue";
@@ -87,7 +88,7 @@ const liveLabel = computed(() => (c.paused ? "Paused" : c.liveError ? "Metrics u
             <div class="stack-legend"><div v-for="g in groups" :key="g.label"><span class="dot" :style="{ background: g.color }" />{{ g.label }}<b>{{ g.n }}</b></div></div>
           </div></section>
       </div>
-      <section class="card flush"><div class="card-head"><h2>Recent warnings</h2><div class="right"><RouterLink class="link" to="/events">All events</RouterLink></div></div>
+      <section class="card flush"><div class="card-head"><h2>Recent warnings</h2><div class="right"><RouterLink class="link" :to="to('events')">All events</RouterLink></div></div>
         <div class="card-body">
           <EmptyState v-if="!warnings.length" title="No warnings" sub="No warning events in the cluster's event history." icon="ok" good />
           <ul v-else class="list"><li v-for="(e, i) in warnings" :key="i"><span class="ic warning"><Icon name="warn" /></span>

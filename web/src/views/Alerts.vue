@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { to } from "@/lib/nav";
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { hub } from "@/api/client";
 import Badge from "@/components/Badge.vue";
@@ -111,7 +112,7 @@ function addPreset(kind: "problems" | "memory" | "unreachable") {
     <button v-if="canManage" class="btn primary" @click="openNew(); tab = 'rules'"><Icon name="bell" /><span>New rule</span></button>
   </div>
   <div v-if="error" class="banner show">{{ error }}</div>
-  <div v-if="canManage && channels.length === 0 && rules" class="banner show info">No notification channel yet. Alerts are still recorded here; add a Telegram bot in <RouterLink to="/system">System settings</RouterLink> to get messages.</div>
+  <div v-if="canManage && channels.length === 0 && rules" class="banner show info">No notification channel yet. Alerts are still recorded here; add a Telegram bot in <RouterLink :to="to('system')">System settings</RouterLink> to get messages.</div>
 
   <template v-if="tab === 'events'">
     <Toolbar :state="state" placeholder="Search alert, rule or cluster" :filters="[['open', 'Open'], ['firing', 'Firing'], ['resolved', 'Resolved'], ['all', 'All']]" :count="events ? `${rows.length} of ${events.length}` : ''" />

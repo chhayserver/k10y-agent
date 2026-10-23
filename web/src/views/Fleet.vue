@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { to } from "@/lib/nav";
 import { onMounted } from "vue";
 import { useRouter } from "vue-router";
 import Badge from "@/components/Badge.vue";
@@ -9,12 +10,12 @@ import { fleet, refreshFleet } from "@/stores/fleet";
 import { useSession } from "@/stores/session";
 const s = useSession(), router = useRouter();
 onMounted(refreshFleet);
-function open(id: number) { s.setCluster(id); router.push("/overview"); }
+function open(id: number) { s.setCluster(id); router.push(to("overview")); }
 </script>
 <template>
   <div class="toolbar"><span class="result-count">{{ fmt.plural(s.clusters.length, "cluster") }}</span><span class="grow" />
     <button class="btn" @click="refreshFleet">Refresh</button>
-    <RouterLink v-if="s.canGlobal('clusters.manage')" class="btn primary" to="/manage-clusters">Manage clusters</RouterLink></div>
+    <RouterLink v-if="s.canGlobal('clusters.manage')" class="btn primary" :to="to('manage-clusters')">Manage clusters</RouterLink></div>
   <section v-if="!s.clusters.length" class="card"><div class="card-body">
     <EmptyState title="No clusters yet" :sub="s.canGlobal('clusters.manage') ? 'Add a cluster under Administration → Clusters.' : 'Ask an administrator to give you access to a cluster.'" icon="globe" /></div></section>
   <div v-else class="fleet">

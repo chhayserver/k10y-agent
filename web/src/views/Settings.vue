@@ -3,16 +3,21 @@ import { computed, onMounted, ref } from "vue";
 import { hub } from "@/api/client";
 import SessionsList from "@/components/SessionsList.vue";
 import Icon from "@/components/Icon.vue";
-import { NAV } from "@/lib/nav";
+import { NAV, systemById } from "@/lib/nav";
 import { applyTheme, prefs, resetPrefs } from "@/stores/prefs";
 import { useSession } from "@/stores/session";
 import { toast } from "@/stores/ui";
 const s = useSession();
 const groups = computed(() => {
   const out: { name: string; items: typeof NAV }[] = [];
-  for (const n of NAV) { let g = out.find((x) => x.name === n.section); if (!g) out.push((g = { name: n.section, items: [] })); g.items.push(n); }
+  for (const n of NAV.filter((x) => !x.hidden && (!x.system || systemById(x.system)?.visible(s)))) {
+    const name = n.system ? `${systemById(n.system)!.label} · ${n.section}` : n.section;
+    let g = out.find((x) => x.name === name); if (!g) out.push((g = { name, items: [] })); g.items.push(n);
+  }
   return out;
 });
+const startPages = computed(() => NAV.filter((n) => (n.id === "home" || !n.hidden) && n.section !== "Administration" && n.id !== "settings"
+  && (!n.system || systemById(n.system)?.visible(s)) && (!n.global || s.canGlobal(n.global))));
 function toggle(id: string, on: boolean) {
   prefs.hidden = on ? prefs.hidden.filter((x) => x !== id) : [...new Set([...prefs.hidden, id])];
   toast(true, `${NAV.find((n) => n.id === id)!.label} ${on ? "shown" : "hidden"}`, "prefs");
@@ -45,7 +50,7 @@ function reset() { if (confirm("Reset all your dashboard preferences to their de
         <div class="pref-row"><div class="lbl">Auto-refresh<div>How often cluster data reloads. Live charts update every 5 seconds.</div></div>
           <div class="segmented" role="group"><button v-for="v in [5, 10, 30, 60]" :key="v" :aria-pressed="prefs.refresh === v" @click="prefs.refresh = v">{{ v }}s</button></div></div>
         <div class="pref-row"><div class="lbl">Start page<div>The page that opens when you visit the dashboard.</div></div>
-          <select v-model="prefs.start" class="select"><option v-for="n in NAV.filter((x) => !x.global && x.id !== 'settings')" :key="n.id" :value="n.id">{{ n.label }}</option></select></div>
+          <select v-model="prefs.start" class="select"><option v-for="n in startPages" :key="n.id" :value="n.id">{{ n.system ? `${systemById(n.system)!.label} · ${n.label}` : n.label }}</option></select></div>
       </div></section>
       <section class="card"><div class="card-head"><h2>Account</h2></div><div class="card-body">
         <div class="pref-row"><div class="lbl">{{ s.me?.user.display_name || s.me?.user.username }}<div>Signed in as {{ s.me?.user.username }}</div></div>

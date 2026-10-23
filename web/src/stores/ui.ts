@@ -66,3 +66,13 @@ export function closeMenu() { menu.anchor = null; menu.items = []; }
 export interface ShellRef { clusterId: number; clusterName: string; namespace: string; pod: string; containers: string[]; container: string }
 export const shell = reactive<{ current: ShellRef | null }>({ current: null });
 export function openShell(ref: ShellRef) { shell.current = ref; }
+
+// The system shown in the sidebar on shared pages (Home, Alerts, admin): the last one visited.
+const SYSTEM_KEY = "k10y.system";
+let initialSystem = "kubernetes";
+try { initialSystem = localStorage.getItem(SYSTEM_KEY) || initialSystem; } catch { /* storage blocked */ }
+export const lastSystem = reactive<{ id: string }>({ id: initialSystem });
+export function rememberSystem(id: string) {
+  lastSystem.id = id;
+  try { localStorage.setItem(SYSTEM_KEY, id); } catch { /* storage blocked */ }
+}

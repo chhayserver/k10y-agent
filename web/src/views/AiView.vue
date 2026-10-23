@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { to } from "@/lib/nav";
 import { computed, onMounted, ref } from "vue";
 import { agent, hub } from "@/api/client";
 import Badge from "@/components/Badge.vue";
@@ -126,7 +127,7 @@ function md(text: string) {
       </template>
     </div>
     <aside style="display:flex;flex-direction:column;gap:16px">
-      <section class="card"><div class="card-head"><h2>AI provider</h2><div v-if="s.canGlobal('settings.manage')" class="right"><RouterLink class="btn sm" to="/system">Settings</RouterLink></div></div>
+      <section class="card"><div class="card-head"><h2>AI provider</h2><div v-if="s.canGlobal('settings.manage')" class="right"><RouterLink class="btn sm" :to="to('system')">Settings</RouterLink></div></div>
         <div class="card-body">
           <div v-if="!cfg" class="hint">{{ error || "Loading…" }}</div>
           <div v-else class="kv" style="grid-template-columns:1fr">

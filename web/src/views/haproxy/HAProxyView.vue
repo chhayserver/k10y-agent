@@ -8,8 +8,11 @@ import RowMenu from "@/components/RowMenu.vue";
 import Skeleton from "@/components/Skeleton.vue";
 import { backendHealth, bindText, hx, num, ROUTE_KIND, STATE, type HxBackend, type HxFrontend, type HxOp, type HxOverview, type HxServer } from "@/lib/haproxy";
 import { fmt } from "@/lib/format";
+import { to } from "@/lib/nav";
+import { useHaproxy } from "@/stores/haproxy";
 import { useSession } from "@/stores/session";
-import { openAction, toast, type MenuItem } from "@/stores/ui";
+import { openAction, type MenuItem } from "@/stores/ui";
+import { useRouter } from "vue-router";
 import HxBackendForm from "./HxBackendForm.vue";
 import HxChangeDialog from "./HxChangeDialog.vue";
 import HxConfig from "./HxConfig.vue";
@@ -18,35 +21,22 @@ import HxServerForm from "./HxServerForm.vue";
 import HxServiceForm from "./HxServiceForm.vue";
 import HxTopology from "./HxTopology.vue";
 
-const s = useSession();
+type Tab = "overview" | "services" | "backends" | "topology" | "config";
+const props = defineProps<{ tab: Tab }>();
+const s = useSession(), h = useHaproxy(), router = useRouter();
 const canOperate = computed(() => s.canGlobal("haproxy.operate"));
 const canConfigure = computed(() => s.canGlobal("haproxy.configure"));
 const canManage = computed(() => s.canGlobal("clusters.manage"));
 
-const KEY = "k10y.haproxy.instance";
-const instances = ref<any[] | null>(null), current = ref<number | null>(null);
-const data = ref<HxOverview | null>(null), error = ref(""), updated = ref(0), paused = ref(false);
-type Tab = "overview" | "services" | "backends" | "topology" | "config";
-const tab = ref<Tab>("overview");
-const focus = ref("");   // backend to highlight after a click in the topology
-
-async function loadInstances(select?: number) {
-  instances.value = await hx.list();
-  let saved: number | null = null;
-  try { saved = Number(localStorage.getItem(KEY)) || null; } catch { /* storage blocked */ }
-  const ids = instances.value.map((i) => i.id);
-  current.value = select && ids.includes(select) ? select : saved && ids.includes(saved) ? saved : ids[0] ?? null;
-}
-async function refresh() {
-  if (current.value == null) { data.value = null; return; }
-  const id = current.value;
-  try { const d = await hx.overview(id); if (id === current.value) { data.value = d; error.value = ""; updated.value = Date.now(); } }
-  catch (e: any) { if (id === current.value) error.value = e.message; }
-}
-watch(current, (id) => { data.value = null; error.value = ""; try { if (id) localStorage.setItem(KEY, String(id)); } catch { /* */ } refresh(); });
+const instances = computed(() => h.instances), current = computed(() => h.currentId);
+const data = computed(() => h.data), error = computed(() => h.error);
+const focus = ref("");   // item to highlight after a click in the topology or problems list
+const refresh = () => h.refresh();
 let timer = 0;
-onMounted(async () => { try { await loadInstances(); } catch (e: any) { error.value = e.message; instances.value = []; }
-  timer = window.setInterval(() => { if (!paused.value && !document.hidden && !anyDialog.value) refresh(); }, 5000); });
+onMounted(async () => {
+  if (h.instances == null) await h.loadInstances(); else if (!h.data) h.refresh();
+  timer = window.setInterval(() => { if (!h.paused && !document.hidden && !anyDialog.value) h.refresh(); }, 5000);
+});
 onBeforeUnmount(() => clearInterval(timer));
 
 // summary numbers
@@ -121,12 +111,15 @@ function serviceMenu(f: HxFrontend): MenuItem[] {
     { sep: true }, { label: "Delete service…", icon: "trash", danger: true, run: () => review([{ op: "delete", kind: "frontend", name: f.name }], `Delete service ${f.name}`, true) }];
 }
 function pick(kind: string, name: string, backend?: string) {
-  if (kind === "frontend") { tab.value = "services"; focus.value = `f:${name}`; }
-  else { tab.value = "backends"; focus.value = `b:${backend || name}`; }
-  setTimeout(() => document.getElementById(focus.value)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+  focus.value = kind === "frontend" ? `f:${name}` : `b:${backend || name}`;
+  router.push({ path: to(kind === "frontend" ? "haproxy-services" : "haproxy-backends"), query: { focus: focus.value } });
 }
+watch(() => router.currentRoute.value.query.focus, (f) => {
+  if (typeof f !== "string") return;
+  focus.value = f;
+  setTimeout(() => document.getElementById(f)?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
+}, { immediate: true });
 const rate = (st: any) => num(st.req_rate ?? st.rate);
-const TABS: [Tab, string][] = [["overview", "Overview"], ["services", "Services"], ["backends", "Backends"], ["topology", "Topology"], ["config", "Config"]];
 </script>
 
 <template>
@@ -139,22 +132,11 @@ const TABS: [Tab, string][] = [["overview", "Overview"], ["services", "Services"
     </div></section>
   </template>
   <template v-else>
-    <div class="toolbar">
-      <select v-if="instances && instances.length > 1" v-model="current" class="select" aria-label="HAProxy instance">
-        <option v-for="i in instances" :key="i.id" :value="i.id">{{ i.name }}</option></select>
-      <b v-else-if="instances?.length">{{ instances[0].name }}</b>
-      <span v-if="data" class="hint">{{ data.instance.url }} · config v{{ data.config_version }} · updated {{ fmt.ago(new Date(updated).toISOString()) }}</span>
-      <span class="grow" />
-      <button class="btn" :aria-pressed="paused" @click="paused = !paused"><Icon :name="paused ? 'play' : 'pause'" /><span>{{ paused ? "Resume" : "Pause" }}</span></button>
-      <button class="btn" @click="refresh"><Icon name="refresh" /><span>Refresh</span></button>
+    <div v-if="error" class="banner show"><Icon name="crit" /><span class="msg">{{ error }}</span><button class="btn" @click="refresh">Retry</button></div>
+    <div v-if="tab === 'overview'" class="toolbar">
+      <span v-if="data" class="hint">{{ data.instance.url }} · config version {{ data.config_version }}</span><span class="grow" />
       <button v-if="canManage && data" class="btn" @click="Object.assign(instDialog, { open: true, instance: data.instance })"><Icon name="gear" /><span>Connection</span></button>
       <button v-if="canManage" class="btn" @click="Object.assign(instDialog, { open: true, instance: null })"><Icon name="lb" /><span>Add HAProxy</span></button>
-    </div>
-    <div v-if="error" class="banner show"><Icon name="crit" /><span class="msg">{{ error }}</span></div>
-
-    <div class="segmented hx-tabs" role="tablist" aria-label="HAProxy views">
-      <button v-for="[id, label] in TABS" :key="id" role="tab" :aria-selected="tab === id" :aria-pressed="tab === id" @click="tab = id">{{ label }}
-        <span v-if="id === 'overview' && problems.length" class="count-pill">{{ problems.length }}</span></button>
     </div>
 
     <Skeleton v-if="!data && !error && tab !== 'config'" :rows="6" />
@@ -174,7 +156,7 @@ const TABS: [Tab, string][] = [["overview", "Overview"], ["services", "Services"
           <span class="ic"><Icon :name="p.level === 'critical' ? 'crit' : 'warn'" :style="{ color: p.level === 'critical' ? 'var(--critical)' : 'var(--warning)' }" /></span>
           <div><div class="main-line">{{ p.text }}</div></div></li></ul>
       </div></section>
-      <section class="card" style="margin-top:16px"><div class="card-head"><h2>Topology</h2><div class="right"><button class="btn sm" @click="tab = 'topology'">Full view</button></div></div>
+      <section class="card" style="margin-top:16px"><div class="card-head"><h2>Topology</h2><div class="right"><button class="btn sm" @click="router.push(to('haproxy-topology'))">Full view</button></div></div>
         <div class="card-body"><HxTopology :data="data" @pick="pick" /></div></section>
     </template>
 
@@ -242,7 +224,7 @@ const TABS: [Tab, string][] = [["overview", "Overview"], ["services", "Services"
   </template>
 
   <HxInstanceDialog :open="instDialog.open" :instance="instDialog.instance" @close="instDialog.open = false"
-    @saved="async (id) => { instDialog.open = false; await loadInstances(id); refresh(); }" />
+    @saved="async (id) => { instDialog.open = false; await h.loadInstances(id); h.refresh(); }" />
   <HxServiceForm :open="svcForm.open" :frontend="svcForm.frontend" :backends="data?.backends || []" @close="svcForm.open = false" @review="review" />
   <HxBackendForm :open="beForm.open" :backend="beForm.backend" @close="beForm.open = false" @review="review" />
   <HxServerForm :open="srvForm.open" :backend="srvForm.backend" :server="srvForm.server" @close="srvForm.open = false" @review="review" />

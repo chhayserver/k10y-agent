@@ -18,7 +18,7 @@ interface Prefs {
 
 const KEY = "k10y-prefs";
 const defaults = (): Prefs => ({
-  hidden: [], theme: "system", refresh: 10, start: "overview", range: "15m", pages: {},
+  hidden: [], theme: "system", refresh: 10, start: "home", range: "15m", pages: {},
   map: { ns: "", rs: false, config: true, q: "" },
 });
 

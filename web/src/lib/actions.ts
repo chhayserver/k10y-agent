@@ -1,3 +1,4 @@
+import { to } from "@/lib/nav";
 // Row menus and control actions, filtered by the user's permissions on the current cluster.
 import ImageForm from "@/forms/ImageForm.vue";
 import RollbackForm from "@/forms/RollbackForm.vue";
@@ -18,11 +19,11 @@ const plural: Record<string, string> = { deployment: "deployments", statefulset:
 export function startAI(req: AIRequest, autorun = true) {
   aiRequest.req = req; aiRequest.autorun = autorun;
   closePanel();
-  router.push("/ai");
+  router.push(to("ai"));
 }
 export function showOnMap(kind: string, o: { namespace: string; name: string }) {
   prefs.map.ns = o.namespace;
-  router.push({ path: "/map", query: { select: `${kind}/${o.namespace}/${o.name}` } });
+  router.push({ path: to("map"), query: { select: `${kind}/${o.namespace}/${o.name}` } });
 }
 
 export function actScale(o: any, kind = "deployment") {
@@ -186,7 +187,7 @@ export function menuFor(kind: string, o: any): MenuItem[] {
     return items;
   } else if (kind === "namespace") {
     return [safe({ label: "Open details", icon: "file", run: () => openDetail("Namespace", "", o.name) }),
-      safe({ label: "Show on map", icon: "map", run: () => { prefs.map.ns = o.name; router.push("/map"); } }),
+      safe({ label: "Show on map", icon: "map", run: () => { prefs.map.ns = o.name; router.push(to("map")); } }),
       ...(s.can("ai.use") ? [{ label: "Diagnose with AI", icon: "ai", run: () => startAI({ scope: "namespace", namespace: o.name }) }] : [])];
   }
   return guard(items);

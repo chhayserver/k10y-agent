@@ -1,8 +1,12 @@
 # Dashboard tour
 
-The sidebar groups the pages. You only see the pages and clusters your roles allow, and you can hide any page you don't use in **My settings**.
+k10y manages more than one kind of system. The **system switcher** at the top of the sidebar picks one: **Kubernetes** or **HAProxy** (more will follow). Below it, a second switcher picks the cluster or the HAProxy instance, and the sidebar shows only that system's pages. **Alerts**, **Activity**, **Administration** and **My settings** are shared, at the bottom.
 
-## Cluster
+**Home** shows every system at once: the health of each cluster and HAProxy instance, firing alerts, and the latest changes. It's the default start page.
+
+You only see the systems, pages and clusters your roles allow, and you can hide any page you don't use in **My settings**.
+
+## Kubernetes: cluster
 
 | Page | What it shows |
 |---|---|
@@ -15,13 +19,13 @@ The sidebar groups the pages. You only see the pages and clusters your roles all
 
 <Shot src="/shots/overview.png" alt="Overview page" url="k10y / lab / overview" />
 
-## Workloads
+## Kubernetes: workloads
 
 **Deployments, StatefulSets, DaemonSets, Jobs, CronJobs, Autoscalers and Pods.** Each list has search, a namespace filter, sorting, and a row menu (**⋯**) with the actions you're allowed to run. Click any row to open its details panel.
 
 <Shot src="/shots/cronjobs.png" alt="CronJobs page" url="k10y / lab / cronjobs" />
 
-## Network & config
+## Kubernetes: network & config
 
 **Services** (with NodePort links), **Ingresses** (hosts and routes), **Storage** (PVCs and PVs), **ConfigMaps** and **Secrets**. For Secrets you see names, types and key names only. Values are never shown.
 
@@ -48,3 +52,7 @@ Pods open a dedicated panel with live CPU and memory charts, logs and a **Shell*
 - Press <kbd>/</kbd> to jump to the search box.
 - **Pause** stops auto-refresh while you read; the refresh interval is in **My settings**.
 - The theme follows your system, or choose light or dark.
+
+## HAProxy
+
+**Overview**, **Services**, **Backends**, **Topology** and **Config** for the selected HAProxy instance. See [HAProxy](./haproxy).
