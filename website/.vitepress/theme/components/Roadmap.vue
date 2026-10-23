@@ -5,7 +5,7 @@ import { computed, ref } from "vue";
 interface Item { t: string; d: string; area: string; v?: string }
 const columns: { id: string; title: string; hint: string; items: Item[] }[] = [
   { id: "next", title: "Next up", hint: "Being designed or built now", items: [
-    { t: "HAProxy management", d: "Monitor, drain and configure HAProxy load balancers with validated changes and a live topology. Built, in testing.", area: "Control" },
+    { t: "HAProxy management", d: "Monitor, drain and configure HAProxy with validated changes, live charts and logs, certificates, rate limits, config history and rollback, rolling deploys, groups, alerts and a Kubernetes sync. Built, in testing.", area: "Control" },
     { t: "Two-factor login (TOTP)", d: "Authenticator-app codes for sign-in, with an option to require them for admins.", area: "Security" },
     { t: "More alert channels", d: "Slack, email and generic webhooks next to Telegram.", area: "Alerts" },
     { t: "Silence and acknowledge alerts", d: "Mute a firing alert for a while, and show who acknowledged it.", area: "Alerts" },

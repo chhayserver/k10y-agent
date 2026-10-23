@@ -16,6 +16,7 @@ Set these in `.env`, or in the `hub` service of `docker-compose.yml`.
 | `K10Y_SESSION_HOURS` | `12` | Idle time before a session expires |
 | `K10Y_PUBLIC_URL` | — | The hub's address, for links in alert messages |
 | `K10Y_ALERTS_ENABLED` | `true` | Run the alert engine |
+| `K10Y_SYSLOG_PORT` | `5514` in compose (`0` = off) | UDP port where the hub receives HAProxy logs |
 | `K10Y_TLS` | `true` in compose | Serve HTTPS |
 | `K10Y_TLS_CERT`, `K10Y_TLS_KEY` | — | Your own certificate and key. Without them, a self-signed certificate is created. |
 | `K10Y_TLS_DIR` | `/data/tls` in compose | Where the self-signed certificate is kept |
@@ -30,6 +31,7 @@ Compose-only settings (in `.env`):
 | `K10Y_BACKUP_EVERY_HOURS` | `24` | Backup interval |
 | `K10Y_BACKUP_KEEP` | `14` | Backups to keep |
 | `K10Y_IMAGE` | the release image | Override the hub image |
+| `K10Y_SYSLOG_PUBLISH` | `5514` | Host UDP port published for HAProxy logs |
 
 ## Agent
 

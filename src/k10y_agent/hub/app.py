@@ -24,7 +24,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .. import __version__, ai
-from . import alerts, haproxy
+from . import alerts, haproxy, haproxy_monitor
 from ..config import Settings
 from .db import (AuditEntry, Cluster, Database, Role, RoleAssignment, SessionRow, User, UserPreference, get_setting,
                  utcnow)
@@ -86,12 +86,22 @@ def _startup() -> None:
         init()
     if settings.alerts_enabled:
         alert_engine().start()
+    haproxy_mon().start()
+    if settings.syslog_port:
+        try:
+            rx = haproxy_monitor.SyslogReceiver(settings.syslog_port)
+            rx.start()
+            state["syslog"] = rx
+        except OSError as e:
+            log.warning("HAProxy log receiver disabled: cannot listen on udp/%s: %s", settings.syslog_port, e)
 
 
 @app.on_event("shutdown")
 def _shutdown() -> None:
     if "engine" in state:
         state["engine"].stop()
+    if "haproxy_monitor" in state:
+        state["haproxy_monitor"].stop()
 
 
 def db_session():
@@ -1122,10 +1132,24 @@ def _alert_diagnose(c: Cluster, resource: str) -> str:
     return result.get("summary", "")
 
 
+def haproxy_mon() -> haproxy_monitor.HAProxyMonitor:
+    if "haproxy_monitor" not in state:
+        state["haproxy_monitor"] = haproxy_monitor.HAProxyMonitor(state["db"].session, lambda v: crypto().decrypt(v), _agent_get)
+    return state["haproxy_monitor"]
+
+
+def _haproxy_targets() -> list:
+    m = state.get("haproxy_monitor")
+    if m is None:
+        return []
+    with state["db"].session() as s:
+        return [(i.id, i.name, m.latest.get(i.id)) for i in s.execute(select(haproxy.HAProxyInstance)).scalars()]
+
+
 def alert_engine() -> alerts.AlertEngine:
     if "engine" not in state:
         state["engine"] = alerts.AlertEngine(state["db"].session, lambda v: crypto().decrypt(v), _agent_get,
-                                             _alert_diagnose, lambda: settings.public_url)
+                                             _alert_diagnose, lambda: settings.public_url, _haproxy_targets)
     return state["engine"]
 
 
@@ -1138,7 +1162,8 @@ class _EngineRef(dict):
 
 
 app.include_router(alerts.build_router(db_session, current, require, audit, crypto, _EngineRef()))
-app.include_router(haproxy.build_router(db_session, require, audit, crypto))
+app.include_router(haproxy.build_router(db_session, require, audit, crypto, monitor=lambda: state.get("haproxy_monitor") or (haproxy_mon() if "db" in state else None),
+                                        syslog=lambda: state.get("syslog"), can_cluster=lambda p, perm, cid: p.can(perm, cid)))
 
 
 # --- web UI ---------------------------------------------------------------------------

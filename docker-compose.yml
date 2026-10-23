@@ -67,8 +67,11 @@ services:
       K10Y_SECRET_KEY: ${K10Y_SECRET_KEY:?run make hub-init first}
       K10Y_ADMIN_USER: ${K10Y_ADMIN_USER:-admin}
       K10Y_ADMIN_PASSWORD: ${K10Y_ADMIN_PASSWORD:-}
+      # HAProxy logs (syslog over UDP): point "log <hub>:5514" at the hub. 0 turns it off.
+      K10Y_SYSLOG_PORT: ${K10Y_SYSLOG_PORT:-5514}
     ports:
       - "${K10Y_HUB_PORT:-8443}:8443"
+      - "${K10Y_SYSLOG_PUBLISH:-5514}:5514/udp"
     volumes:
       - ${K10Y_DATA_DIR:-./data}/hub:/data     # self-signed certificate (so the browser exception stays valid)
     read_only: true

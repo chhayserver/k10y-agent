@@ -132,7 +132,8 @@ site-deploy: site-build  ## Deploy the website to Cloudflare Pages (token in $(C
 haproxy-lab-up:   ## Start a test HAProxy (with Data Plane API) and demo backends in Docker
 	deploy/haproxy-lab/setup.sh
 	docker compose -f deploy/haproxy-lab/docker-compose.yml -p k10y-haproxy-lab up -d
-	@echo "HAProxy: http://localhost:8088  stats: http://localhost:8404/stats  API: http://localhost:5555/v3 (admin / $$(cat deploy/haproxy-lab/config/dataplaneapi.password))"
+	@echo "HAProxy:   http://localhost:8088  stats: http://localhost:8404/stats  API: http://localhost:5555/v3 (admin / $$(cat deploy/haproxy-lab/config/dataplaneapi.password))"
+	@echo "HAProxy 2: http://localhost:8098  stats: http://localhost:8414/stats  API: http://localhost:5556/v3 (admin / $$(cat deploy/haproxy-lab/config2/dataplaneapi.password))"
 
 haproxy-lab-down: ## Stop the HAProxy test lab
 	docker compose -f deploy/haproxy-lab/docker-compose.yml -p k10y-haproxy-lab down

@@ -82,7 +82,9 @@ class FakeDataPlane:
             raise hx.DataPlaneError(400, "balance only supports roundrobin, ...")
 
     def stats(self):
-        return [{"type": "frontend", "name": "FRONTEND", "backend_name": "web", "stats": {"status": "OPEN", "scur": 3, "req_rate": 7}},
+        # Real shape: frontends/backends have their name in "name" and no backend_name.
+        return [{"type": "frontend", "name": "web", "backend_name": None, "stats": {"status": "OPEN", "scur": 3, "req_rate": 7}},
+                {"type": "backend", "name": "shop", "backend_name": None, "stats": {"status": "UP", "scur": 2, "rtime": 4}},
                 {"type": "server", "name": "shop1", "backend_name": "shop", "stats": {"status": "UP", "check_status": "L7OK", "scur": 2}}]
 
     def info(self):
@@ -141,6 +143,7 @@ def test_overview_merges_config_and_stats():
     shop = next(b for b in o["backends"] if b["name"] == "shop")
     assert shop["used_by"] == ["web"] and shop["check"] == {"type": "http", "uri": "/"}
     assert shop["servers"][0]["state"] == "up" and shop["servers"][0]["stats"]["check_status"] == "L7OK"
+    assert shop["stats"]["rtime"] == 4
     assert o["keeps_server_state"] is False
 
 

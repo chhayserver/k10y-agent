@@ -87,7 +87,11 @@ it.
 - **Drain, maintenance, back in service**: instant, no reload.
 - **Add, edit and remove** services, backends, servers and routes, or edit the raw `haproxy.cfg`. Every change is
   prepared in a transaction, shown as a diff, validated by HAProxy, applied with a graceful reload, and audited.
-- Try it with `make haproxy-lab-up` (HAProxy 3.2 + Data Plane API + demo backends in Docker). See
+- Live charts (requests, 5xx, sessions, response time), live request logs (syslog to the hub), TLS certificates with
+  expiry, stick tables, rate limits, IP allow-lists, HTTPS redirect, header and client-IP routes.
+- Config history with rollback, rolling-deploy guide, weight changes for canaries, groups (one change on several
+  HAProxy), HAProxy alert rules, and a backend that stays in sync with a Kubernetes Service.
+- Try it with `make haproxy-lab-up` (two HAProxy 3.2 + Data Plane API + demo backends in Docker). See
   `website/docs/haproxy.md`.
 
 **AI assistant** (Google Gemini, or CodeCraft API / any OpenAI-compatible API)

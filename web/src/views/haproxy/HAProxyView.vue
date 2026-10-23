@@ -6,7 +6,7 @@ import EmptyState from "@/components/EmptyState.vue";
 import Icon from "@/components/Icon.vue";
 import RowMenu from "@/components/RowMenu.vue";
 import Skeleton from "@/components/Skeleton.vue";
-import { backendHealth, bindText, hx, num, ROUTE_KIND, STATE, type HxBackend, type HxFrontend, type HxOp, type HxOverview, type HxServer } from "@/lib/haproxy";
+import { backendHealth, bindText, hx, num, ROUTE_KIND, routeText, STATE, type HxBackend, type HxFrontend, type HxOp, type HxOverview, type HxServer } from "@/lib/haproxy";
 import { fmt } from "@/lib/format";
 import { to } from "@/lib/nav";
 import { useHaproxy } from "@/stores/haproxy";
@@ -14,6 +14,14 @@ import { useSession } from "@/stores/session";
 import { openAction, type MenuItem } from "@/stores/ui";
 import { useRouter } from "vue-router";
 import HxBackendForm from "./HxBackendForm.vue";
+import HxCertificates from "./HxCertificates.vue";
+import HxCharts from "./HxCharts.vue";
+import HxHistory from "./HxHistory.vue";
+import HxLogs from "./HxLogs.vue";
+import HxRollingDeploy from "./HxRollingDeploy.vue";
+import HxStickTables from "./HxStickTables.vue";
+import HxSyncDialog from "./HxSyncDialog.vue";
+import Modal from "@/components/Modal.vue";
 import HxChangeDialog from "./HxChangeDialog.vue";
 import HxConfig from "./HxConfig.vue";
 import HxInstanceDialog from "./HxInstanceDialog.vue";
@@ -21,7 +29,7 @@ import HxServerForm from "./HxServerForm.vue";
 import HxServiceForm from "./HxServiceForm.vue";
 import HxTopology from "./HxTopology.vue";
 
-type Tab = "overview" | "services" | "backends" | "topology" | "config";
+type Tab = "overview" | "services" | "backends" | "topology" | "certificates" | "sticktables" | "logs" | "history" | "config";
 const props = defineProps<{ tab: Tab }>();
 const s = useSession(), h = useHaproxy(), router = useRouter();
 const canOperate = computed(() => s.canGlobal("haproxy.operate"));
@@ -64,15 +72,31 @@ const instDialog = reactive({ open: false, instance: null as any });
 const svcForm = reactive({ open: false, frontend: null as HxFrontend | null });
 const beForm = reactive({ open: false, backend: null as HxBackend | null });
 const srvForm = reactive({ open: false, backend: "", server: null as HxServer | null });
-const change = reactive({ open: false, title: "", ops: [] as HxOp[], danger: false });
-const anyDialog = computed(() => instDialog.open || svcForm.open || beForm.open || srvForm.open || change.open);
+const change = reactive({ open: false, title: "", ops: [] as HxOp[], danger: false, note: "" });
+const rolling = reactive({ open: false, backend: null as HxBackend | null });
+const sync = reactive({ open: false, backend: null as HxBackend | null });
+const weight = reactive({ open: false, backend: null as HxBackend | null, server: null as HxServer | null, value: 100 as number | string });
+const anyDialog = computed(() => instDialog.open || svcForm.open || beForm.open || srvForm.open || change.open || rolling.open || sync.open || weight.open);
 const configRef = ref<InstanceType<typeof HxConfig> | null>(null);
+const historyRef = ref<InstanceType<typeof HxHistory> | null>(null);
 
-function review(ops: HxOp[], title: string, danger = false) {
-  svcForm.open = beForm.open = srvForm.open = false;
-  Object.assign(change, { open: true, title, ops, danger });
+function review(ops: HxOp[], title: string, danger = false, note = "") {
+  svcForm.open = beForm.open = srvForm.open = weight.open = false;
+  Object.assign(change, { open: true, title, ops, danger, note });
 }
-async function changed() { change.open = false; await refresh(); configRef.value?.load(); }
+async function changed() { change.open = false; await refresh(); configRef.value?.load(); historyRef.value?.load(); }
+
+// Weight: share of traffic. The Data Plane API can't change it at runtime, so it's a quick config change.
+const weightShare = computed(() => {
+  const b = weight.backend, w = Number(weight.value) || 0;
+  if (!b) return 0;
+  const others = b.servers.filter((x) => x.name !== weight.server?.name && !x.backup && (x.state === "up" || x.state === "nocheck")).reduce((a, x) => a + (x.weight || 0), 0);
+  return w + others ? Math.round((100 * w) / (w + others)) : 0;
+});
+function reviewWeight() {
+  review([{ op: "update", kind: "server", backend: weight.backend!.name, name: weight.server!.name, data: { weight: Number(weight.value) } }],
+    `Weight of ${weight.backend!.name}/${weight.server!.name}: ${weight.server!.weight} → ${weight.value}`);
+}
 
 function setState(b: string, sv: HxServer, state: "ready" | "drain" | "maint") {
   const what = { ready: "Put back in service", drain: "Drain", maint: "Maintenance" }[state];
@@ -92,15 +116,19 @@ function serverMenu(b: HxBackend, sv: HxServer): MenuItem[] {
     if (sv.state !== "maint") items.push({ label: "Maintenance", icon: "pause", run: () => setState(b.name, sv, "maint") });
   }
   if (canConfigure.value) {
-    items.push({ sep: true }, { label: "Edit…", icon: "file", run: () => Object.assign(srvForm, { open: true, backend: b.name, server: sv }) },
+    items.push({ sep: true }, { label: "Change weight…", icon: "scale", run: () => Object.assign(weight, { open: true, backend: b, server: sv, value: sv.weight }) },
+      { label: "Edit…", icon: "file", run: () => Object.assign(srvForm, { open: true, backend: b.name, server: sv }) },
       { label: "Remove server…", icon: "trash", danger: true, run: () => review([{ op: "delete", kind: "server", backend: b.name, name: sv.name }], `Remove server ${b.name}/${sv.name}`, true) });
   }
   return items.length ? items : [{ note: "You can view only" }];
 }
 function backendMenu(b: HxBackend): MenuItem[] {
-  if (!canConfigure.value) return [{ note: "You can view only" }];
-  return [{ label: "Add server…", icon: "upload", run: () => Object.assign(srvForm, { open: true, backend: b.name, server: null }) },
+  const ops: MenuItem[] = canOperate.value && b.servers.filter((x) => !x.backup).length > 1
+    ? [{ label: "Rolling deploy…", icon: "refresh", run: () => Object.assign(rolling, { open: true, backend: b }) }] : [];
+  if (!canConfigure.value) return ops.length ? ops : [{ note: "You can view only" }];
+  return [...ops, ...(ops.length ? [{ sep: true }] : []), { label: "Add server…", icon: "upload", run: () => Object.assign(srvForm, { open: true, backend: b.name, server: null }) },
     { label: "Edit backend…", icon: "file", run: () => Object.assign(beForm, { open: true, backend: b }) },
+    { label: b.k8s_sync ? "Kubernetes sync…" : "Sync from Kubernetes…", icon: "logo", run: () => Object.assign(sync, { open: true, backend: b }) },
     { sep: true }, { label: "Delete backend…", icon: "trash", danger: true, disabled: b.used_by.length > 0,
       run: () => review([{ op: "delete", kind: "backend", name: b.name }], `Delete backend ${b.name}`, true) },
     ...(b.used_by.length ? [{ note: `Used by ${b.used_by.join(", ")}` }] : [])];
@@ -139,7 +167,7 @@ const rate = (st: any) => num(st.req_rate ?? st.rate);
       <button v-if="canManage" class="btn" @click="Object.assign(instDialog, { open: true, instance: null })"><Icon name="lb" /><span>Add HAProxy</span></button>
     </div>
 
-    <Skeleton v-if="!data && !error && tab !== 'config'" :rows="6" />
+    <Skeleton v-if="!data && !error && ['overview', 'services', 'backends', 'topology'].includes(tab)" :rows="6" />
 
     <!-- OVERVIEW -->
     <template v-if="data && tab === 'overview'">
@@ -150,6 +178,7 @@ const rate = (st: any) => num(st.req_rate ?? st.rate);
         <div class="card stat"><div class="lbl">Current sessions</div><b>{{ num(totals.sessions) }}</b><span class="hint">across all services</span></div>
         <div class="card stat"><div class="lbl">Requests / s</div><b>{{ num(totals.rate) }}</b><span class="hint">{{ num(totals.e5) }} server errors (5xx) since start</span></div>
       </div>
+      <HxCharts :points="h.points" :services="services.map((f) => f.name)" :backends="data.backends.map((b) => b.name)" style="margin-top:16px" />
       <section class="card" style="margin-top:16px"><div class="card-head"><h2>Problems</h2></div><div class="card-body">
         <EmptyState v-if="!problems.length" title="All clear" sub="Every backend has healthy servers." icon="ok" good />
         <ul v-else class="list"><li v-for="p in problems" :key="p.text" class="clickable" @click="pick('backend', p.backend)">
@@ -169,9 +198,12 @@ const rate = (st: any) => num(st.req_rate ?? st.rate);
           <tbody><tr v-for="f in data.frontends" :id="`f:${f.name}`" :key="f.name" :class="{ 'hx-focus': focus === `f:${f.name}` }">
             <td class="primary"><span class="mono">{{ f.name }}</span> <span class="chip">{{ f.mode.toUpperCase() }}</span><span v-if="f.stats_page" class="chip">stats page</span></td>
             <td><Badge :level="f.stats.status === 'OPEN' ? 'good' : 'critical'" :label="f.stats.status === 'OPEN' ? 'Open' : (f.stats.status || 'Unknown')" /></td>
-            <td class="mono">{{ f.binds.map(bindText).join(", ") }}</td>
+            <td class="mono">{{ f.binds.map(bindText).join(", ") }}
+              <div class="hx-policies"><span v-if="f.policies.redirect_https" class="chip">→ HTTPS</span>
+                <span v-if="f.policies.allow_ips.length" class="chip" :title="f.policies.allow_ips.join(' ')">IP allow-list ({{ f.policies.allow_ips.length }})</span>
+                <span v-if="f.policies.rate_limit" class="chip">≤ {{ f.policies.rate_limit.requests }} req / {{ f.policies.rate_limit.period }} s per IP</span></div></td>
             <td class="wrap"><div class="hx-routes">
-              <div v-for="(r, i) in f.routes" :key="i"><span class="dim">{{ ROUTE_KIND[r.kind] }}</span> <code>{{ r.value }}</code> → <button class="link" @click="pick('backend', r.backend)">{{ r.backend }}</button></div>
+              <div v-for="(r, i) in f.routes" :key="i"><span class="dim">{{ ROUTE_KIND[r.kind] }}</span> <code>{{ routeText(r) }}</code> → <button class="link" @click="pick('backend', r.backend)">{{ r.backend }}</button></div>
               <div v-if="f.default_backend"><span class="dim">Everything else</span> → <button class="link" @click="pick('backend', f.default_backend)">{{ f.default_backend }}</button></div>
               <span v-if="!f.routes.length && !f.default_backend" class="dim">{{ f.stats_page ? "HAProxy statistics page" : "No backend" }}</span></div></td>
             <td class="num">{{ num(f.stats.scur) }}</td><td class="num">{{ rate(f.stats) }}</td>
@@ -189,6 +221,8 @@ const rate = (st: any) => num(st.req_rate ?? st.rate);
         <a href="https://k10y.pages.dev/docs/haproxy#keep-drain-and-maintenance-across-reloads" target="_blank" rel="noopener">How</a></span></div>
       <section v-for="b in data.backends" :id="`b:${b.name}`" :key="b.name" class="card flush hx-backend" :class="{ 'hx-focus': focus === `b:${b.name}` }">
         <div class="card-head"><h2 class="mono" style="text-transform:none;letter-spacing:0">{{ b.name }}</h2>
+          <button v-if="b.k8s_sync" class="chip hx-sync" :class="{ err: b.k8s_sync.last_error }" :title="b.k8s_sync.last_error || b.k8s_sync.last_result" @click="Object.assign(sync, { open: true, backend: b })">
+            <Icon name="logo" /> {{ b.k8s_sync.namespace }}/{{ b.k8s_sync.service }}{{ b.k8s_sync.enabled ? "" : " (paused)" }}</button>
           <Badge :level="backendHealth(b).level" :label="backendHealth(b).label" />
           <span class="hint">{{ b.balance }} · {{ b.mode.toUpperCase() }} · check: {{ b.check.type === "http" ? `GET ${b.check.uri}` : b.check.type === "tcp" ? "TCP" : "connect" }}
             <template v-if="b.used_by.length"> · used by {{ b.used_by.join(", ") }}</template><template v-else> · not used by any service</template></span>
@@ -214,6 +248,11 @@ const rate = (st: any) => num(st.req_rate ?? st.rate);
 
     <!-- TOPOLOGY -->
     <section v-if="data && tab === 'topology'" class="card"><div class="card-body"><HxTopology :data="data" @pick="pick" /></div></section>
+    <HxCertificates v-if="current && tab === 'certificates'" :key="`c${current}`" :instance-id="current" :can-edit="canConfigure" />
+    <HxStickTables v-if="current && tab === 'sticktables'" :key="`s${current}`" :instance-id="current" />
+    <HxLogs v-if="current && tab === 'logs'" :key="`l${current}`" :instance-id="current" :can-edit="canConfigure" @review="(ops, title) => review(ops, title)" />
+    <HxHistory v-if="current && tab === 'history'" ref="historyRef" :key="`h${current}`" :instance-id="current" :can-edit="canConfigure"
+      @review="(ops, title, note) => review(ops, title, false, note)" />
 
     <!-- CONFIG -->
     <section v-if="current && tab === 'config'" class="card"><div class="card-body">
@@ -225,9 +264,21 @@ const rate = (st: any) => num(st.req_rate ?? st.rate);
 
   <HxInstanceDialog :open="instDialog.open" :instance="instDialog.instance" @close="instDialog.open = false"
     @saved="async (id) => { instDialog.open = false; await h.loadInstances(id); h.refresh(); }" />
-  <HxServiceForm :open="svcForm.open" :frontend="svcForm.frontend" :backends="data?.backends || []" @close="svcForm.open = false" @review="review" />
+  <HxServiceForm v-if="current" :open="svcForm.open" :frontend="svcForm.frontend" :backends="data?.backends || []" :instance-id="current" @close="svcForm.open = false" @review="review" />
+  <HxRollingDeploy :open="rolling.open" :backend="rolling.backend" @close="rolling.open = false" />
+  <HxSyncDialog v-if="current" :open="sync.open" :instance-id="current" :backend="sync.backend" @close="sync.open = false" @changed="refresh(); historyRef?.load()" />
+  <Modal :open="weight.open" :title="`Weight of ${weight.backend?.name}/${weight.server?.name}`" @close="weight.open = false">
+    <p class="hint" style="margin:0">A server's share of new traffic is its weight divided by the total weight of the healthy servers. Use a small weight for a canary.</p>
+    <div class="form-row"><label class="lbl">Weight (0–256)</label><input v-model="weight.value" class="input" type="number" min="0" max="256">
+      <input v-model="weight.value" type="range" min="0" max="256" aria-label="Weight slider"></div>
+    <div class="test-result show ok"><Icon name="scale" /><span>About <b>{{ weightShare }}%</b> of new requests to {{ weight.backend?.name }} would go to {{ weight.server?.name }}.</span></div>
+    <p class="hint" style="margin:0">The Data Plane API can't change weights at runtime, so this is applied as a config change with a graceful reload (about two seconds, no dropped connections).</p>
+    <template #actions><button class="btn ghost" type="button" @click="weight.open = false">Cancel</button><span style="flex:1" />
+      <button class="btn primary" type="button" :disabled="Number(weight.value) === weight.server?.weight" @click="reviewWeight">Review change</button></template>
+  </Modal>
   <HxBackendForm :open="beForm.open" :backend="beForm.backend" @close="beForm.open = false" @review="review" />
   <HxServerForm :open="srvForm.open" :backend="srvForm.backend" :server="srvForm.server" @close="srvForm.open = false" @review="review" />
-  <HxChangeDialog v-if="current" :open="change.open" :instance-id="current" :title="change.title" :ops="change.ops" :danger="change.danger"
+  <HxChangeDialog v-if="current" :open="change.open" :instance-id="current" :instance-name="h.current?.name" :group="data?.group" :note="change.note"
+    :title="change.title" :ops="change.ops" :danger="change.danger"
     @close="change.open = false" @done="changed" />
 </template>

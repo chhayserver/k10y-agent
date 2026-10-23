@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, select
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, false, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from .db import Base, Cluster, utcnow
@@ -24,7 +24,8 @@ from .db import Base, Cluster, utcnow
 log = logging.getLogger("k10y.alerts")
 TELEGRAM_API = "https://api.telegram.org"
 EVAL_SECONDS = 30
-RULE_TYPES = ("problems", "resource", "unreachable")
+RULE_TYPES = ("problems", "resource", "unreachable", "haproxy")
+HAPROXY_CONDITIONS = ("server_down", "backend_down", "error_rate", "sessions", "cert_expiry", "unreachable")
 
 
 class AlertChannel(Base):
@@ -62,6 +63,7 @@ class AlertEvent(Base):
     rule_name: Mapped[str] = mapped_column(String(128), default="")
     cluster_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     cluster_name: Mapped[str] = mapped_column(String(64), default="")
+    haproxy_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     key: Mapped[str] = mapped_column(String(300), index=True)
     severity: Mapped[str] = mapped_column(String(16), default="warning")
     state: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending | firing | resolved
@@ -124,6 +126,58 @@ def evaluate_resource(summary: Dict[str, Any], nodes: List[Dict[str, Any]], para
     return out
 
 
+def evaluate_haproxy(latest: Optional[Dict[str, Any]], params: Dict[str, Any]) -> Optional[List[Condition]]:
+    """Conditions for one HAProxy instance from the monitor's latest sample."""
+    cond = params.get("condition", "server_down")
+    if latest is None:
+        return None                          # not sampled yet
+    if cond == "unreachable":
+        return [("hx/unreachable", "HAProxy Data Plane API unreachable", latest["error"], "")] if latest.get("error") else []
+    if latest.get("error"):
+        return None
+    from .haproxy import _server_state      # local import: haproxy imports nothing from alerts
+    stats = latest.get("stats") or []
+    point = latest.get("point") or {}
+    out: List[Condition] = []
+    if cond in ("server_down", "backend_down"):
+        servers: Dict[str, List[Tuple[str, str, bool]]] = {}
+        for it in stats:
+            if it.get("type") == "server":
+                s = it.get("stats") or {}
+                servers.setdefault(it.get("backend_name", ""), []).append((it["name"], _server_state(s.get("status")), bool(s.get("bck"))))
+        for be, lst in servers.items():
+            active = [x for x in lst if not x[2]]
+            if cond == "backend_down":
+                if active and not any(st in ("up", "nocheck") for _, st, _ in active):
+                    out.append((f"hx/backend/{be}", f"Backend {be} has no server up", f"All {len(active)} servers of {be} are down or out of rotation.", f"backend/{be}"))
+            else:
+                for name, st, _ in lst:
+                    if st == "down":
+                        out.append((f"hx/server/{be}/{name}", f"Server {be}/{name} is down", "The health check is failing.", f"server/{be}/{name}"))
+    elif cond == "error_rate":
+        th, min_rps = float(params.get("threshold", 5)), float(params.get("min_rps", 1))
+        for fe, v in (point.get("f") or {}).items():
+            if v.get("req", 0) >= min_rps and v.get("e5_pct", 0) >= th:
+                out.append((f"hx/5xx/{fe}", f"Service {fe}: {v['e5_pct']:.0f}% server errors", f"{v['e5_pct']:.1f}% of responses were 5xx at {v['req']:.1f} req/s (threshold {th:.0f}%).", f"frontend/{fe}"))
+    elif cond == "sessions":
+        th = float(params.get("threshold", 80))
+        for fe, v in (point.get("f") or {}).items():
+            if v.get("slim") and 100.0 * v.get("sess", 0) / v["slim"] >= th:
+                pct = 100.0 * v["sess"] / v["slim"]
+                out.append((f"hx/sessions/{fe}", f"Service {fe} at {pct:.0f}% of its session limit", f"{v['sess']} of {v['slim']} sessions in use.", f"frontend/{fe}"))
+    elif cond == "cert_expiry":
+        days = float(params.get("threshold", 14))
+        for c in latest.get("certs") or []:
+            exp = c.get("not_after")
+            if not exp:
+                continue
+            left = (datetime.fromisoformat(exp.replace("Z", "+00:00")) - datetime.now(timezone.utc)).total_seconds() / 86400
+            if left <= days:
+                what = "has expired" if left < 0 else f"expires in {max(0, int(left))} days"
+                out.append((f"hx/cert/{c.get('storage_name')}", f"Certificate {c.get('storage_name')} {what}", f"Valid until {exp}.", f"certificate/{c.get('storage_name')}"))
+    return out
+
+
 # --- notifications --------------------------------------------------------------------
 
 def telegram_send(token: str, chat_id: str, text: str, timeout: float = 15.0) -> None:
@@ -180,7 +234,9 @@ def format_message(ev: AlertEvent, rule: AlertRule, resolved: bool, public_url: 
 class AlertEngine:
     def __init__(self, db_factory: Callable[[], Session], decrypt: Callable[[str], str],
                  agent_get: Callable[[Cluster, str], Any], ai_diagnose: Optional[Callable[[Cluster, str], str]] = None,
-                 public_url: Callable[[], str] = lambda: ""):
+                 public_url: Callable[[], str] = lambda: "",
+                 haproxy_targets: Callable[[], List[Tuple[int, str, Optional[Dict[str, Any]]]]] = lambda: []):
+        self.haproxy_targets = haproxy_targets
         self.db_factory = db_factory
         self.decrypt = decrypt
         self.agent_get = agent_get
@@ -229,6 +285,15 @@ class AlertEngine:
                 return cache[(c.id, path)]
 
             for rule in rules:
+                if rule.type == "haproxy":
+                    only = (rule.params or {}).get("instance_id")
+                    for iid, name, latest in self.haproxy_targets():
+                        if only and int(only) != iid:
+                            continue
+                        conds = evaluate_haproxy(latest, rule.params or {})
+                        if conds is not None:
+                            self._reconcile(s, rule, _Target(iid, f"haproxy/{name}", "haproxy"), conds, now)
+                    continue
                 for c in clusters:
                     if rule.cluster_id is not None and rule.cluster_id != c.id:
                         continue
@@ -256,14 +321,17 @@ class AlertEngine:
             return evaluate_resource(summary, nodes, rule.params or {})
         return []
 
-    def _reconcile(self, s: Session, rule: AlertRule, c: Cluster, conds: List[Condition], now: datetime) -> None:
+    def _reconcile(self, s: Session, rule: AlertRule, c: Any, conds: List[Condition], now: datetime) -> None:
+        is_hx = getattr(c, "kind", "cluster") == "haproxy"
+        scope = AlertEvent.haproxy_id == c.id if is_hx else AlertEvent.cluster_id == c.id
         open_events = {e.key: e for e in s.execute(select(AlertEvent).where(
-            AlertEvent.rule_id == rule.id, AlertEvent.cluster_id == c.id, AlertEvent.state.in_(("pending", "firing")))).scalars()}
+            AlertEvent.rule_id == rule.id, scope, AlertEvent.state.in_(("pending", "firing")))).scalars()}
         current = {k: (title, msg, res) for k, title, msg, res in conds}
         for key, (title, msg, res) in current.items():
             ev = open_events.get(key)
             if ev is None:
-                ev = AlertEvent(rule_id=rule.id, rule_name=rule.name, cluster_id=c.id, cluster_name=c.name, key=key,
+                ev = AlertEvent(rule_id=rule.id, rule_name=rule.name, cluster_id=None if is_hx else c.id,
+                                haproxy_id=c.id if is_hx else None, cluster_name=c.name, key=key,
                                 severity=rule.severity, state="pending", title=title, message=msg, resource=res,
                                 first_seen=now, last_seen=now)
                 s.add(ev)
@@ -272,7 +340,7 @@ class AlertEngine:
             held = (now - _aware(ev.first_seen)).total_seconds() / 60
             if ev.state == "pending" and held >= rule.for_minutes:
                 ev.state, ev.fired_at = "firing", now
-                if rule.ai_summary and self.ai_diagnose and res:
+                if rule.ai_summary and self.ai_diagnose and res and not is_hx:
                     try:
                         ev.ai_summary = self.ai_diagnose(c, res)
                     except Exception as e:
@@ -308,6 +376,11 @@ class AlertEngine:
             raise RuntimeError(f"unsupported channel type {ch.type}")
 
 
+class _Target:
+    def __init__(self, id: int, name: str, kind: str):
+        self.id, self.name, self.kind = id, name, kind
+
+
 # --- API ------------------------------------------------------------------------------
 
 class ChannelBody(BaseModel):
@@ -326,7 +399,7 @@ class ChatsBody(BaseModel):
 class RuleBody(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     enabled: bool = True
-    type: str = Field(pattern="^(problems|resource|unreachable)$")
+    type: str = Field(pattern="^(problems|resource|unreachable|haproxy)$")
     params: Dict[str, Any] = Field(default_factory=dict)
     cluster_id: Optional[int] = None
     severity: str = Field("warning", pattern="^(critical|warning|info)$")
@@ -431,6 +504,14 @@ def build_router(db_session, current, require, audit, crypto, engine_ref: Dict[s
     def _validate(body: RuleBody, s: Session) -> None:
         if body.cluster_id is not None and s.get(Cluster, body.cluster_id) is None:
             raise HTTPException(status_code=400, detail="unknown cluster")
+        if body.type == "haproxy":
+            if body.params.get("condition") not in HAPROXY_CONDITIONS:
+                raise HTTPException(status_code=400, detail=f"condition must be one of {', '.join(HAPROXY_CONDITIONS)}")
+            if body.params.get("condition") in ("error_rate", "sessions", "cert_expiry"):
+                try:
+                    float(body.params.get("threshold"))
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=400, detail="threshold must be a number")
         if body.type == "resource":
             if body.params.get("metric") not in ("cpu", "memory") or body.params.get("scope") not in ("node", "cluster"):
                 raise HTTPException(status_code=400, detail="resource rules need metric cpu|memory and scope node|cluster")
@@ -481,7 +562,7 @@ def build_router(db_session, current, require, audit, crypto, engine_ref: Dict[s
         if state:
             q = q.where(AlertEvent.state.in_(state.split(",")))
         visible = [c.id for c in s.execute(select(Cluster)).scalars() if p.can("cluster.view", c.id)]
-        q = q.where(AlertEvent.cluster_id.in_(visible))
+        q = q.where(or_(AlertEvent.cluster_id.in_(visible), AlertEvent.haproxy_id.isnot(None) if p.can("haproxy.view") else false()))
         events = [event_view(e) for e in s.execute(q).scalars()]
         eng = engine_ref.get("engine")
         return {"events": events, "engine": {"last_run": eng.last_run.isoformat() if eng and eng.last_run else None,

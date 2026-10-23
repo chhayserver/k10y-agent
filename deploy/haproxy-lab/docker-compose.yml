@@ -3,6 +3,7 @@
 #   admin         http://localhost:8081         (frontend "admin" -> legacy, which is down on purpose)
 #   stats page    http://localhost:8404/stats
 #   Data Plane API http://localhost:5555/v3     (user admin, password in config/dataplaneapi.password)
+#   second HAProxy (for groups): traffic :8098, stats :8414, Data Plane API :5556 (password in config2/)
 services:
   haproxy:
     image: haproxytech/haproxy-alpine:3.2
@@ -31,6 +32,30 @@ services:
     depends_on: [haproxy]
     restart: unless-stopped
 
+  # A second HAProxy with the same layout, to try groups (one change applied to several load balancers).
+  haproxy2:
+    image: haproxytech/haproxy-alpine:3.2
+    command: ["haproxy", "-S", "ipv4@0.0.0.0:9999", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+    ports:
+      - "8098:80"
+      - "8414:8404"
+    volumes:
+      - ./config2:/usr/local/etc/haproxy
+      - sockets2:/var/run/haproxy
+    depends_on: [shop1, shop2, shop3, api1, api2]
+    restart: unless-stopped
+
+  dataplaneapi2:
+    image: haproxytech/haproxy-alpine:3.2
+    entrypoint: ["/usr/local/bin/dataplaneapi", "-f", "/usr/local/etc/haproxy/dataplaneapi.yml"]
+    ports:
+      - "5556:5555"
+    volumes:
+      - ./config2:/usr/local/etc/haproxy
+      - sockets2:/var/run/haproxy
+    depends_on: [haproxy2]
+    restart: unless-stopped
+
   shop1: { image: traefik/whoami:v1.10.3, command: ["--name", "shop1"] }
   shop2: { image: traefik/whoami:v1.10.3, command: ["--name", "shop2"] }
   shop3: { image: traefik/whoami:v1.10.3, command: ["--name", "shop3"] }
@@ -40,3 +65,4 @@ services:
 
 volumes:
   sockets:
+  sockets2:

@@ -30,6 +30,7 @@ const views: Record<string, () => Promise<any>> = {
   users: () => import("@/views/admin/Users.vue"),
   roles: () => import("@/views/admin/Roles.vue"),
   "manage-clusters": () => import("@/views/admin/Clusters.vue"),
+  "manage-haproxy": () => import("@/views/admin/HAProxyInstances.vue"),
   system: () => import("@/views/admin/System.vue"),
   settings: () => import("@/views/Settings.vue"),
 };

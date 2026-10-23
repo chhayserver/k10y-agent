@@ -38,7 +38,7 @@ async function copy(i: number) {
 
 const worksWith = ["Kubernetes", "RKE2", "k3s", "Amazon EKS", "Google GKE", "Azure AKS", "Docker Compose", "PostgreSQL", "Telegram", "Google Gemini", "OpenAI-compatible APIs", "amd64 + arm64"];
 const stats = [
-  { n: "2", l: "commands to install" }, { n: "28", l: "pages in the dashboard" }, { n: "24", l: "fine-grained permissions" },
+  { n: "2", l: "commands to install" }, { n: "38", l: "pages in the dashboard" }, { n: "24", l: "fine-grained permissions" },
   { n: "Every", l: "change audited, with who made it" }, { n: "0", l: "kubeconfigs handed out" },
 ];
 const useCases = [

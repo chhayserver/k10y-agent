@@ -6,6 +6,9 @@ dataplaneapi:
   port: 5555
   transaction:
     transaction_dir: /tmp/haproxy
+  resources:
+    ssl_certs_dir: /usr/local/etc/haproxy/certs
+    general_storage_dir: /usr/local/etc/haproxy/general
   user:
     - name: admin
       insecure: true

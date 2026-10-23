@@ -127,7 +127,10 @@ class Database:
 
     # Columns added after a table first shipped. create_all() only creates missing tables, so older
     # databases get these with ALTER TABLE ... ADD COLUMN (nullable, so it is safe on existing rows).
-    ADDED_COLUMNS = [("sessions", "last_seen_at", "TIMESTAMP WITH TIME ZONE")]
+    ADDED_COLUMNS = [("sessions", "last_seen_at", "TIMESTAMP WITH TIME ZONE"),
+                     ("alert_events", "haproxy_id", "INTEGER"),
+                     ("haproxy_instances", "log_tag", "VARCHAR(64) DEFAULT ''"),
+                     ("haproxy_instances", "group_name", "VARCHAR(64) DEFAULT ''")]
 
     def _add_missing_columns(self) -> None:
         insp = inspect(self.engine)

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Services (frontends) → backends → servers, with live health colours. Hover a box to trace its path.
 import { computed, ref } from "vue";
-import { backendHealth, bindText, ROUTE_KIND, STATE, type HxOverview } from "@/lib/haproxy";
+import { backendHealth, bindText, ROUTE_KIND, routeText, STATE, type HxOverview } from "@/lib/haproxy";
 
 const props = defineProps<{ data: HxOverview }>();
 const emit = defineEmits<{ pick: [kind: "frontend" | "backend" | "server", name: string, backend?: string] }>();
@@ -34,8 +34,12 @@ const layout = computed(() => {
   const edges: { id: string; from: string; to: string; d: string; label: string; cls: string; ly: number }[] = [];
   const curve = (x1: number, y1: number, x2: number, y2: number) => `M${x1},${y1} C${(x1 + x2) / 2},${y1} ${(x1 + x2) / 2},${y2} ${x2},${y2}`;
   for (const n of feNodes) {
-    const targets: [string, string][] = n.f.routes.map((r) => [r.backend, r.kind === "other" ? r.value : `${ROUTE_KIND[r.kind].toLowerCase()} ${r.value}`]);
-    if (n.f.default_backend) targets.push([n.f.default_backend, "default"]);
+    const raw: [string, string][] = n.f.routes.map((r) => [r.backend, r.kind === "other" ? r.value : `${ROUTE_KIND[r.kind].toLowerCase()} ${routeText(r)}`]);
+    if (n.f.default_backend) raw.push([n.f.default_backend, "default"]);
+    // One line per service -> backend pair; several routes to the same backend share it ("2 routes").
+    const byBackend = new Map<string, string[]>();
+    raw.forEach(([be, label]) => byBackend.set(be, [...(byBackend.get(be) || []), label]));
+    const targets = [...byBackend].map(([be, labels]) => [be, labels.length > 1 ? `${labels.length} routes` : labels[0]] as [string, string]);
     targets.forEach(([be, label], k) => {
       const y2 = beY.get(be);
       if (y2 == null) return;

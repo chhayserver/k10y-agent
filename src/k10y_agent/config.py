@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     session_hours: int = 12
     public_url: str = ""          # hub address used in alert links, e.g. https://k10y.example:8443
     alerts_enabled: bool = True
+    syslog_port: int = 0            # UDP port for HAProxy logs (hub); 0 = off. docker-compose sets 5514.
     # Name this agent reports for its cluster; must be unique across clusters.
     cluster_name: str = "kubernetes"
     # Bearer token required on /api/*. Empty disables auth (local dev only),
