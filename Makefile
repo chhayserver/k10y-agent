@@ -13,7 +13,7 @@ export KUBECONFIG
 CTR = limactl shell $(VM) sudo /var/lib/rancher/rke2/bin/ctr \
       --address /run/k3s/containerd/containerd.sock -n k8s.io
 
-.PHONY: build test load deploy restart up token logs undeploy load-k3d push manifests hub-init hub-up hub-down hub-logs hub-backup hub-restore
+.PHONY: build test load deploy restart up token logs undeploy load-k3d push manifests hub-init hub-up hub-down hub-logs hub-backup hub-restore site-build site-dev
 
 build:            ## Build the agent image with Docker
 	docker build -t $(IMAGE):$(TAG) .
@@ -109,3 +109,14 @@ hub-restore:      ## Restore the hub database from FILE=data/backups/<file>.sql.
 	gunzip -c "$(FILE)" | docker compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U k10y -d k10y
 	docker compose start hub
 	@echo "restored $(FILE)"
+
+# --- website (VitePress, in website/) ---------------------------------------------------
+SITE_RUN = docker run --rm -v $(CURDIR):/repo -w /repo/website node:22-alpine sh -c
+
+site-build:       ## Build the website into website/.vitepress/dist
+	$(SITE_RUN) "apk add -q git >/dev/null && git config --global --add safe.directory /repo && npm ci --silent && npx vitepress build"
+
+site-dev:         ## Preview the built website at http://localhost:4173
+	docker rm -f k10y-site >/dev/null 2>&1 || true
+	docker run -d --name k10y-site -p 4173:4173 -v $(CURDIR):/repo -w /repo/website node:22-alpine sh -c "npx vitepress preview --host 0.0.0.0 --port 4173"
+	@echo "Website: http://localhost:4173"

@@ -21,6 +21,8 @@ permissions.
 Agents use a self-signed certificate. Certificate verification is off by default and can be
 turned on for each cluster. No Ingress is needed; agents use a NodePort and the hub publishes a port.
 
+**Website and full documentation:** see [`website/`](website/) (build with `make site-build`, preview with `make site-dev`).
+
 ## Features
 
 **Monitoring**
