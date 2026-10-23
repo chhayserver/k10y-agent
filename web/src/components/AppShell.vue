@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import Logo from "./Logo.vue";
+import { hub } from "@/api/client";
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { actApply } from "@/lib/actions";
@@ -98,7 +99,16 @@ const updated = computed(() => {
 });
 const initials = computed(() => (s.me?.user.display_name || s.me?.user.username || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase());
 
-let timer = 0, tick = 0, fleetTimer = 0;
+// Tell open tabs when a newer dashboard has been deployed (single-page apps keep running old code otherwise).
+const loadedBuild = ref(""), newBuild = ref(false);
+async function checkBuild() {
+  try {
+    const b = (await hub.get<{ build: string }>("/health")).build;
+    if (!loadedBuild.value) loadedBuild.value = b; else if (b !== loadedBuild.value) newBuild.value = true;
+  } catch { /* hub restarting */ }
+}
+const reloadPage = () => window.location.reload();
+let timer = 0, tick = 0, fleetTimer = 0, buildTimer = 0;
 function schedule() {
   clearInterval(timer);
   timer = window.setInterval(() => { if (!c.paused && !document.hidden) c.refresh(); }, (prefs.refresh || 10) * 1000);
@@ -111,9 +121,11 @@ onMounted(() => {
   refreshFleet();
   fleetTimer = window.setInterval(() => { if (!document.hidden) refreshFleet(); }, 30000);
   tick = window.setInterval(() => { now.value = Date.now(); }, 1000);
+  checkBuild();
+  buildTimer = window.setInterval(() => { if (!document.hidden) checkBuild(); }, 120000);
   document.addEventListener("keydown", onKey);
 });
-onBeforeUnmount(() => { clearInterval(timer); clearInterval(tick); clearInterval(fleetTimer); document.removeEventListener("keydown", onKey); });
+onBeforeUnmount(() => { clearInterval(timer); clearInterval(tick); clearInterval(fleetTimer); clearInterval(buildTimer); document.removeEventListener("keydown", onKey); });
 
 function onKey(e: KeyboardEvent) {
   const typing = /INPUT|SELECT|TEXTAREA/.test((document.activeElement as HTMLElement)?.tagName || "");
@@ -243,6 +255,8 @@ const canApply = computed(() => navItem.value?.cluster && s.can("apply.yaml") &&
         <button class="btn ghost user-btn" aria-haspopup="menu" title="Account" @click="userMenu"><span class="avatar">{{ initials }}</span></button>
       </header>
       <div class="content">
+        <div v-if="newBuild" class="banner show info" role="status"><Icon name="refresh" /><span class="msg">A new version of k10y is available.</span>
+          <button class="btn primary" @click="reloadPage">Reload</button></div>
         <div v-if="navItem?.cluster && c.error" class="banner show" role="alert"><Icon name="crit" /><span class="msg">{{ c.error }}</span>
           <button class="btn" @click="c.refresh()">Retry</button></div>
         <slot />

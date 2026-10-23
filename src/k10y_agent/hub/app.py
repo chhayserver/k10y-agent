@@ -1168,9 +1168,19 @@ app.include_router(haproxy.build_router(db_session, require, audit, crypto, moni
 
 # --- web UI ---------------------------------------------------------------------------
 
+def _build_id() -> str:
+    """Changes whenever a new dashboard build is deployed, so open tabs can offer a reload."""
+    index = WEB_DIR / "index.html"
+    try:
+        st = index.stat()
+        return f"{__version__}-{int(st.st_mtime)}-{st.st_size}"
+    except OSError:
+        return __version__
+
+
 @api.get("/health")
 def hub_health() -> dict:
-    return {"status": "ok", "version": __version__}
+    return {"status": "ok", "version": __version__, "build": _build_id()}
 
 
 app.include_router(api)
