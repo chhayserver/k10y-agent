@@ -139,3 +139,49 @@ pre.logs { max-height: 520px; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .shell-term { background: #0d1117; } }
 :root[data-theme="dark"] .shell-term { background: #0d1117; }
 @media (max-width: 700px) { .shell-backdrop { padding: 0; } .shell-win { border-radius: 0; height: 100%; } .shell-tip { display: none; } }
+
+/* HAProxy */
+.hx-tabs { margin: 0 0 16px; flex-wrap: wrap; max-width: 100%; }
+.hx-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.hx-cards .stat { padding: 16px 18px; display: flex; flex-direction: column; gap: 4px; }
+.hx-cards .stat b { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.hx-cards .stat b small { font-size: 16px; color: var(--muted); font-weight: 500; }
+@media (max-width: 900px) { .hx-cards { grid-template-columns: 1fr 1fr; } }
+.hx-routes { display: grid; gap: 3px; font-size: 13px; }
+.hx-routes code { font-size: 12px; }
+.hx-backend { margin-bottom: 14px; scroll-margin-top: 80px; }
+.hx-backend .card-head { flex-wrap: wrap; gap: 10px; }
+.hx-focus { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 10px; }
+tr.hx-focus td { background: var(--surface-active); }
+.hx-summary { margin: 0; padding-left: 18px; font-size: 14px; }
+.hx-diff { max-height: 380px; }
+.hx-line { grid-template-columns: 22px 1fr; }
+.hx-line.hunk { color: var(--muted); }
+.hx-topo-wrap { display: flex; flex-direction: column; gap: 10px; }
+.hx-topo-legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 12.5px; color: var(--text-2); }
+.hx-topo-legend .lg { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.lg.up { background: var(--good); } .lg.drain { background: #e8a33a; } .lg.maint { background: var(--muted); } .lg.down { background: var(--critical); }
+.hx-topo-scroll { overflow-x: auto; }
+.hx-topo-scroll svg { display: block; font-family: var(--font); }
+.hx-topo-scroll .col { font-size: 11px; font-weight: 650; letter-spacing: .08em; fill: var(--muted); }
+.hx-topo-scroll .edge path { fill: none; stroke: var(--border-strong); stroke-width: 1.6; transition: opacity .15s; }
+.hx-topo-scroll .edge.fe path { stroke: var(--accent); stroke-opacity: .55; stroke-width: 2; }
+.hx-topo-scroll .edge.srv.down path { stroke: var(--critical); stroke-dasharray: 4 4; }
+.hx-topo-scroll .edge.srv.maint path, .hx-topo-scroll .edge.srv.drain path { stroke-dasharray: 2 5; }
+.hx-topo-scroll .elabel { font-size: 11px; fill: var(--text-2); paint-order: stroke; stroke: var(--surface); stroke-width: 4px; }
+.hx-topo-scroll .node { cursor: pointer; transition: opacity .15s; }
+.hx-topo-scroll .node rect:first-child { fill: var(--surface-raised); stroke: var(--border-strong); }
+.hx-topo-scroll .node:hover rect:first-child, .hx-topo-scroll .node:focus rect:first-child { stroke: var(--accent); stroke-width: 2; }
+.hx-topo-scroll .node:focus { outline: none; }
+.hx-topo-scroll .node.fe rect:first-child { fill: color-mix(in srgb, var(--accent) 9%, var(--surface-raised)); }
+.hx-topo-scroll .node .t { font-size: 13.5px; font-weight: 600; fill: var(--text); font-family: var(--mono); }
+.hx-topo-scroll .node .t.sm { font-size: 12.5px; }
+.hx-topo-scroll .node .s { font-size: 11.5px; fill: var(--muted); font-family: var(--font); font-weight: 400; }
+.hx-topo-scroll .node .r { font-size: 11.5px; fill: var(--text-2); font-variant-numeric: tabular-nums; }
+.hx-topo-scroll .node.be .bar { fill: var(--muted); }
+.hx-topo-scroll .node.be.good .bar { fill: var(--good); } .hx-topo-scroll .node.be.warning .bar { fill: #e8a33a; } .hx-topo-scroll .node.be.critical .bar { fill: var(--critical); }
+.hx-topo-scroll .node.srv .dot { fill: var(--muted); }
+.hx-topo-scroll .node.srv.up .dot, .hx-topo-scroll .node.srv.nocheck .dot { fill: var(--good); }
+.hx-topo-scroll .node.srv.down .dot { fill: var(--critical); } .hx-topo-scroll .node.srv.drain .dot { fill: #e8a33a; }
+.hx-topo-scroll .node.srv.down rect:first-child { stroke: color-mix(in srgb, var(--critical) 55%, transparent); }
+.hx-topo-scroll .dim { opacity: .18; }

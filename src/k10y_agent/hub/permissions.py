@@ -25,10 +25,13 @@ CLUSTER_PERMISSIONS: Dict[str, str] = {
 }
 # Global permissions only count when granted on all clusters.
 GLOBAL_PERMISSIONS: Dict[str, str] = {
-    "clusters.manage": "Add, edit and remove clusters",
+    "clusters.manage": "Add, edit and remove clusters and HAProxy instances",
     "users.manage": "Manage users, roles and role assignments",
     "settings.manage": "Manage system settings (AI providers, alert channels)",
     "alerts.manage": "Create and edit alert rules",
+    "haproxy.view": "See HAProxy services, backends, servers, live stats and topology",
+    "haproxy.operate": "Drain, put in maintenance or re-enable HAProxy servers (instant, no reload)",
+    "haproxy.configure": "Add, edit and remove HAProxy services, backends and servers, and edit the raw config",
 }
 ALL_PERMISSIONS = {**CLUSTER_PERMISSIONS, **GLOBAL_PERMISSIONS}
 
@@ -36,8 +39,9 @@ BUILTIN_ROLES: List[Tuple[str, str, List[str]]] = [
     ("Admin", "Everything, including users, roles, clusters and settings", sorted(ALL_PERMISSIONS)),
     ("Operator", "View clusters, read logs, run control actions and AI",
      ["cluster.view", "logs.view", "secrets.view", "workloads.scale", "workloads.restart", "workloads.update_image",
-      "workloads.rollback", "pods.delete", "resources.edit", "apply.yaml", "ai.use", "audit.view"]),
-    ("Viewer", "Read-only access to clusters and logs", ["cluster.view", "logs.view", "audit.view"]),
+      "workloads.rollback", "pods.delete", "resources.edit", "apply.yaml", "ai.use", "audit.view",
+      "haproxy.view", "haproxy.operate"]),
+    ("Viewer", "Read-only access to clusters and logs", ["cluster.view", "logs.view", "audit.view", "haproxy.view"]),
 ]
 
 # (method, path regex relative to /api/v1/, permission). First match wins.

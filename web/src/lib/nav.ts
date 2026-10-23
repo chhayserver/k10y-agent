@@ -19,6 +19,7 @@ export const NAV: NavItem[] = [
   { id: "storage", label: "Storage", icon: "disk", section: "Network & config", perm: "cluster.view", cluster: true },
   { id: "configmaps", label: "ConfigMaps", icon: "file", section: "Network & config", perm: "cluster.view", cluster: true },
   { id: "secrets", label: "Secrets", icon: "lock", section: "Network & config", perm: "secrets.view", cluster: true },
+  { id: "haproxy", label: "HAProxy", icon: "lb", section: "Load balancing", global: "haproxy.view" },
   { id: "events", label: "Events", icon: "events", section: "Activity", perm: "cluster.view", cluster: true },
   { id: "alerts", label: "Alerts", icon: "bell", section: "Activity" },
   { id: "activity", label: "Activity", icon: "audit", section: "Activity", perm: "audit.view" },

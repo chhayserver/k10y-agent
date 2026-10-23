@@ -13,7 +13,7 @@ export KUBECONFIG
 CTR = limactl shell $(VM) sudo /var/lib/rancher/rke2/bin/ctr \
       --address /run/k3s/containerd/containerd.sock -n k8s.io
 
-.PHONY: build test load deploy restart up token logs undeploy load-k3d push manifests hub-init hub-up hub-down hub-logs hub-backup hub-restore site-build site-dev site-deploy
+.PHONY: build test load deploy restart up token logs undeploy load-k3d push manifests hub-init hub-up hub-down hub-logs hub-backup hub-restore site-build site-dev site-deploy haproxy-lab-up haproxy-lab-down
 
 build:            ## Build the agent image with Docker
 	docker build -t $(IMAGE):$(TAG) .
@@ -127,3 +127,12 @@ site-deploy: site-build  ## Deploy the website to Cloudflare Pages (token in $(C
 	@test -f "$(CF_ENV)" || (echo "missing $(CF_ENV) with CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID" && exit 1)
 	docker run --rm --env-file "$(CF_ENV)" -v $(CURDIR)/website/.vitepress/dist:/dist node:22-alpine \
 	  sh -c "npx --yes wrangler@4 pages project create $(CF_PROJECT) --production-branch main >/dev/null 2>&1; npx --yes wrangler@4 pages deploy /dist --project-name $(CF_PROJECT) --branch main --commit-dirty=true"
+
+# --- HAProxy test lab (deploy/haproxy-lab) ----------------------------------------------
+haproxy-lab-up:   ## Start a test HAProxy (with Data Plane API) and demo backends in Docker
+	deploy/haproxy-lab/setup.sh
+	docker compose -f deploy/haproxy-lab/docker-compose.yml -p k10y-haproxy-lab up -d
+	@echo "HAProxy: http://localhost:8088  stats: http://localhost:8404/stats  API: http://localhost:5555/v3 (admin / $$(cat deploy/haproxy-lab/config/dataplaneapi.password))"
+
+haproxy-lab-down: ## Stop the HAProxy test lab
+	docker compose -f deploy/haproxy-lab/docker-compose.yml -p k10y-haproxy-lab down

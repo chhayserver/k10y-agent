@@ -22,6 +22,7 @@ const views: Record<string, () => Promise<any>> = {
   services: () => import("@/views/Services.vue"),
   configmaps: () => import("@/views/ConfigMaps.vue"),
   secrets: () => import("@/views/Secrets.vue"),
+  haproxy: () => import("@/views/haproxy/HAProxyView.vue"),
   events: () => import("@/views/Events.vue"),
   alerts: () => import("@/views/Alerts.vue"),
   activity: () => import("@/views/Activity.vue"),

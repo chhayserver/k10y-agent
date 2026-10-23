@@ -1,0 +1,251 @@
+<script setup lang="ts">
+// HAProxy: live services, backends and servers; instant server state changes; validated config changes; topology.
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import Badge from "@/components/Badge.vue";
+import EmptyState from "@/components/EmptyState.vue";
+import Icon from "@/components/Icon.vue";
+import RowMenu from "@/components/RowMenu.vue";
+import Skeleton from "@/components/Skeleton.vue";
+import { backendHealth, bindText, hx, num, ROUTE_KIND, STATE, type HxBackend, type HxFrontend, type HxOp, type HxOverview, type HxServer } from "@/lib/haproxy";
+import { fmt } from "@/lib/format";
+import { useSession } from "@/stores/session";
+import { openAction, toast, type MenuItem } from "@/stores/ui";
+import HxBackendForm from "./HxBackendForm.vue";
+import HxChangeDialog from "./HxChangeDialog.vue";
+import HxConfig from "./HxConfig.vue";
+import HxInstanceDialog from "./HxInstanceDialog.vue";
+import HxServerForm from "./HxServerForm.vue";
+import HxServiceForm from "./HxServiceForm.vue";
+import HxTopology from "./HxTopology.vue";
+
+const s = useSession();
+const canOperate = computed(() => s.canGlobal("haproxy.operate"));
+const canConfigure = computed(() => s.canGlobal("haproxy.configure"));
+const canManage = computed(() => s.canGlobal("clusters.manage"));
+
+const KEY = "k10y.haproxy.instance";
+const instances = ref<any[] | null>(null), current = ref<number | null>(null);
+const data = ref<HxOverview | null>(null), error = ref(""), updated = ref(0), paused = ref(false);
+type Tab = "overview" | "services" | "backends" | "topology" | "config";
+const tab = ref<Tab>("overview");
+const focus = ref("");   // backend to highlight after a click in the topology
+
+async function loadInstances(select?: number) {
+  instances.value = await hx.list();
+  let saved: number | null = null;
+  try { saved = Number(localStorage.getItem(KEY)) || null; } catch { /* storage blocked */ }
+  const ids = instances.value.map((i) => i.id);
+  current.value = select && ids.includes(select) ? select : saved && ids.includes(saved) ? saved : ids[0] ?? null;
+}
+async function refresh() {
+  if (current.value == null) { data.value = null; return; }
+  const id = current.value;
+  try { const d = await hx.overview(id); if (id === current.value) { data.value = d; error.value = ""; updated.value = Date.now(); } }
+  catch (e: any) { if (id === current.value) error.value = e.message; }
+}
+watch(current, (id) => { data.value = null; error.value = ""; try { if (id) localStorage.setItem(KEY, String(id)); } catch { /* */ } refresh(); });
+let timer = 0;
+onMounted(async () => { try { await loadInstances(); } catch (e: any) { error.value = e.message; instances.value = []; }
+  timer = window.setInterval(() => { if (!paused.value && !document.hidden && !anyDialog.value) refresh(); }, 5000); });
+onBeforeUnmount(() => clearInterval(timer));
+
+// summary numbers
+const services = computed(() => (data.value?.frontends || []).filter((f) => !f.stats_page));
+const allServers = computed(() => (data.value?.backends || []).flatMap((b) => b.servers.map((sv) => ({ ...sv, backend: b.name }))));
+const problems = computed(() => {
+  const out: { level: "critical" | "warning"; text: string; backend: string }[] = [];
+  for (const b of data.value?.backends || []) {
+    const h = backendHealth(b);
+    if (h.total && h.up === 0) out.push({ level: "critical", text: `Backend ${b.name} has no server up${b.used_by.length ? ` (used by ${b.used_by.join(", ")})` : ""}`, backend: b.name });
+    for (const sv of b.servers) if (sv.state === "down" && !(h.total && h.up === 0))
+      out.push({ level: "warning", text: `${b.name}/${sv.name} is down: ${sv.stats.check_desc || sv.stats.check_status || "health check failing"}`, backend: b.name });
+  }
+  return out;
+});
+const totals = computed(() => {
+  const fe = services.value;
+  return { sessions: fe.reduce((a, f) => a + (Number(f.stats.scur) || 0), 0), rate: fe.reduce((a, f) => a + (Number(f.stats.req_rate ?? f.stats.rate) || 0), 0),
+    e5: fe.reduce((a, f) => a + (Number(f.stats.hrsp_5xx) || 0), 0), up: allServers.value.filter((x) => x.state === "up" || x.state === "nocheck").length,
+    down: allServers.value.filter((x) => x.state === "down").length, out: allServers.value.filter((x) => x.state === "drain" || x.state === "maint").length };
+});
+
+// dialogs
+const instDialog = reactive({ open: false, instance: null as any });
+const svcForm = reactive({ open: false, frontend: null as HxFrontend | null });
+const beForm = reactive({ open: false, backend: null as HxBackend | null });
+const srvForm = reactive({ open: false, backend: "", server: null as HxServer | null });
+const change = reactive({ open: false, title: "", ops: [] as HxOp[], danger: false });
+const anyDialog = computed(() => instDialog.open || svcForm.open || beForm.open || srvForm.open || change.open);
+const configRef = ref<InstanceType<typeof HxConfig> | null>(null);
+
+function review(ops: HxOp[], title: string, danger = false) {
+  svcForm.open = beForm.open = srvForm.open = false;
+  Object.assign(change, { open: true, title, ops, danger });
+}
+async function changed() { change.open = false; await refresh(); configRef.value?.load(); }
+
+function setState(b: string, sv: HxServer, state: "ready" | "drain" | "maint") {
+  const what = { ready: "Put back in service", drain: "Drain", maint: "Maintenance" }[state];
+  const desc = { ready: "The server takes new traffic again (if its health check passes).",
+    drain: "No new connections; existing sessions finish normally. Good before a deploy.",
+    maint: "The server is taken out of rotation now, and its health checks stop." }[state];
+  const keep = data.value?.keeps_server_state ? "" : state === "ready" ? ""
+    : " <b>Note:</b> this HAProxy has no server-state file, so the next config change will put the server back in service.";
+  openAction({ title: `${what}: ${b}/${sv.name}`, desc: `${desc} This is applied instantly, without reloading HAProxy.${keep}`, confirmLabel: what, noDryRun: true,
+    run: async () => { const r = await hx.setState(current.value!, b, sv.name, state); await refresh(); return r.message; } });
+}
+function serverMenu(b: HxBackend, sv: HxServer): MenuItem[] {
+  const items: MenuItem[] = [];
+  if (canOperate.value) {
+    if (sv.state !== "up" && sv.state !== "nocheck") items.push({ label: "Put back in service", icon: "play", run: () => setState(b.name, sv, "ready") });
+    if (sv.state !== "drain") items.push({ label: "Drain", icon: "drain", run: () => setState(b.name, sv, "drain") });
+    if (sv.state !== "maint") items.push({ label: "Maintenance", icon: "pause", run: () => setState(b.name, sv, "maint") });
+  }
+  if (canConfigure.value) {
+    items.push({ sep: true }, { label: "Edit…", icon: "file", run: () => Object.assign(srvForm, { open: true, backend: b.name, server: sv }) },
+      { label: "Remove server…", icon: "trash", danger: true, run: () => review([{ op: "delete", kind: "server", backend: b.name, name: sv.name }], `Remove server ${b.name}/${sv.name}`, true) });
+  }
+  return items.length ? items : [{ note: "You can view only" }];
+}
+function backendMenu(b: HxBackend): MenuItem[] {
+  if (!canConfigure.value) return [{ note: "You can view only" }];
+  return [{ label: "Add server…", icon: "upload", run: () => Object.assign(srvForm, { open: true, backend: b.name, server: null }) },
+    { label: "Edit backend…", icon: "file", run: () => Object.assign(beForm, { open: true, backend: b }) },
+    { sep: true }, { label: "Delete backend…", icon: "trash", danger: true, disabled: b.used_by.length > 0,
+      run: () => review([{ op: "delete", kind: "backend", name: b.name }], `Delete backend ${b.name}`, true) },
+    ...(b.used_by.length ? [{ note: `Used by ${b.used_by.join(", ")}` }] : [])];
+}
+function serviceMenu(f: HxFrontend): MenuItem[] {
+  if (!canConfigure.value) return [{ note: "You can view only" }];
+  return [{ label: "Edit service…", icon: "file", run: () => Object.assign(svcForm, { open: true, frontend: f }) },
+    { sep: true }, { label: "Delete service…", icon: "trash", danger: true, run: () => review([{ op: "delete", kind: "frontend", name: f.name }], `Delete service ${f.name}`, true) }];
+}
+function pick(kind: string, name: string, backend?: string) {
+  if (kind === "frontend") { tab.value = "services"; focus.value = `f:${name}`; }
+  else { tab.value = "backends"; focus.value = `b:${backend || name}`; }
+  setTimeout(() => document.getElementById(focus.value)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+}
+const rate = (st: any) => num(st.req_rate ?? st.rate);
+const TABS: [Tab, string][] = [["overview", "Overview"], ["services", "Services"], ["backends", "Backends"], ["topology", "Topology"], ["config", "Config"]];
+</script>
+
+<template>
+  <!-- no instances yet -->
+  <template v-if="instances && !instances.length">
+    <section class="card"><div class="card-body">
+      <EmptyState title="No HAProxy connected yet" icon="lb"
+        :sub="canManage ? 'Connect an HAProxy through its Data Plane API to monitor and manage it here.' : 'Ask an administrator to connect an HAProxy.'" />
+      <div v-if="canManage" style="display:flex;justify-content:center;margin-top:8px"><button class="btn primary" @click="Object.assign(instDialog, { open: true, instance: null })"><Icon name="lb" /><span>Add HAProxy</span></button></div>
+    </div></section>
+  </template>
+  <template v-else>
+    <div class="toolbar">
+      <select v-if="instances && instances.length > 1" v-model="current" class="select" aria-label="HAProxy instance">
+        <option v-for="i in instances" :key="i.id" :value="i.id">{{ i.name }}</option></select>
+      <b v-else-if="instances?.length">{{ instances[0].name }}</b>
+      <span v-if="data" class="hint">{{ data.instance.url }} · config v{{ data.config_version }} · updated {{ fmt.ago(new Date(updated).toISOString()) }}</span>
+      <span class="grow" />
+      <button class="btn" :aria-pressed="paused" @click="paused = !paused"><Icon :name="paused ? 'play' : 'pause'" /><span>{{ paused ? "Resume" : "Pause" }}</span></button>
+      <button class="btn" @click="refresh"><Icon name="refresh" /><span>Refresh</span></button>
+      <button v-if="canManage && data" class="btn" @click="Object.assign(instDialog, { open: true, instance: data.instance })"><Icon name="gear" /><span>Connection</span></button>
+      <button v-if="canManage" class="btn" @click="Object.assign(instDialog, { open: true, instance: null })"><Icon name="lb" /><span>Add HAProxy</span></button>
+    </div>
+    <div v-if="error" class="banner show"><Icon name="crit" /><span class="msg">{{ error }}</span></div>
+
+    <div class="segmented hx-tabs" role="tablist" aria-label="HAProxy views">
+      <button v-for="[id, label] in TABS" :key="id" role="tab" :aria-selected="tab === id" :aria-pressed="tab === id" @click="tab = id">{{ label }}
+        <span v-if="id === 'overview' && problems.length" class="count-pill">{{ problems.length }}</span></button>
+    </div>
+
+    <Skeleton v-if="!data && !error && tab !== 'config'" :rows="6" />
+
+    <!-- OVERVIEW -->
+    <template v-if="data && tab === 'overview'">
+      <div class="hx-cards">
+        <div class="card stat"><div class="lbl">Services</div><b>{{ services.length }}</b><span class="hint">{{ data.backends.length }} backends</span></div>
+        <div class="card stat"><div class="lbl">Servers up</div><b>{{ totals.up }} <small>/ {{ allServers.length }}</small></b>
+          <span class="hint">{{ totals.down }} down · {{ totals.out }} drained or in maintenance</span></div>
+        <div class="card stat"><div class="lbl">Current sessions</div><b>{{ num(totals.sessions) }}</b><span class="hint">across all services</span></div>
+        <div class="card stat"><div class="lbl">Requests / s</div><b>{{ num(totals.rate) }}</b><span class="hint">{{ num(totals.e5) }} server errors (5xx) since start</span></div>
+      </div>
+      <section class="card" style="margin-top:16px"><div class="card-head"><h2>Problems</h2></div><div class="card-body">
+        <EmptyState v-if="!problems.length" title="All clear" sub="Every backend has healthy servers." icon="ok" good />
+        <ul v-else class="list"><li v-for="p in problems" :key="p.text" class="clickable" @click="pick('backend', p.backend)">
+          <span class="ic"><Icon :name="p.level === 'critical' ? 'crit' : 'warn'" :style="{ color: p.level === 'critical' ? 'var(--critical)' : 'var(--warning)' }" /></span>
+          <div><div class="main-line">{{ p.text }}</div></div></li></ul>
+      </div></section>
+      <section class="card" style="margin-top:16px"><div class="card-head"><h2>Topology</h2><div class="right"><button class="btn sm" @click="tab = 'topology'">Full view</button></div></div>
+        <div class="card-body"><HxTopology :data="data" @pick="pick" /></div></section>
+    </template>
+
+    <!-- SERVICES (frontends) -->
+    <template v-if="data && tab === 'services'">
+      <div class="toolbar"><span class="hint">Services are HAProxy <b>frontends</b>: where clients connect, and which backend gets each request.</span><span class="grow" />
+        <button v-if="canConfigure" class="btn primary" @click="Object.assign(svcForm, { open: true, frontend: null })"><Icon name="upload" /><span>New service</span></button></div>
+      <section class="card flush"><div class="card-body table-wrap">
+        <table class="data"><thead><tr><th>Service</th><th>Status</th><th>Listen</th><th>Routes</th><th class="num">Sessions</th><th class="num">Req/s</th><th class="num">5xx</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+          <tbody><tr v-for="f in data.frontends" :id="`f:${f.name}`" :key="f.name" :class="{ 'hx-focus': focus === `f:${f.name}` }">
+            <td class="primary"><span class="mono">{{ f.name }}</span> <span class="chip">{{ f.mode.toUpperCase() }}</span><span v-if="f.stats_page" class="chip">stats page</span></td>
+            <td><Badge :level="f.stats.status === 'OPEN' ? 'good' : 'critical'" :label="f.stats.status === 'OPEN' ? 'Open' : (f.stats.status || 'Unknown')" /></td>
+            <td class="mono">{{ f.binds.map(bindText).join(", ") }}</td>
+            <td class="wrap"><div class="hx-routes">
+              <div v-for="(r, i) in f.routes" :key="i"><span class="dim">{{ ROUTE_KIND[r.kind] }}</span> <code>{{ r.value }}</code> → <button class="link" @click="pick('backend', r.backend)">{{ r.backend }}</button></div>
+              <div v-if="f.default_backend"><span class="dim">Everything else</span> → <button class="link" @click="pick('backend', f.default_backend)">{{ f.default_backend }}</button></div>
+              <span v-if="!f.routes.length && !f.default_backend" class="dim">{{ f.stats_page ? "HAProxy statistics page" : "No backend" }}</span></div></td>
+            <td class="num">{{ num(f.stats.scur) }}</td><td class="num">{{ rate(f.stats) }}</td>
+            <td class="num"><b v-if="Number(f.stats.hrsp_5xx)" style="color:var(--critical)">{{ num(f.stats.hrsp_5xx) }}</b><span v-else>0</span></td>
+            <td class="actions"><RowMenu :items="() => serviceMenu(f)" :label="f.name" /></td></tr></tbody></table>
+      </div></section>
+    </template>
+
+    <!-- BACKENDS + servers -->
+    <template v-if="data && tab === 'backends'">
+      <div class="toolbar"><span class="hint"><b>Drain</b> and <b>Maintenance</b> apply instantly without a reload. Adding, editing and removing are validated by HAProxy before they apply.</span><span class="grow" />
+        <button v-if="canConfigure" class="btn primary" @click="Object.assign(beForm, { open: true, backend: null })"><Icon name="upload" /><span>New backend</span></button></div>
+      <div v-if="!data.keeps_server_state" class="banner show info"><Icon name="warn" /><span class="msg">This HAProxy doesn't keep drain and maintenance states across reloads,
+        so any config change puts drained servers back in service. Add <code>server-state-file</code> to <code>global</code> and <code>load-server-state-from-file global</code> to <code>defaults</code>, and save the state before each reload.
+        <a href="https://k10y.pages.dev/docs/haproxy#keep-drain-and-maintenance-across-reloads" target="_blank" rel="noopener">How</a></span></div>
+      <section v-for="b in data.backends" :id="`b:${b.name}`" :key="b.name" class="card flush hx-backend" :class="{ 'hx-focus': focus === `b:${b.name}` }">
+        <div class="card-head"><h2 class="mono" style="text-transform:none;letter-spacing:0">{{ b.name }}</h2>
+          <Badge :level="backendHealth(b).level" :label="backendHealth(b).label" />
+          <span class="hint">{{ b.balance }} · {{ b.mode.toUpperCase() }} · check: {{ b.check.type === "http" ? `GET ${b.check.uri}` : b.check.type === "tcp" ? "TCP" : "connect" }}
+            <template v-if="b.used_by.length"> · used by {{ b.used_by.join(", ") }}</template><template v-else> · not used by any service</template></span>
+          <div class="right"><RowMenu :items="() => backendMenu(b)" :label="b.name" /></div></div>
+        <div class="card-body table-wrap">
+          <table class="data"><thead><tr><th>Server</th><th>State</th><th>Address</th><th class="num">Weight</th><th>Health check</th><th class="num">Sessions</th><th class="num">Req total</th><th class="num">5xx</th><th>Since</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+            <tbody>
+              <tr v-if="!b.servers.length"><td colspan="10" class="dim">No servers yet.<button v-if="canConfigure" class="link" style="margin-left:8px" @click="Object.assign(srvForm, { open: true, backend: b.name, server: null })">Add one</button></td></tr>
+              <tr v-for="sv in b.servers" :key="sv.name">
+                <td class="primary mono">{{ sv.name }}<span v-if="sv.backup" class="chip">backup</span></td>
+                <td><Badge :level="STATE[sv.state].level" :label="STATE[sv.state].label" /></td>
+                <td class="mono">{{ sv.address }}:{{ sv.port }}</td>
+                <td class="num">{{ sv.weight }}</td>
+                <td><span v-if="!sv.check" class="dim">off</span><span v-else :title="sv.stats.check_desc"><code>{{ (sv.stats.check_status || "").replace("* ", "") || "–" }}</code>
+                  <span v-if="sv.stats.check_duration != null" class="dim" style="margin-left:6px">{{ sv.stats.check_duration }} ms</span></span></td>
+                <td class="num">{{ num(sv.stats.scur) }}</td><td class="num">{{ num(sv.stats.stot) }}</td>
+                <td class="num"><b v-if="Number(sv.stats.hrsp_5xx)" style="color:var(--critical)">{{ num(sv.stats.hrsp_5xx) }}</b><span v-else>0</span></td>
+                <td class="dim">{{ sv.stats.lastchg != null ? fmt.age(Number(sv.stats.lastchg)) : "–" }}</td>
+                <td class="actions"><RowMenu :items="() => serverMenu(b, sv)" :label="sv.name" /></td></tr>
+            </tbody></table></div>
+      </section>
+    </template>
+
+    <!-- TOPOLOGY -->
+    <section v-if="data && tab === 'topology'" class="card"><div class="card-body"><HxTopology :data="data" @pick="pick" /></div></section>
+
+    <!-- CONFIG -->
+    <section v-if="current && tab === 'config'" class="card"><div class="card-body">
+      <HxConfig v-if="canConfigure" ref="configRef" :key="current" :instance-id="current" :can-edit="canConfigure"
+        @review="(ops, title) => review(ops, title)" />
+      <EmptyState v-else title="Config needs the haproxy.configure permission" icon="lock" sub="The raw configuration can contain passwords, so it's only shown to people who can change it." />
+    </div></section>
+  </template>
+
+  <HxInstanceDialog :open="instDialog.open" :instance="instDialog.instance" @close="instDialog.open = false"
+    @saved="async (id) => { instDialog.open = false; await loadInstances(id); refresh(); }" />
+  <HxServiceForm :open="svcForm.open" :frontend="svcForm.frontend" :backends="data?.backends || []" @close="svcForm.open = false" @review="review" />
+  <HxBackendForm :open="beForm.open" :backend="beForm.backend" @close="beForm.open = false" @review="review" />
+  <HxServerForm :open="srvForm.open" :backend="srvForm.backend" :server="srvForm.server" @close="srvForm.open = false" @review="review" />
+  <HxChangeDialog v-if="current" :open="change.open" :instance-id="current" :title="change.title" :ops="change.ops" :danger="change.danger"
+    @close="change.open = false" @done="changed" />
+</template>

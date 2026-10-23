@@ -24,7 +24,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .. import __version__, ai
-from . import alerts
+from . import alerts, haproxy
 from ..config import Settings
 from .db import (AuditEntry, Cluster, Database, Role, RoleAssignment, SessionRow, User, UserPreference, get_setting,
                  utcnow)
@@ -1138,6 +1138,7 @@ class _EngineRef(dict):
 
 
 app.include_router(alerts.build_router(db_session, current, require, audit, crypto, _EngineRef()))
+app.include_router(haproxy.build_router(db_session, require, audit, crypto))
 
 
 # --- web UI ---------------------------------------------------------------------------

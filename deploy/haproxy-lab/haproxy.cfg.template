@@ -1,0 +1,52 @@
+# k10y HAProxy test lab. The Data Plane API rewrites this file when you change config from k10y.
+global
+    log stdout format raw local0
+    maxconn 4000
+    stats socket /var/run/haproxy/haproxy.sock mode 660 level admin expose-fd listeners
+    stats timeout 30s
+    # keep drain/maintenance/weight across reloads (saved by reload.sh)
+    server-state-file /var/run/haproxy/server-state
+
+defaults
+    mode http
+    log global
+    option httplog
+    option dontlognull
+    timeout connect 5s
+    timeout client 30s
+    timeout server 30s
+    timeout check 3s
+    load-server-state-from-file global
+
+frontend stats
+    bind *:8404
+    stats enable
+    stats uri /stats
+    stats refresh 5s
+
+frontend web
+    bind *:80
+    acl is_api path_beg /api
+    use_backend api if is_api
+    default_backend shop
+
+frontend admin
+    bind *:8081
+    default_backend legacy
+
+backend shop
+    balance roundrobin
+    option httpchk GET /
+    server shop1 shop1:80 check weight 100
+    server shop2 shop2:80 check weight 100
+    server shop3 shop3:80 check weight 50
+
+backend api
+    balance leastconn
+    option httpchk GET /health
+    server api1 api1:80 check
+    server api2 api2:80 check
+
+backend legacy
+    balance roundrobin
+    server old1 legacy-down:80 check

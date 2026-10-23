@@ -38,7 +38,7 @@ async function copy(i: number) {
 
 const worksWith = ["Kubernetes", "RKE2", "k3s", "Amazon EKS", "Google GKE", "Azure AKS", "Docker Compose", "PostgreSQL", "Telegram", "Google Gemini", "OpenAI-compatible APIs", "amd64 + arm64"];
 const stats = [
-  { n: "2", l: "commands to install" }, { n: "27", l: "pages in the dashboard" }, { n: "21", l: "fine-grained permissions" },
+  { n: "2", l: "commands to install" }, { n: "28", l: "pages in the dashboard" }, { n: "24", l: "fine-grained permissions" },
   { n: "Every", l: "change audited, with who made it" }, { n: "0", l: "kubeconfigs handed out" },
 ];
 const useCases = [
@@ -63,7 +63,7 @@ const features = [
 ];
 const security = [
   { t: "Identity", items: ["argon2id passwords, forced first change", "Server-side sessions, sign out any device", "Login rate limiting"] },
-  { t: "Authorization", items: ["Fully custom roles", "Per-cluster or global assignments", "21 fine-grained permissions"] },
+  { t: "Authorization", items: ["Fully custom roles", "Per-cluster or global assignments", "24 fine-grained permissions"] },
   { t: "Data", items: ["HTTPS everywhere, no Ingress needed", "Tokens and keys encrypted at rest", "Secret values never leave the cluster"] },
   { t: "Accountability", items: ["Every action, login and shell audited", "Automatic database backups", "API-only agents, no side doors"] },
 ];
@@ -153,7 +153,7 @@ const security = [
       <div class="sec-head"><span class="kicker">Everything included</span><h2>One tool instead of <span class="grad">five tabs</span></h2></div>
       <div class="cards">
         <div class="card"><h3>Multi-cluster</h3><p>A cluster switcher with live health dots, and an all-clusters overview.</p></div>
-        <div class="card"><h3>27 pages</h3><p>Nodes, namespaces, every workload type, CronJobs, autoscalers, Ingresses, storage, config and events.</p></div>
+        <div class="card"><h3>HAProxy too</h3><p>Monitor and configure HAProxy load balancers next to your clusters, with validated changes and a live topology.</p></div>
         <div class="card"><h3>Relationship map</h3><p>Ingress → Service → workload → Pod → ConfigMap, Secret or PVC. Broken links are flagged.</p></div>
         <div class="card"><h3>CronJobs</h3><p>Run now, suspend and resume, with readable schedules like "every 5 minutes".</p></div>
         <div class="card"><h3>Per-user settings</h3><p>Hide pages and set your theme and start page. Your settings follow you to every device.</p></div>

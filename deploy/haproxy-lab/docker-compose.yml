@@ -1,0 +1,42 @@
+# HAProxy test lab for k10y:  make haproxy-lab-up   (from the repo root)
+#   web traffic   http://localhost:8088         (frontend "web": / -> shop, /api -> api)
+#   admin         http://localhost:8081         (frontend "admin" -> legacy, which is down on purpose)
+#   stats page    http://localhost:8404/stats
+#   Data Plane API http://localhost:5555/v3     (user admin, password in config/dataplaneapi.password)
+services:
+  haproxy:
+    image: haproxytech/haproxy-alpine:3.2
+    # -S: master CLI on the internal compose network only (not published). The Data Plane API
+    # sends "reload" there after a config change.
+    command: ["haproxy", "-S", "ipv4@0.0.0.0:9999", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+    ports:
+      - "8088:80"
+      - "8081:8081"
+      - "8404:8404"
+    volumes:
+      - ./config:/usr/local/etc/haproxy
+      - sockets:/var/run/haproxy
+    depends_on: [shop1, shop2, shop3, api1, api2]
+    restart: unless-stopped
+
+  # HAProxy Data Plane API: REST API for config (with transactions + validation) and runtime state.
+  dataplaneapi:
+    image: haproxytech/haproxy-alpine:3.2
+    entrypoint: ["/usr/local/bin/dataplaneapi", "-f", "/usr/local/etc/haproxy/dataplaneapi.yml"]
+    ports:
+      - "5555:5555"
+    volumes:
+      - ./config:/usr/local/etc/haproxy
+      - sockets:/var/run/haproxy
+    depends_on: [haproxy]
+    restart: unless-stopped
+
+  shop1: { image: traefik/whoami:v1.10.3, command: ["--name", "shop1"] }
+  shop2: { image: traefik/whoami:v1.10.3, command: ["--name", "shop2"] }
+  shop3: { image: traefik/whoami:v1.10.3, command: ["--name", "shop3"] }
+  api1:  { image: traefik/whoami:v1.10.3, command: ["--name", "api1"] }
+  api2:  { image: traefik/whoami:v1.10.3, command: ["--name", "api2"] }
+  # legacy-down does not exist, so backend "legacy" shows a DOWN server.
+
+volumes:
+  sockets:

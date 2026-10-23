@@ -1,0 +1,19 @@
+config_version: 2
+name: k10y-lab
+mode: single
+dataplaneapi:
+  host: 0.0.0.0
+  port: 5555
+  transaction:
+    transaction_dir: /tmp/haproxy
+  user:
+    - name: admin
+      insecure: true
+      password: __DPAPI_PASSWORD__
+haproxy:
+  config_file: /usr/local/etc/haproxy/haproxy.cfg
+  haproxy_bin: /usr/local/sbin/haproxy
+  reload:
+    reload_delay: 2
+    reload_cmd: /usr/local/etc/haproxy/reload.sh
+    restart_cmd: /usr/local/etc/haproxy/reload.sh

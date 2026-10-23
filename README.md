@@ -81,6 +81,15 @@ it.
   to get the chat ID. Bot tokens are stored encrypted.
 - Alert history is kept in PostgreSQL and shown on the Alerts page.
 
+**HAProxy** (through the HAProxy Data Plane API v3)
+- Live services (frontends), backends and servers with health, sessions, request rates and errors, plus a
+  service → backend → server **topology**.
+- **Drain, maintenance, back in service**: instant, no reload.
+- **Add, edit and remove** services, backends, servers and routes, or edit the raw `haproxy.cfg`. Every change is
+  prepared in a transaction, shown as a diff, validated by HAProxy, applied with a graceful reload, and audited.
+- Try it with `make haproxy-lab-up` (HAProxy 3.2 + Data Plane API + demo backends in Docker). See
+  `website/docs/haproxy.md`.
+
 **AI assistant** (Google Gemini, or CodeCraft API / any OpenAI-compatible API)
 - Investigates the whole cluster, a namespace, or one object, using read-only tools. It never reads
   Secret values. It returns a summary, root causes and **proposed fixes**. Nothing is applied until a

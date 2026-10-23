@@ -41,10 +41,13 @@ So "Operator on staging, Viewer on production" is two assignments for one user.
 
 | Permission | Allows |
 |---|---|
-| `clusters.manage` | Add, edit and remove clusters |
+| `clusters.manage` | Add, edit and remove clusters and HAProxy instances |
 | `users.manage` | Manage users, roles and role assignments |
 | `settings.manage` | Manage system settings (AI providers, alert channels) |
 | `alerts.manage` | Create and edit alert rules |
+| `haproxy.view` | See HAProxy services, backends, servers, live stats and topology |
+| `haproxy.operate` | Drain, put in maintenance or re-enable HAProxy servers |
+| `haproxy.configure` | Add, edit and remove HAProxy services, backends and servers, and edit the raw config |
 
 ## Built-in roles
 

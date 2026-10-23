@@ -26,7 +26,7 @@ k10y sits between people and your clusters, so it's built to be the safest way i
 
 ## Authorization
 
-Roles are fully custom, built from [21 permissions](/docs/users-roles). A role can apply to **all clusters** or to **one cluster**. Clusters a user has no role on are invisible to them. The hub refuses any write request that doesn't map to a known action, so new agent endpoints are denied until they're added to the permission map.
+Roles are fully custom, built from [24 permissions](/docs/users-roles). A role can apply to **all clusters** or to **one cluster**. Clusters a user has no role on are invisible to them. The hub refuses any write request that doesn't map to a known action, so new agent endpoints are denied until they're added to the permission map.
 
 ## Data protection
 
