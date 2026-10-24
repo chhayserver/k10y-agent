@@ -7,6 +7,7 @@ import EmptyState from "@/components/EmptyState.vue";
 import Icon from "@/components/Icon.vue";
 import { actApply } from "@/lib/actions";
 import { esc, KIND_ICON } from "@/lib/format";
+import { md } from "@/lib/markdown";
 import { aiRequest } from "@/stores/aiRequest";
 import { useCluster } from "@/stores/cluster";
 import { useSession } from "@/stores/session";
@@ -26,7 +27,7 @@ const providerLabel = computed(() => (cfg.value ? `${cfg.value.provider_label} Â
 async function run() {
   running.value = true; error.value = ""; result.value = null; applied.value = {}; elapsed.value = 0;
   timer = window.setInterval(() => elapsed.value++, 1000);
-  try { result.value = await hub.post(`/clusters/${s.current!.id}/ai/diagnose`, { ...req }, 240000); }
+  try { result.value = await hub.post(`/clusters/${s.current!.id}/ai/diagnose`, { ...req }, 600000); }
   catch (e: any) { error.value = e.message; }
   finally { running.value = false; clearInterval(timer); }
 }
@@ -61,18 +62,6 @@ function apply(i: number) {
     confirmLabel: "Apply", request: (_m, dry) => reqs[a.type](dry), after: done });
 }
 async function copy(a: any) { try { await navigator.clipboard.writeText(KUBECTL[a.type](a)); toast(true, "kubectl command copied", "copy"); } catch { toast(false, "Copy failed"); } }
-function md(text: string) {
-  const inline = (t: string) => esc(t).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-  const out: string[] = []; let list: string[] | null = null;
-  for (const raw of String(text || "").split("\n")) {
-    const line = raw.trimEnd(), li = line.match(/^\s*[-*]\s+(.*)/);
-    if (li) { (list ||= []).push(`<li>${inline(li[1])}</li>`); continue; }
-    if (list) { out.push(`<ul>${list.join("")}</ul>`); list = null; }
-    if (line.trim()) out.push(`<p>${inline(line.replace(/^#+\s+/, ""))}</p>`);
-  }
-  if (list) out.push(`<ul>${list.join("")}</ul>`);
-  return out.join("");
-}
 </script>
 
 <template>

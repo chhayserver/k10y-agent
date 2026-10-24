@@ -14,6 +14,7 @@ import { useSession } from "@/stores/session";
 import { openAction, type MenuItem } from "@/stores/ui";
 import { useRouter } from "vue-router";
 import HxBackendForm from "./HxBackendForm.vue";
+import HxAi from "./HxAi.vue";
 import HxCertificates from "./HxCertificates.vue";
 import HxCharts from "./HxCharts.vue";
 import HxHistory from "./HxHistory.vue";
@@ -29,7 +30,7 @@ import HxServerForm from "./HxServerForm.vue";
 import HxServiceForm from "./HxServiceForm.vue";
 import HxTopology from "./HxTopology.vue";
 
-type Tab = "overview" | "services" | "backends" | "topology" | "certificates" | "sticktables" | "logs" | "history" | "config";
+type Tab = "overview" | "services" | "backends" | "topology" | "ai" | "certificates" | "sticktables" | "logs" | "history" | "config";
 const props = defineProps<{ tab: Tab }>();
 const s = useSession(), h = useHaproxy(), router = useRouter();
 const canOperate = computed(() => s.canGlobal("haproxy.operate"));
@@ -122,9 +123,18 @@ function serverMenu(b: HxBackend, sv: HxServer): MenuItem[] {
   }
   return items.length ? items : [{ note: "You can view only" }];
 }
+const canAi = computed(() => s.canGlobal("ai.use"));
+function askAi(scope: "instance" | "service" | "backend", target = "") {
+  router.push({ path: to("haproxy-ai"), query: { scope, target, run: "1" } });
+}
+function aiStateChange(backend: string, server: string, state: "ready" | "drain" | "maint") {
+  const b = data.value?.backends.find((x) => x.name === backend), sv = b?.servers.find((x) => x.name === server);
+  if (b && sv) setState(b.name, sv, state);
+}
 function backendMenu(b: HxBackend): MenuItem[] {
   const ops: MenuItem[] = canOperate.value && b.servers.filter((x) => !x.backup).length > 1
     ? [{ label: "Rolling deploy…", icon: "refresh", run: () => Object.assign(rolling, { open: true, backend: b }) }] : [];
+  if (canAi.value) ops.push({ label: "Diagnose with AI", icon: "ai", run: () => askAi("backend", b.name) });
   if (!canConfigure.value) return ops.length ? ops : [{ note: "You can view only" }];
   return [...ops, ...(ops.length ? [{ sep: true }] : []), { label: "Add server…", icon: "upload", run: () => Object.assign(srvForm, { open: true, backend: b.name, server: null }) },
     { label: "Edit backend…", icon: "file", run: () => Object.assign(beForm, { open: true, backend: b }) },
@@ -134,8 +144,9 @@ function backendMenu(b: HxBackend): MenuItem[] {
     ...(b.used_by.length ? [{ note: `Used by ${b.used_by.join(", ")}` }] : [])];
 }
 function serviceMenu(f: HxFrontend): MenuItem[] {
-  if (!canConfigure.value) return [{ note: "You can view only" }];
-  return [{ label: "Edit service…", icon: "file", run: () => Object.assign(svcForm, { open: true, frontend: f }) },
+  const ai: MenuItem[] = canAi.value ? [{ label: "Diagnose with AI", icon: "ai", run: () => askAi("service", f.name) }] : [];
+  if (!canConfigure.value) return ai.length ? ai : [{ note: "You can view only" }];
+  return [...ai, { label: "Edit service…", icon: "file", run: () => Object.assign(svcForm, { open: true, frontend: f }) },
     { sep: true }, { label: "Delete service…", icon: "trash", danger: true, run: () => review([{ op: "delete", kind: "frontend", name: f.name }], `Delete service ${f.name}`, true) }];
 }
 function pick(kind: string, name: string, backend?: string) {
@@ -179,7 +190,8 @@ const rate = (st: any) => num(st.req_rate ?? st.rate);
         <div class="card stat"><div class="lbl">Requests / s</div><b>{{ num(totals.rate) }}</b><span class="hint">{{ num(totals.e5) }} server errors (5xx) since start</span></div>
       </div>
       <HxCharts :points="h.points" :services="services.map((f) => f.name)" :backends="data.backends.map((b) => b.name)" style="margin-top:16px" />
-      <section class="card" style="margin-top:16px"><div class="card-head"><h2>Problems</h2></div><div class="card-body">
+      <section class="card" style="margin-top:16px"><div class="card-head"><h2>Problems</h2>
+        <div v-if="canAi" class="right"><button class="link" @click="askAi('instance')">Ask AI</button></div></div><div class="card-body">
         <EmptyState v-if="!problems.length" title="All clear" sub="Every backend has healthy servers." icon="ok" good />
         <ul v-else class="list"><li v-for="p in problems" :key="p.text" class="clickable" @click="pick('backend', p.backend)">
           <span class="ic"><Icon :name="p.level === 'critical' ? 'crit' : 'warn'" :style="{ color: p.level === 'critical' ? 'var(--critical)' : 'var(--warning)' }" /></span>
@@ -248,6 +260,8 @@ const rate = (st: any) => num(st.req_rate ?? st.rate);
 
     <!-- TOPOLOGY -->
     <section v-if="data && tab === 'topology'" class="card"><div class="card-body"><HxTopology :data="data" @pick="pick" /></div></section>
+    <HxAi v-if="current && tab === 'ai'" :key="`a${current}`" :instance-id="current" :data="data" :can-operate="canOperate" :can-configure="canConfigure"
+      @review="(ops, title) => review(ops, title)" @state="aiStateChange" />
     <HxCertificates v-if="current && tab === 'certificates'" :key="`c${current}`" :instance-id="current" :can-edit="canConfigure" />
     <HxStickTables v-if="current && tab === 'sticktables'" :key="`s${current}`" :instance-id="current" />
     <HxLogs v-if="current && tab === 'logs'" :key="`l${current}`" :instance-id="current" :can-edit="canConfigure" @review="(ops, title) => review(ops, title)" />

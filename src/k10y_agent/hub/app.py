@@ -1163,7 +1163,8 @@ class _EngineRef(dict):
 
 app.include_router(alerts.build_router(db_session, current, require, audit, crypto, _EngineRef()))
 app.include_router(haproxy.build_router(db_session, require, audit, crypto, monitor=lambda: state.get("haproxy_monitor") or (haproxy_mon() if "db" in state else None),
-                                        syslog=lambda: state.get("syslog"), can_cluster=lambda p, perm, cid: p.can(perm, cid)))
+                                        syslog=lambda: state.get("syslog"), can_cluster=lambda p, perm, cid: p.can(perm, cid),
+                                        ai_config=lambda s: HubAIStore(s).load()))
 
 
 # --- web UI ---------------------------------------------------------------------------

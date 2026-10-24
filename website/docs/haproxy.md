@@ -165,6 +165,21 @@ The hub keeps the last 3,000 lines per instance in memory.
 
 k10y records a new version every time the configuration changes: applied from k10y (with the user), synced from Kubernetes, rolled back, or **changed outside k10y** (checked every 30 seconds). Select a version to see what changed, and **Restore this version** to roll back through the usual diff and validation.
 
+## AI assistant
+
+**AI Assistant** (in the HAProxy sidebar), **Ask AI** on the Overview's problems, or **⋯ → Diagnose with AI** on a service or backend. Choose the whole HAProxy, one service or one backend, and optionally ask a question (*"why are users getting 503 on the shop?"*).
+
+The AI investigates with read-only tools:
+- server states and health-check results
+- live rates
+- recent request logs: status, termination state, which server answered
+- config sections, with passwords removed
+- certificates and recent config changes
+
+You get a summary, the issues with their root cause and evidence, and **proposed fixes**: drain, maintenance or back in service, weight, server address or port, backend balancing or health check.
+
+**Nothing is applied automatically.** **Review & apply** opens the normal flow: a confirmation for drain and maintenance, or the diff and HAProxy's validation for config changes. k10y refuses suggestions that would take a backend's last healthy server out of rotation, or that name a backend or server that doesn't exist. You need `haproxy.view` and `ai.use`; every investigation is in the audit log. The AI provider is the one configured in System settings, and the data the AI reads is sent to it.
+
 ## Alerts
 
 Alert rules of type **HAProxy** (Alerts → New rule):

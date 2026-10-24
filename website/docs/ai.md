@@ -1,5 +1,7 @@
 # AI assistant
 
+> This page covers Kubernetes. HAProxy has its own assistant: see [HAProxy → AI assistant](./haproxy#ai-assistant).
+
 The assistant investigates a whole cluster, one namespace, or one object. It finds what's wrong, explains the root cause with evidence, and proposes fixes. **It never changes anything by itself:** every proposed fix goes through the normal action flow, with review, dry run and audit.
 
 ## Set up a provider

@@ -71,7 +71,7 @@ class FakeTools:
 
 
 def test_diagnose_loop_runs_tools_then_returns_structured_result(monkeypatch):
-    monkeypatch.setattr(ai, "make_chat", lambda cfg, system: FakeChat())
+    monkeypatch.setattr(ai, "make_chat", lambda cfg, system, tools=None: FakeChat())
     tools = FakeTools()
     out = ai.diagnose({"provider": "gemini", "model": "m", "api_key": "k", "base_url": "u"}, tools, "check shop", ["kube-system"])
     assert tools.calls == [("get_pod_logs", {"namespace": "shop", "name": "worker-1", "previous": True})]

@@ -685,6 +685,12 @@ class CertBody(BaseModel):
     pem: str = Field(min_length=50, max_length=200_000)
 
 
+class AiBody(BaseModel):
+    scope: str = Field("instance", pattern="^(instance|service|backend)$")
+    target: str = Field("", max_length=64)
+    question: str = Field("", max_length=2000)
+
+
 class SyncBody(BaseModel):
     cluster_id: int
     namespace: str = Field(min_length=1, max_length=253)
@@ -709,6 +715,7 @@ def _cert_view(c: Dict[str, Any], used_by: List[str]) -> Dict[str, Any]:
 
 def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] = lambda: None,
                  syslog: Callable[[], Any] = lambda: None, can_cluster: Callable[[Any, str, int], bool] = lambda p, perm, cid: False,
+                 ai_config: Callable[[Session], Dict[str, str]] = lambda s: {},
                  client_factory: Optional[Callable[..., DataPlane]] = None) -> APIRouter:
     r = APIRouter(prefix="/api/hub/haproxy")
     make = client_factory or (lambda inst, pw: DataPlane(inst.url, inst.username, pw, inst.verify_tls))
@@ -992,6 +999,43 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
             raise fail(e)
         audit(s, request, p, "haproxy-cert", f"{inst.name}/{name}", message="certificate deleted")
         return {"ok": True}
+
+    # --- AI assistant -------------------------------------------------------------------
+    @r.post("/{iid}/ai/diagnose")
+    def ai_diagnose(iid: int, body: AiBody, request: Request, p=Depends(require("haproxy.view")),
+                    s: Session = Depends(db_session)) -> dict:
+        from .. import ai
+        from . import haproxy_ai
+        if not p.can("ai.use"):
+            raise HTTPException(status_code=403, detail="missing permission: ai.use")
+        inst = get(s, iid)
+        if body.scope != "instance":
+            try:
+                _check_name(body.target, "Service" if body.scope == "service" else "Backend")
+            except DataPlaneError as e:
+                raise fail(e)
+        m, rx = monitor(), syslog()
+        versions = [{"version": v.version, "when": v.created_at.isoformat() if v.created_at else None, "who": v.username,
+                     "source": v.source, "summary": v.summary[:200]}
+                    for v in s.execute(select(HAProxyConfigVersion).where(HAProxyConfigVersion.instance_id == iid)
+                                       .order_by(HAProxyConfigVersion.id.desc()).limit(10)).scalars()]
+        target = f"haproxy/{inst.name}" + (f"/{body.scope}/{body.target}" if body.scope != "instance" else "")
+        try:
+            with dp_for(inst) as dp:
+                tools = haproxy_ai.HAProxyTools(dp, m.latest.get(iid) if m else None, m.series(iid) if m else [],
+                                                rx.read(inst.log_tag or inst.name, 0, 1000) if rx else [], versions)
+                result = haproxy_ai.run(ai_config(s), tools, body.scope, body.target, body.question)
+        except ai.ProviderError as e:
+            audit(s, request, p, "ai-diagnose", target, ok=False, message=str(e))
+            raise HTTPException(status_code=502, detail=str(e))
+        except httpx.HTTPError as e:
+            audit(s, request, p, "ai-diagnose", target, ok=False, message=str(e))
+            raise HTTPException(status_code=504, detail=f"AI provider unreachable: {e}")
+        except DataPlaneError as e:
+            raise fail(e)
+        audit(s, request, p, "ai-diagnose", target, params={"model": result["model"], "steps": len(result["steps"])},
+              message=f"{len(result['issues'])} issue(s), {len(result['actions'])} proposed action(s), {result['seconds']}s")
+        return result
 
     # --- Kubernetes sync ------------------------------------------------------------------
     def sync_view(x: HAProxyK8sSync) -> dict:

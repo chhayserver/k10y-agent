@@ -32,7 +32,15 @@ PROVIDERS = {
 AI_SECRET = "k10y-ai"
 MAX_STEPS = 16
 MAX_TOOL_OUTPUT = 7000
-HTTP_TIMEOUT = 90.0
+HTTP_TIMEOUT = 180.0     # per model call; thinking models can take a while with a large context
+
+
+def _post(url: str, headers: Dict[str, str], body: Dict[str, Any]) -> httpx.Response:
+    """POST to the model API, retrying once if the provider is slow (timeouts are usually transient)."""
+    try:
+        return httpx.post(url, headers=headers, json=body, timeout=HTTP_TIMEOUT)
+    except httpx.TimeoutException:
+        return httpx.post(url, headers=headers, json=body, timeout=HTTP_TIMEOUT)
 
 ACTION_TYPES = ["scale", "restart", "set_image", "rollback", "delete_pod", "apply_yaml"]
 
@@ -266,6 +274,10 @@ class GeminiChat:
     def __init__(self, api_key: str, model: str, base_url: str, system: str, tools: List[dict]):
         self.url = f"{base_url.rstrip('/')}/models/{model}:generateContent"
         self.headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
+        # Tool-calling steps don't need deep reasoning; low thinking keeps each step fast on Gemini 3 models.
+        self.generation: Dict[str, Any] = {"temperature": 0.2}
+        if model.startswith("gemini-3"):
+            self.generation["thinkingConfig"] = {"thinkingLevel": "low"}
         self.system = system
         self.tools = [{"functionDeclarations": [
             {"name": t["name"], "description": t["description"], "parameters": _gemini_schema(t["parameters"])}
@@ -280,8 +292,8 @@ class GeminiChat:
     def step(self) -> Tuple[List[dict], str]:
         body = {"systemInstruction": {"parts": [{"text": self.system}]}, "contents": self.contents,
                 "tools": self.tools, "toolConfig": {"functionCallingConfig": {"mode": "AUTO"}},
-                "generationConfig": {"temperature": 0.2}}
-        r = httpx.post(self.url, headers=self.headers, json=body, timeout=HTTP_TIMEOUT)
+                "generationConfig": self.generation}
+        r = _post(self.url, self.headers, body)
         if r.status_code >= 400:
             raise ProviderError(f"Gemini API {r.status_code}: {_api_error(r)}{_hint(r.status_code)}")
         data = r.json()
@@ -324,7 +336,7 @@ class OpenAIChat:
     def step(self) -> Tuple[List[dict], str]:
         body = {"model": self.model, "messages": self.messages, "tools": self.tools, "tool_choice": "auto",
                 "temperature": 0.2}
-        r = httpx.post(self.url, headers=self.headers, json=body, timeout=HTTP_TIMEOUT)
+        r = _post(self.url, self.headers, body)
         if r.status_code >= 400:
             raise ProviderError(f"{self.url.split('/v1')[0]} API {r.status_code}: {_api_error(r)}{_hint(r.status_code)}")
         data = r.json()
@@ -491,13 +503,13 @@ class AIConfigStore:
                 "configured": act["configured"], "key_hint": act["key_hint"], "providers": providers}
 
 
-def make_chat(cfg: Dict[str, str], system: str) -> Any:
+def make_chat(cfg: Dict[str, str], system: str, tools: Optional[List[dict]] = None) -> Any:
     if not cfg.get("api_key"):
         raise ProviderError("No API key configured. Open AI settings and add your key.")
     if not cfg.get("model"):
         raise ProviderError("No model selected. Open AI settings and choose a model.")
     cls = GeminiChat if cfg["provider"] == "gemini" else OpenAIChat
-    return cls(cfg["api_key"], cfg["model"], cfg["base_url"], system, TOOLS)
+    return cls(cfg["api_key"], cfg["model"], cfg["base_url"], system, tools if tools is not None else TOOLS)
 
 
 def list_models(cfg: Dict[str, str]) -> List[str]:
@@ -520,9 +532,16 @@ def list_models(cfg: Dict[str, str]) -> List[str]:
 
 def diagnose(cfg: Dict[str, str], tools: ClusterTools, request: str, protected: List[str],
              language: str = "") -> Dict[str, Any]:
+    """Kubernetes investigation (agent and hub)."""
     system = SYSTEM_PROMPT.format(protected=", ".join(protected) or "none",
                                   language=f"Answer in {language}." if language else "")
-    chat = make_chat(cfg, system)
+    return investigate(cfg, tools, request, system, TOOLS, lambda args: _normalise(args, protected))
+
+
+def investigate(cfg: Dict[str, str], tools: Any, request: str, system: str, tool_specs: List[dict],
+                normalise: Callable[[Dict[str, Any]], Dict[str, Any]]) -> Dict[str, Any]:
+    """The tool-calling loop shared by every system: call read-only tools until submit_diagnosis."""
+    chat = make_chat(cfg, system, tool_specs)
     chat.user(request)
     steps: List[Dict[str, Any]] = []
     started = time.monotonic()
@@ -540,7 +559,7 @@ def diagnose(cfg: Dict[str, str], tools: ClusterTools, request: str, protected: 
                 break
         submit = next((c for c in calls if c["name"] == "submit_diagnosis"), None)
         if submit:
-            result = _normalise(submit["args"], protected)
+            result = normalise(submit["args"])
             return {**result, "steps": steps, "model": cfg["model"], "provider": cfg["provider"],
                     "usage": chat.usage, "seconds": round(time.monotonic() - started, 1)}
         outputs = []

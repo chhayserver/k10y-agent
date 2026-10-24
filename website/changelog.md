@@ -6,7 +6,12 @@ title: Changelog
 
 Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached to the [GitHub release](https://github.com/zorouzumaki1111-cmd/k10y-agent/releases).
 
-## 2.2.0 <Badge type="tip" text="latest" />
+## 2.2.1 <Badge type="tip" text="latest" />
+
+- **AI assistant for HAProxy:** investigate the whole HAProxy, one service or one backend with read-only tools (health checks, live rates, logs, config, certificates, recent changes). Proposed fixes go through the normal review; unsafe ones are refused.
+- **Faster, more reliable AI** for Kubernetes and HAProxy: lower thinking level for Gemini 3 models during investigations, longer per-call timeout and one automatic retry.
+
+## 2.2.0
 
 **One place for all your DevOps tools**
 - **Systems:** a system switcher in the sidebar (Kubernetes, HAProxy, more to come). Each system has its own pages and picker; Alerts, Activity, Administration and My settings are shared.
