@@ -366,6 +366,9 @@ def _hint(status: int) -> str:
         return " (This key hit its quota or rate limit. Wait, enable billing, or switch provider in AI settings.)"
     if status in (401, 403):
         return " (Check the API key in AI settings.)"
+    if status in (500, 502, 503, 504):
+        return (" (The AI provider is having trouble on its side, not k10y. Try again in a few minutes, "
+                "or switch to the other provider with one click on the AI page.)")
     return ""
 
 
