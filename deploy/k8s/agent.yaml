@@ -21,7 +21,7 @@ spec:
         - name: agent
           # Published on Docker Hub (multi-arch: amd64 + arm64). For local builds,
           # `make load` / `make load-k3d` import the same name so no pull is needed.
-          image: docker.io/k10y/k10y-agent:2.2.0
+          image: docker.io/k10y/k10y-agent:2.2.1
           imagePullPolicy: IfNotPresent
           ports:
             - {name: http, containerPort: 8080}

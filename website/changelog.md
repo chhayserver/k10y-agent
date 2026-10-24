@@ -9,7 +9,8 @@ Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and 
 ## 2.2.1 <Badge type="tip" text="latest" />
 
 - **AI assistant for HAProxy:** investigate the whole HAProxy, one service or one backend with read-only tools (health checks, live rates, logs, config, certificates, recent changes). Proposed fixes go through the normal review; unsafe ones are refused.
-- **Faster, more reliable AI** for Kubernetes and HAProxy: lower thinking level for Gemini 3 models during investigations, longer per-call timeout and one automatic retry.
+- **Backends page as one table:** a row per backend with health bar, settings and traffic; click to expand its servers (state, weight and traffic share, health check, requests). Search, filters (Problems, From Kubernetes), sorting, expand/collapse all; backends with problems open by themselves.
+- **Faster, more reliable AI** for Kubernetes and HAProxy: lower thinking level for Gemini 3 models during investigations, longer per-call timeout and one automatic retry. A clear message when the AI provider itself is failing (5xx), suggesting to retry or switch provider.
 
 ## 2.2.0
 

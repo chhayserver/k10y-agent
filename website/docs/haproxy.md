@@ -33,7 +33,7 @@ Pick **HAProxy** in the system switcher, then the instance in the second switche
 |---|---|
 | **Overview** | Services, servers up/total, sessions, requests per second, **live charts** (requests/s, 5xx/s, sessions, response time for the last hour), **problems** and the topology |
 | **Services** | Each frontend: status, listen addresses, routes (path or host → backend), sessions, request rate, 5xx |
-| **Backends** | Each backend with its balancing, health check, which services use it, and its servers: state, address, weight, health-check result and time, sessions, requests, 5xx, time since last change |
+| **Backends** | One table, a row per backend: health (x/y up), balancing, health check, which services use it, sessions, new/s, 5xx, response time. Click a row to see its servers: state, address, weight and share of traffic, health-check result, sessions, requests, 5xx, time in state. Search, filter (Problems, From Kubernetes) and sort; backends with problems open by themselves |
 | **Topology** | Services → backends → servers. Line labels show the route; colours show server health. Hover to trace a path, click to open it. |
 | **Certificates** | TLS certificates on the HAProxy: expiry, domains, which services use them; upload, replace, delete |
 | **Stick tables** | Live tables, e.g. the client IPs a rate limit is tracking, with their request rates |

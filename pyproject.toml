@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 authors = [{ name = "Kang Kimchhay" }]
 name = "k10y-agent"
-version = "2.2.0"
+version = "2.2.1"
 description = "All your DevOps tools in one place: control room for Kubernetes clusters and HAProxy load balancers (agent, hub, web dashboard, CLI)."
 readme = "README.md"
 requires-python = ">=3.9"
