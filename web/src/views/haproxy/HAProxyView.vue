@@ -14,6 +14,7 @@ import { useSession } from "@/stores/session";
 import { openAction, type MenuItem } from "@/stores/ui";
 import { useRouter } from "vue-router";
 import HxBackendForm from "./HxBackendForm.vue";
+import HxBackendsTable from "./HxBackendsTable.vue";
 import HxAi from "./HxAi.vue";
 import HxCertificates from "./HxCertificates.vue";
 import HxCharts from "./HxCharts.vue";
@@ -225,37 +226,15 @@ const rate = (st: any) => num(st.req_rate ?? st.rate);
     </template>
 
     <!-- BACKENDS + servers -->
-    <template v-if="data && tab === 'backends'">
-      <div class="toolbar"><span class="hint"><b>Drain</b> and <b>Maintenance</b> apply instantly without a reload. Adding, editing and removing are validated by HAProxy before they apply.</span><span class="grow" />
-        <button v-if="canConfigure" class="btn primary" @click="Object.assign(beForm, { open: true, backend: null })"><Icon name="upload" /><span>New backend</span></button></div>
+    <template v-if="data && current && tab === 'backends'">
       <div v-if="!data.keeps_server_state" class="banner show info"><Icon name="warn" /><span class="msg">This HAProxy doesn't keep drain and maintenance states across reloads,
         so any config change puts drained servers back in service. Add <code>server-state-file</code> to <code>global</code> and <code>load-server-state-from-file global</code> to <code>defaults</code>, and save the state before each reload.
         <a href="https://k10y.pages.dev/docs/haproxy#keep-drain-and-maintenance-across-reloads" target="_blank" rel="noopener">How</a></span></div>
-      <section v-for="b in data.backends" :id="`b:${b.name}`" :key="b.name" class="card flush hx-backend" :class="{ 'hx-focus': focus === `b:${b.name}` }">
-        <div class="card-head"><h2 class="mono" style="text-transform:none;letter-spacing:0">{{ b.name }}</h2>
-          <button v-if="b.k8s_sync" class="chip hx-sync" :class="{ err: b.k8s_sync.last_error }" :title="b.k8s_sync.last_error || b.k8s_sync.last_result" @click="Object.assign(sync, { open: true, backend: b })">
-            <Icon name="logo" /> {{ b.k8s_sync.namespace }}/{{ b.k8s_sync.service }}{{ b.k8s_sync.enabled ? "" : " (paused)" }}</button>
-          <Badge :level="backendHealth(b).level" :label="backendHealth(b).label" />
-          <span class="hint">{{ b.balance }} · {{ b.mode.toUpperCase() }} · check: {{ b.check.type === "http" ? `GET ${b.check.uri}` : b.check.type === "tcp" ? "TCP" : "connect" }}
-            <template v-if="b.used_by.length"> · used by {{ b.used_by.join(", ") }}</template><template v-else> · not used by any service</template></span>
-          <div class="right"><RowMenu :items="() => backendMenu(b)" :label="b.name" /></div></div>
-        <div class="card-body table-wrap">
-          <table class="data"><thead><tr><th>Server</th><th>State</th><th>Address</th><th class="num">Weight</th><th>Health check</th><th class="num">Sessions</th><th class="num">Req total</th><th class="num">5xx</th><th>Since</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
-            <tbody>
-              <tr v-if="!b.servers.length"><td colspan="10" class="dim">No servers yet.<button v-if="canConfigure" class="link" style="margin-left:8px" @click="Object.assign(srvForm, { open: true, backend: b.name, server: null })">Add one</button></td></tr>
-              <tr v-for="sv in b.servers" :key="sv.name">
-                <td class="primary mono">{{ sv.name }}<span v-if="sv.backup" class="chip">backup</span></td>
-                <td><Badge :level="STATE[sv.state].level" :label="STATE[sv.state].label" /></td>
-                <td class="mono">{{ sv.address }}:{{ sv.port }}</td>
-                <td class="num">{{ sv.weight }}</td>
-                <td><span v-if="!sv.check" class="dim">off</span><span v-else :title="sv.stats.check_desc"><code>{{ (sv.stats.check_status || "").replace("* ", "") || "–" }}</code>
-                  <span v-if="sv.stats.check_duration != null" class="dim" style="margin-left:6px">{{ sv.stats.check_duration }} ms</span></span></td>
-                <td class="num">{{ num(sv.stats.scur) }}</td><td class="num">{{ num(sv.stats.stot) }}</td>
-                <td class="num"><b v-if="Number(sv.stats.hrsp_5xx)" style="color:var(--critical)">{{ num(sv.stats.hrsp_5xx) }}</b><span v-else>0</span></td>
-                <td class="dim">{{ sv.stats.lastchg != null ? fmt.age(Number(sv.stats.lastchg)) : "–" }}</td>
-                <td class="actions"><RowMenu :items="() => serverMenu(b, sv)" :label="sv.name" /></td></tr>
-            </tbody></table></div>
-      </section>
+      <HxBackendsTable :key="`b${current}`" :backends="data.backends" :focus="focus" :can-configure="canConfigure" :instance-id="current"
+        :backend-menu="backendMenu" :server-menu="serverMenu"
+        @new-backend="Object.assign(beForm, { open: true, backend: null })"
+        @add-server="(b) => Object.assign(srvForm, { open: true, backend: b.name, server: null })"
+        @sync="(b) => Object.assign(sync, { open: true, backend: b })" />
     </template>
 
     <!-- TOPOLOGY -->
