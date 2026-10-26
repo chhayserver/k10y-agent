@@ -6,25 +6,26 @@ import EmptyState from "@/components/EmptyState.vue";
 import Icon from "@/components/Icon.vue";
 import RowMenu from "@/components/RowMenu.vue";
 import { fmt } from "@/lib/format";
-import { backendHealth, num, STATE, type HxBackend, type HxServer } from "@/lib/haproxy";
+import { backendHealth, fmtRate, num, STATE, type HxBackend, type HxPoint, type HxServer } from "@/lib/haproxy";
 import type { MenuItem } from "@/stores/ui";
+import HxKpis, { type Kpi } from "./HxKpis.vue";
 
 const props = defineProps<{
-  backends: HxBackend[]; focus: string; canConfigure: boolean; instanceId: number;
+  backends: HxBackend[]; points: HxPoint[]; focus: string; canConfigure: boolean; instanceId: number;
   backendMenu: (b: HxBackend) => MenuItem[]; serverMenu: (b: HxBackend, s: HxServer) => MenuItem[];
 }>();
 const emit = defineEmits<{ newBackend: []; addServer: [b: HxBackend]; sync: [b: HxBackend] }>();
 
 // --- filters, sort, expansion (remembered per HAProxy in this browser) -------------------
 const KEY = `k10y.hx.backends.${props.instanceId}`;
-let saved: { q?: string; filter?: string; sort?: string; dir?: number; open?: string[] } = {};
+let saved: { q?: string; filter?: string; usedBy?: string; sort?: string; dir?: number; open?: string[] } = {};
 try { saved = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch { /* storage blocked */ }
-const q = ref(saved.q || ""), filter = ref(saved.filter || "all");
+const q = ref(saved.q || ""), filter = ref(saved.filter || "all"), usedBy = ref(saved.usedBy || "");
 const sort = reactive({ key: saved.sort || "health", dir: saved.dir || 1 });
 const open = ref(new Set<string>(saved.open || []));
 const touched = ref(!!saved.open);
-watch([q, filter, () => sort.key, () => sort.dir, open], () => {
-  try { localStorage.setItem(KEY, JSON.stringify({ q: q.value, filter: filter.value, sort: sort.key, dir: sort.dir, open: [...open.value] })); } catch { /* */ }
+watch([q, filter, usedBy, () => sort.key, () => sort.dir, open], () => {
+  try { localStorage.setItem(KEY, JSON.stringify({ q: q.value, filter: filter.value, usedBy: usedBy.value, sort: sort.key, dir: sort.dir, open: [...open.value] })); } catch { /* */ }
 }, { deep: true });
 
 const problem = (b: HxBackend) => ["critical", "warning"].includes(backendHealth(b).level);
@@ -48,7 +49,8 @@ const rows = computed(() => {
     }
     const weightTotal = b.servers.filter((x) => !x.backup && (x.state === "up" || x.state === "nocheck")).reduce((a, x) => a + (x.weight || 0), 0);
     return { b, h, counts, weightTotal, sessions: Number(b.stats.scur) || 0, rate: Number(b.stats.rate) || 0, e5: Number(b.stats.hrsp_5xx) || 0, rtime: Number(b.stats.rtime) || 0 };
-  }).filter((r) => (filter.value === "all" || (filter.value === "problems" && problem(r.b)) || (filter.value === "k8s" && r.b.k8s_sync))
+  }).filter((r) => (!usedBy.value || (usedBy.value === "-" ? !r.b.used_by.length : r.b.used_by.includes(usedBy.value)))
+    && (filter.value === "all" || (filter.value === "problems" && problem(r.b)) || (filter.value === "k8s" && r.b.k8s_sync))
     && (!s || r.b.name.toLowerCase().includes(s) || r.b.servers.some((x) => `${x.name} ${x.address}`.toLowerCase().includes(s))));
   const val = (r: (typeof list)[number]): string | number => ({ name: r.b.name, health: HEALTH_RANK[r.h.level] * 1000 + r.counts.up, sessions: r.sessions, rate: r.rate, e5: r.e5, rtime: r.rtime } as any)[sort.key];
   return list.sort((a, b) => { const x = val(a), y = val(b); return (typeof x === "number" ? (x as number) - (y as number) : String(x).localeCompare(String(y))) * sort.dir || a.b.name.localeCompare(b.b.name); });
@@ -58,6 +60,27 @@ const totals = computed(() => {
   return { backends: props.backends.length, servers: all.length, down: all.filter((x) => x.state === "down").length,
     out: all.filter((x) => x.state === "drain" || x.state === "maint").length, problems: props.backends.filter(problem).length };
 });
+const frontendNames = computed(() => [...new Set(props.backends.flatMap((b) => b.used_by))].sort());
+const filtered = computed(() => !!(q.value || filter.value !== "all" || usedBy.value));
+function clear() { q.value = ""; filter.value = "all"; usedBy.value = ""; }
+// Numbers for the backends shown, so the tiles follow the filters.
+const kpis = computed<Kpi[]>(() => {
+  const bs = rows.value.map((r) => r.b), names = bs.map((b) => b.name), pts = props.points.slice(-60).map((p) => p[1]), last = pts[pts.length - 1];
+  const sumAt = (p: HxPoint[1], k: "req" | "e5" | "sess") => names.reduce((a, n) => a + (p.b[n]?.[k] || 0), 0);
+  const rtAt = (p: HxPoint[1]) => { const v = names.map((n) => p.b[n]?.rtime || 0).filter((x) => x > 0); return v.length ? v.reduce((a, x) => a + x, 0) / v.length : 0; };
+  const sv = bs.flatMap((b) => b.servers), up = sv.filter((x) => x.state === "up" || x.state === "nocheck").length;
+  const down = sv.filter((x) => x.state === "down").length, out = sv.length - up - down;
+  const req = last ? sumAt(last, "req") : 0, pct = req ? Math.min(100, (100 * sumAt(last!, "e5")) / req) : 0, rt = last ? rtAt(last) : 0;
+  return [
+    { k: "be", label: filtered.value ? "Backends shown" : "Backends", value: String(bs.length), of: filtered.value ? props.backends.length : undefined,
+      sub: `${bs.filter(problem).length} with problems · ${bs.filter((b) => b.k8s_sync).length} from Kubernetes` },
+    { k: "srv", label: "Servers up", value: String(up), of: sv.length, sub: down || out ? `${down} down · ${out} out of rotation` : "all in rotation",
+      bar: { up, out, down }, level: down ? "critical" : out ? "warning" : "" },
+    { k: "req", label: "New sessions / s", value: fmtRate(req), sub: "sent to these backends", spark: pts.map((p) => sumAt(p, "req")) },
+    { k: "err", label: "Error rate", value: `${pct < 10 ? pct.toFixed(1) : pct.toFixed(0)}%`, sub: "5xx from servers", spark: pts.map((p) => { const r = sumAt(p, "req"); return r ? Math.min(100, (100 * sumAt(p, "e5")) / r) : 0; }), level: pct >= 5 ? "critical" : pct >= 1 ? "warning" : "" },
+    { k: "rt", label: "Response time", value: rt ? `${Math.round(rt)} ms` : "–", sub: "average", spark: pts.map(rtAt) },
+  ];
+});
 function setSort(key: string) { if (sort.key === key) sort.dir = -sort.dir; else { sort.key = key; sort.dir = key === "name" || key === "health" ? 1 : -1; } }
 const share = (r: { weightTotal: number }, sv: HxServer) => (sv.backup || !(sv.state === "up" || sv.state === "nocheck") || !r.weightTotal ? null : Math.round((100 * (sv.weight || 0)) / r.weightTotal));
 const checkText = (b: HxBackend) => (b.check.type === "http" ? `GET ${b.check.uri}` : b.check.type === "tcp" ? "TCP" : "connect");
@@ -65,22 +88,21 @@ const COLS: [string, string, boolean][] = [["name", "Backend", false], ["health"
 </script>
 
 <template>
-  <div class="hxb-summary">
-    <span><b>{{ totals.backends }}</b> backends</span><span><b>{{ totals.servers }}</b> servers</span>
-    <span :class="{ bad: totals.down }"><i class="dot down" /><b>{{ totals.down }}</b> down</span>
-    <span :class="{ warn: totals.out }"><i class="dot out" /><b>{{ totals.out }}</b> drained or in maintenance</span>
-    <span class="grow" /><span class="hint">Drain and Maintenance apply instantly, without a reload.</span>
-  </div>
-  <div class="toolbar">
+  <HxKpis :items="kpis" />
+  <div class="toolbar hxb-tools">
     <label class="search"><Icon name="search" /><input v-model="q" class="input" placeholder="Search backends, servers or addresses" aria-label="Search"></label>
     <div class="segmented" role="group" aria-label="Filter">
       <button :aria-pressed="filter === 'all'" @click="filter = 'all'">All</button>
       <button :aria-pressed="filter === 'problems'" @click="filter = 'problems'">Problems<span v-if="totals.problems" class="count-pill">{{ totals.problems }}</span></button>
       <button :aria-pressed="filter === 'k8s'" @click="filter = 'k8s'">From Kubernetes</button></div>
-    <button class="btn ghost sm" @click="expandAll(true)">Expand all</button><button class="btn ghost sm" @click="expandAll(false)">Collapse all</button>
+    <select v-model="usedBy" class="select hxb-used" aria-label="Used by frontend">
+      <option value="">Used by any frontend</option><option v-for="n in frontendNames" :key="n" :value="n">Used by {{ n }}</option><option value="-">Not used by any frontend</option></select>
+    <button v-if="filtered" class="link" @click="clear">Clear filters</button>
     <span class="grow" />
     <button v-if="canConfigure" class="btn primary" @click="emit('newBackend')"><Icon name="upload" /><span>New backend</span></button>
   </div>
+  <div class="hxb-bar2"><button class="btn ghost sm" @click="expandAll(true)">Expand all</button><button class="btn ghost sm" @click="expandAll(false)">Collapse all</button>
+    <span class="grow" /><span class="hint">Drain and Maintenance apply instantly, without a reload.</span></div>
 
   <section class="card flush"><div class="card-body table-wrap">
     <EmptyState v-if="!rows.length" :title="backends.length ? 'No backends match' : 'No backends yet'" icon="nodes"
@@ -136,12 +158,10 @@ const COLS: [string, string, boolean][] = [["name", "Backend", false], ["health"
 </template>
 
 <style scoped>
-.hxb-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; margin-bottom: 12px; font-size: 13.5px; color: var(--text-2); }
-.hxb-summary b { color: var(--text); font-variant-numeric: tabular-nums; }
-.hxb-summary .bad b { color: var(--critical); } .hxb-summary .warn b { color: #c77d10; }
-.hxb-summary .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
-.dot.down { background: var(--critical); } .dot.out { background: #e8a33a; }
-.hxb-summary .grow { flex: 1; }
+.hxb-tools { margin-top: 16px; }
+.hxb-bar2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: -4px 0 12px; }
+.hxb-bar2 .grow { flex: 1; }
+.hxb-used { width: auto; max-width: 230px; }
 table.hxb tbody + tbody { border-top: 1px solid var(--border); }
 .hxb-caret { width: 30px; padding-right: 0 !important; }
 .hxb-caret .icon { width: 14px; height: 14px; color: var(--muted); transform: rotate(90deg); transition: transform .15s; }

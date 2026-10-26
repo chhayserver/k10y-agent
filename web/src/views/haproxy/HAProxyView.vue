@@ -1,12 +1,10 @@
 <script setup lang="ts">
 // HAProxy: live frontends, backends and servers; instant server state changes; validated config changes; topology.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
-import Badge from "@/components/Badge.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import Icon from "@/components/Icon.vue";
-import RowMenu from "@/components/RowMenu.vue";
 import Skeleton from "@/components/Skeleton.vue";
-import { bindText, hx, num, ROUTE_KIND, routeText, type HxBackend, type HxFrontend, type HxOp, type HxServer } from "@/lib/haproxy";
+import { hx, type HxBackend, type HxFrontend, type HxOp, type HxServer } from "@/lib/haproxy";
 import { to } from "@/lib/nav";
 import { useHaproxy } from "@/stores/haproxy";
 import { useSession } from "@/stores/session";
@@ -14,6 +12,7 @@ import { openAction, type MenuItem } from "@/stores/ui";
 import { useRouter } from "vue-router";
 import HxBackendForm from "./HxBackendForm.vue";
 import HxBackendsTable from "./HxBackendsTable.vue";
+import HxFrontendsTable from "./HxFrontendsTable.vue";
 import HxAi from "./HxAi.vue";
 import HxCertificates from "./HxCertificates.vue";
 import HxDashboard from "./HxDashboard.vue";
@@ -141,7 +140,6 @@ watch(() => router.currentRoute.value.query.focus, (f) => {
   focus.value = f;
   setTimeout(() => document.getElementById(f)?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
 }, { immediate: true });
-const rate = (st: any) => num(st.req_rate ?? st.rate);
 </script>
 
 <template>
@@ -166,34 +164,15 @@ const rate = (st: any) => num(st.req_rate ?? st.rate);
       @connection="Object.assign(instDialog, { open: true, instance: data.instance })" @add-haproxy="Object.assign(instDialog, { open: true, instance: null })" />
 
     <!-- FRONTENDS -->
-    <template v-if="data && tab === 'frontends'">
-      <div class="toolbar"><span class="hint">A <b>frontend</b> is where clients connect, and which backend gets each request.</span><span class="grow" />
-        <button v-if="canConfigure" class="btn primary" @click="Object.assign(feForm, { open: true, frontend: null })"><Icon name="upload" /><span>New frontend</span></button></div>
-      <section class="card flush"><div class="card-body table-wrap">
-        <table class="data"><thead><tr><th>Frontend</th><th>Status</th><th>Listen</th><th>Routes</th><th class="num">Sessions</th><th class="num">Req/s</th><th class="num">5xx</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
-          <tbody><tr v-for="f in data.frontends" :id="`f:${f.name}`" :key="f.name" :class="{ 'hx-focus': focus === `f:${f.name}` }">
-            <td class="primary"><span class="mono">{{ f.name }}</span> <span class="chip">{{ f.mode.toUpperCase() }}</span><span v-if="f.stats_page" class="chip">stats page</span></td>
-            <td><Badge :level="f.stats.status === 'OPEN' ? 'good' : 'critical'" :label="f.stats.status === 'OPEN' ? 'Open' : (f.stats.status || 'Unknown')" /></td>
-            <td class="mono">{{ f.binds.map(bindText).join(", ") }}
-              <div class="hx-policies"><span v-if="f.policies.redirect_https" class="chip">→ HTTPS</span>
-                <span v-if="f.policies.allow_ips.length" class="chip" :title="f.policies.allow_ips.join(' ')">IP allow-list ({{ f.policies.allow_ips.length }})</span>
-                <span v-if="f.policies.rate_limit" class="chip">≤ {{ f.policies.rate_limit.requests }} req / {{ f.policies.rate_limit.period }} s per IP</span></div></td>
-            <td class="wrap"><div class="hx-routes">
-              <div v-for="(r, i) in f.routes" :key="i"><span class="dim">{{ ROUTE_KIND[r.kind] }}</span> <code>{{ routeText(r) }}</code> → <button class="link" @click="pick('backend', r.backend)">{{ r.backend }}</button></div>
-              <div v-if="f.default_backend"><span class="dim">Everything else</span> → <button class="link" @click="pick('backend', f.default_backend)">{{ f.default_backend }}</button></div>
-              <span v-if="!f.routes.length && !f.default_backend" class="dim">{{ f.stats_page ? "HAProxy statistics page" : "No backend" }}</span></div></td>
-            <td class="num">{{ num(f.stats.scur) }}</td><td class="num">{{ rate(f.stats) }}</td>
-            <td class="num"><b v-if="Number(f.stats.hrsp_5xx)" style="color:var(--critical)">{{ num(f.stats.hrsp_5xx) }}</b><span v-else>0</span></td>
-            <td class="actions"><RowMenu :items="() => frontendMenu(f)" :label="f.name" /></td></tr></tbody></table>
-      </div></section>
-    </template>
+    <HxFrontendsTable v-if="data && current && tab === 'frontends'" :key="`f${current}`" :data="data" :points="h.points" :focus="focus" :can-configure="canConfigure"
+      :instance-id="current" :frontend-menu="frontendMenu" @new-frontend="Object.assign(feForm, { open: true, frontend: null })" @pick="pick" />
 
     <!-- BACKENDS + servers -->
     <template v-if="data && current && tab === 'backends'">
       <div v-if="!data.keeps_server_state" class="banner show info"><Icon name="warn" /><span class="msg">This HAProxy doesn't keep drain and maintenance states across reloads,
         so any config change puts drained servers back in service. Add <code>server-state-file</code> to <code>global</code> and <code>load-server-state-from-file global</code> to <code>defaults</code>, and save the state before each reload.
         <a href="https://k10y.pages.dev/docs/haproxy#keep-drain-and-maintenance-across-reloads" target="_blank" rel="noopener">How</a></span></div>
-      <HxBackendsTable :key="`b${current}`" :backends="data.backends" :focus="focus" :can-configure="canConfigure" :instance-id="current"
+      <HxBackendsTable :key="`b${current}`" :backends="data.backends" :points="h.points" :focus="focus" :can-configure="canConfigure" :instance-id="current"
         :backend-menu="backendMenu" :server-menu="serverMenu"
         @new-backend="Object.assign(beForm, { open: true, backend: null })"
         @add-server="(b) => Object.assign(srvForm, { open: true, backend: b.name, server: null })"

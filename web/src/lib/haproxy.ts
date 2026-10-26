@@ -54,3 +54,25 @@ export const hx = {
 };
 
 export interface HxPlan { diff: string; valid: boolean; error: string; applied: boolean; summary: string[] }
+
+// --- shared by the dashboard, Frontends and Backends pages ---------------------------------
+export const fmtRate = (v: number) => (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2).replace(/\.?0+$/, "") || "0");
+export type ServerDot = "up" | "out" | "down";
+export const serverDots = (b: HxBackend | undefined): ServerDot[] =>
+  (b?.servers || []).map((s) => (s.state === "down" ? "down" : s.state === "drain" || s.state === "maint" ? "out" : "up"));
+export interface Lane { match: string; kind: string; backend: string }
+export type FrontendKind = "proxy" | "paths" | "rules" | "none" | "stats";
+export const FRONTEND_KIND: Record<FrontendKind, string> = { proxy: "Proxy", paths: "Path routing", rules: "Rules", none: "No backend", stats: "Stats page" };
+/** How a frontend sends traffic: one backend (proxy), by path to several backends, or other rules. */
+export function frontendShape(f: HxFrontend, backends: Map<string, HxBackend>) {
+  const lanes: Lane[] = f.routes.map((r) => ({ match: routeText(r), kind: ROUTE_KIND[r.kind] || "Rule", backend: r.backend }));
+  if (f.default_backend) lanes.push({ match: f.routes.length ? "everything else" : "all traffic", kind: "", backend: f.default_backend });
+  const names = [...new Set(lanes.map((l) => l.backend))];
+  const kind: FrontendKind = f.stats_page ? "stats" : !lanes.length ? "none" : !f.routes.length ? "proxy"
+    : f.routes.every((r) => r.kind === "path_prefix" || r.kind === "path") ? "paths" : "rules";
+  const servers = names.reduce((a, n) => a + (backends.get(n)?.servers.length || 0), 0);
+  const label = kind === "proxy" ? (servers > 1 ? "Proxy · load balanced" : "Proxy") : kind === "paths" || kind === "rules" ? `${FRONTEND_KIND[kind]} · ${names.length} backend${names.length === 1 ? "" : "s"}` : FRONTEND_KIND[kind];
+  const health = names.map((n) => backends.get(n)).map((b) => (b ? backendHealth(b).level : "critical"));
+  const level: Level = health.includes("critical") ? "critical" : health.includes("warning") ? "warning" : kind === "none" ? "warning" : "good";
+  return { kind, label, lanes, backends: names, level, icon: kind === "proxy" ? "lb" : "map" };
+}

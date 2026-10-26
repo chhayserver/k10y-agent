@@ -6,8 +6,9 @@ import Badge from "@/components/Badge.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import Icon from "@/components/Icon.vue";
 import LineChart from "@/components/LineChart.vue";
-import { backendHealth, num, ROUTE_KIND, routeText, type HxBackend, type HxFrontend, type HxOverview, type HxPoint } from "@/lib/haproxy";
+import { backendHealth, fmtRate as fmtN, frontendShape, num, serverDots as dots, type HxFrontend, type HxOverview, type HxPoint } from "@/lib/haproxy";
 import { prefs, resetHxDash } from "@/stores/prefs";
+import HxKpis, { type Kpi } from "./HxKpis.vue";
 import HxTopology from "./HxTopology.vue";
 
 const props = defineProps<{ data: HxOverview; points: HxPoint[]; canAi: boolean; canManage: boolean }>();
@@ -24,7 +25,7 @@ const trend = (fn: (p: HxPoint[1]) => number) => props.points.slice(-60).map((p)
 const errPct = (p: HxPoint[1] | undefined) => { const r = sum(p?.f, "req"); return r ? (100 * sum(p?.f, "e5")) / r : 0; };
 const rtimeAvg = (p: HxPoint[1] | undefined) => { const v = Object.values(p?.b || {}).map((x) => x.rtime).filter((x) => x > 0); return v.length ? v.reduce((a, x) => a + x, 0) / v.length : 0; };
 const servers = computed(() => props.data.backends.flatMap((b) => b.servers));
-const kpis = computed(() => {
+const kpis = computed<(Kpi & { page: string })[]>(() => {
   const up = servers.value.filter((x) => x.state === "up" || x.state === "nocheck").length;
   const down = servers.value.filter((x) => x.state === "down").length, out = servers.value.filter((x) => x.state === "drain" || x.state === "maint").length;
   const req = last.value ? sum(last.value.f, "req") : frontends.value.reduce((a, f) => a + (Number(f.stats.req_rate ?? f.stats.rate) || 0), 0);
@@ -37,12 +38,6 @@ const kpis = computed(() => {
     { k: "srv", label: "Servers up", value: `${up}`, of: servers.value.length, sub: down || out ? `${down} down · ${out} out of rotation` : "all in rotation", bar: { up, out, down }, level: down ? "critical" : out ? "warning" : "", page: "haproxy-backends" },
   ];
 });
-function fmtN(v: number) { return v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2).replace(/\.?0+$/, "") || "0"; }
-function spark(values: number[]) {
-  if (values.length < 2) return "";
-  const max = Math.max(...values, 1e-9), step = 100 / (values.length - 1);
-  return values.map((v, i) => `${i ? "L" : "M"}${(i * step).toFixed(1)},${(30 - (v / max) * 26).toFixed(1)}`).join(" ");
-}
 
 // --- problems and overall status ------------------------------------------------------------
 const problems = computed(() => {
@@ -65,20 +60,10 @@ const status = computed(() => {
 });
 
 // --- frontends drawn as their routing ------------------------------------------------------
-interface Lane { match: string; kind: string; backend: string }
-function shape(f: HxFrontend) {
-  const lanes: Lane[] = f.routes.map((r) => ({ match: routeText(r), kind: ROUTE_KIND[r.kind] || "Rule", backend: r.backend }));
-  if (f.default_backend) lanes.push({ match: f.routes.length ? "everything else" : "all traffic", kind: "", backend: f.default_backend });
-  const n = new Set(lanes.map((l) => l.backend)).size;
-  const paths = f.routes.length > 0 && f.routes.every((r) => r.kind === "path_prefix" || r.kind === "path");
-  const label = !f.routes.length ? (backendsBy.value.get(f.default_backend || "")?.servers.length || 0) > 1 ? "Proxy · load balanced" : "Proxy"
-    : paths ? `Path routing · ${n} backends` : `Rules · ${n} backends`;
-  return { lanes, label, icon: f.routes.length ? "map" : "lb" };
-}
+const shape = (f: HxFrontend) => frontendShape(f, backendsBy.value);
 const feRate = (f: HxFrontend) => last.value?.f[f.name]?.req ?? (Number(f.stats.req_rate ?? f.stats.rate) || 0);
 const feErr = (f: HxFrontend) => last.value?.f[f.name]?.e5_pct ?? 0;
 const beRate = (name: string) => last.value?.b[name]?.req ?? 0;
-const dots = (b: HxBackend | undefined) => (b?.servers || []).map((s) => s.state === "down" ? "down" : s.state === "drain" || s.state === "maint" ? "out" : "up");
 
 // --- traffic chart ---------------------------------------------------------------------------
 const METRICS: Record<string, { label: string; field: string; fmt: (v: number) => string; backendOnly?: boolean }> = {
@@ -139,15 +124,7 @@ const customizing = ref(false);
   </div></section>
 
   <!-- key numbers -->
-  <div v-if="on('kpis')" class="hxd-kpis">
-    <button v-for="k in kpis" :key="k.k" class="card hxd-kpi" :class="k.level" @click="emit('go', k.page)">
-      <span class="lbl">{{ k.label }}</span>
-      <b>{{ k.value }}<small v-if="k.of != null"> / {{ k.of }}</small></b>
-      <svg v-if="k.spark && spark(k.spark)" class="hxd-spark" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true"><path :d="spark(k.spark)" /></svg>
-      <span v-else-if="k.bar" class="hxd-bar"><i class="up" :style="{ flexGrow: k.bar.up }" /><i class="out" :style="{ flexGrow: k.bar.out }" /><i class="down" :style="{ flexGrow: k.bar.down }" /></span>
-      <span class="hint">{{ k.sub }}</span>
-    </button>
-  </div>
+  <HxKpis v-if="on('kpis')" :items="kpis" clickable style="margin-top:16px" @pick="(k) => emit('go', kpis.find((x) => x.k === k)!.page)" />
 
   <!-- problems: only when there are some -->
   <section v-if="on('problems') && problems.length" class="card hxd-section"><div class="card-head"><h2>Needs attention</h2><span class="count-pill">{{ problems.length }}</span></div>
@@ -238,19 +215,6 @@ const customizing = ref(false);
 .hxd-check > span { display: flex; flex-direction: column; gap: 2px; }
 .hxd-custom-foot { margin-top: 12px; }
 
-.hxd-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-top: 16px; }
-.hxd-kpi { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 14px 16px; text-align: left; font: inherit; color: inherit; cursor: pointer; position: relative; overflow: hidden; }
-.hxd-kpi:hover { border-color: var(--border-strong, var(--muted)); }
-.hxd-kpi .lbl { font-size: 12px; color: var(--muted); font-weight: 550; }
-.hxd-kpi b { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.15; }
-.hxd-kpi b small { font-size: 15px; color: var(--muted); font-weight: 500; }
-.hxd-kpi.warning b { color: var(--warning); } .hxd-kpi.critical b { color: var(--critical); }
-.hxd-kpi .hint { font-size: 12px; }
-.hxd-spark { width: 100%; height: 30px; }
-.hxd-spark path { fill: none; stroke: var(--accent); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
-.hxd-kpi.critical .hxd-spark path { stroke: var(--critical); } .hxd-kpi.warning .hxd-spark path { stroke: var(--warning); }
-.hxd-bar { display: flex; width: 100%; height: 8px; border-radius: 4px; overflow: hidden; background: var(--border); margin: 11px 0; }
-.hxd-bar i { display: block; min-width: 0; } .hxd-bar .up { background: var(--good); } .hxd-bar .out { background: var(--warning); } .hxd-bar .down { background: var(--critical); }
 
 .hxd-section { margin-top: 16px; }
 .hxd-section .list li { align-items: center; }
