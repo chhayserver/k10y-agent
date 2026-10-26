@@ -1,13 +1,12 @@
 <script setup lang="ts">
-// HAProxy: live services, backends and servers; instant server state changes; validated config changes; topology.
+// HAProxy: live frontends, backends and servers; instant server state changes; validated config changes; topology.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import Badge from "@/components/Badge.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import Icon from "@/components/Icon.vue";
 import RowMenu from "@/components/RowMenu.vue";
 import Skeleton from "@/components/Skeleton.vue";
-import { backendHealth, bindText, hx, num, ROUTE_KIND, routeText, STATE, type HxBackend, type HxFrontend, type HxOp, type HxOverview, type HxServer } from "@/lib/haproxy";
-import { fmt } from "@/lib/format";
+import { bindText, hx, num, ROUTE_KIND, routeText, type HxBackend, type HxFrontend, type HxOp, type HxServer } from "@/lib/haproxy";
 import { to } from "@/lib/nav";
 import { useHaproxy } from "@/stores/haproxy";
 import { useSession } from "@/stores/session";
@@ -17,7 +16,7 @@ import HxBackendForm from "./HxBackendForm.vue";
 import HxBackendsTable from "./HxBackendsTable.vue";
 import HxAi from "./HxAi.vue";
 import HxCertificates from "./HxCertificates.vue";
-import HxCharts from "./HxCharts.vue";
+import HxDashboard from "./HxDashboard.vue";
 import HxHistory from "./HxHistory.vue";
 import HxLogs from "./HxLogs.vue";
 import HxRollingDeploy from "./HxRollingDeploy.vue";
@@ -28,10 +27,10 @@ import HxChangeDialog from "./HxChangeDialog.vue";
 import HxConfig from "./HxConfig.vue";
 import HxInstanceDialog from "./HxInstanceDialog.vue";
 import HxServerForm from "./HxServerForm.vue";
-import HxServiceForm from "./HxServiceForm.vue";
+import HxFrontendForm from "./HxFrontendForm.vue";
 import HxTopology from "./HxTopology.vue";
 
-type Tab = "overview" | "services" | "backends" | "topology" | "ai" | "certificates" | "sticktables" | "logs" | "history" | "config";
+type Tab = "overview" | "frontends" | "backends" | "topology" | "ai" | "certificates" | "sticktables" | "logs" | "history" | "config";
 const props = defineProps<{ tab: Tab }>();
 const s = useSession(), h = useHaproxy(), router = useRouter();
 const canOperate = computed(() => s.canGlobal("haproxy.operate"));
@@ -50,40 +49,23 @@ onMounted(async () => {
 onBeforeUnmount(() => clearInterval(timer));
 
 // summary numbers
-const services = computed(() => (data.value?.frontends || []).filter((f) => !f.stats_page));
-const allServers = computed(() => (data.value?.backends || []).flatMap((b) => b.servers.map((sv) => ({ ...sv, backend: b.name }))));
-const problems = computed(() => {
-  const out: { level: "critical" | "warning"; text: string; backend: string }[] = [];
-  for (const b of data.value?.backends || []) {
-    const h = backendHealth(b);
-    if (h.total && h.up === 0) out.push({ level: "critical", text: `Backend ${b.name} has no server up${b.used_by.length ? ` (used by ${b.used_by.join(", ")})` : ""}`, backend: b.name });
-    for (const sv of b.servers) if (sv.state === "down" && !(h.total && h.up === 0))
-      out.push({ level: "warning", text: `${b.name}/${sv.name} is down: ${sv.stats.check_desc || sv.stats.check_status || "health check failing"}`, backend: b.name });
-  }
-  return out;
-});
-const totals = computed(() => {
-  const fe = services.value;
-  return { sessions: fe.reduce((a, f) => a + (Number(f.stats.scur) || 0), 0), rate: fe.reduce((a, f) => a + (Number(f.stats.req_rate ?? f.stats.rate) || 0), 0),
-    e5: fe.reduce((a, f) => a + (Number(f.stats.hrsp_5xx) || 0), 0), up: allServers.value.filter((x) => x.state === "up" || x.state === "nocheck").length,
-    down: allServers.value.filter((x) => x.state === "down").length, out: allServers.value.filter((x) => x.state === "drain" || x.state === "maint").length };
-});
+const frontends = computed(() => (data.value?.frontends || []).filter((f) => !f.stats_page));
 
 // dialogs
 const instDialog = reactive({ open: false, instance: null as any });
-const svcForm = reactive({ open: false, frontend: null as HxFrontend | null });
+const feForm = reactive({ open: false, frontend: null as HxFrontend | null });
 const beForm = reactive({ open: false, backend: null as HxBackend | null });
 const srvForm = reactive({ open: false, backend: "", server: null as HxServer | null });
 const change = reactive({ open: false, title: "", ops: [] as HxOp[], danger: false, note: "" });
 const rolling = reactive({ open: false, backend: null as HxBackend | null });
 const sync = reactive({ open: false, backend: null as HxBackend | null });
 const weight = reactive({ open: false, backend: null as HxBackend | null, server: null as HxServer | null, value: 100 as number | string });
-const anyDialog = computed(() => instDialog.open || svcForm.open || beForm.open || srvForm.open || change.open || rolling.open || sync.open || weight.open);
+const anyDialog = computed(() => instDialog.open || feForm.open || beForm.open || srvForm.open || change.open || rolling.open || sync.open || weight.open);
 const configRef = ref<InstanceType<typeof HxConfig> | null>(null);
 const historyRef = ref<InstanceType<typeof HxHistory> | null>(null);
 
 function review(ops: HxOp[], title: string, danger = false, note = "") {
-  svcForm.open = beForm.open = srvForm.open = weight.open = false;
+  feForm.open = beForm.open = srvForm.open = weight.open = false;
   Object.assign(change, { open: true, title, ops, danger, note });
 }
 async function changed() { change.open = false; await refresh(); configRef.value?.load(); historyRef.value?.load(); }
@@ -125,7 +107,7 @@ function serverMenu(b: HxBackend, sv: HxServer): MenuItem[] {
   return items.length ? items : [{ note: "You can view only" }];
 }
 const canAi = computed(() => s.canGlobal("ai.use"));
-function askAi(scope: "instance" | "service" | "backend", target = "") {
+function askAi(scope: "instance" | "frontend" | "backend", target = "") {
   router.push({ path: to("haproxy-ai"), query: { scope, target, run: "1" } });
 }
 function aiStateChange(backend: string, server: string, state: "ready" | "drain" | "maint") {
@@ -144,15 +126,15 @@ function backendMenu(b: HxBackend): MenuItem[] {
       run: () => review([{ op: "delete", kind: "backend", name: b.name }], `Delete backend ${b.name}`, true) },
     ...(b.used_by.length ? [{ note: `Used by ${b.used_by.join(", ")}` }] : [])];
 }
-function serviceMenu(f: HxFrontend): MenuItem[] {
-  const ai: MenuItem[] = canAi.value ? [{ label: "Diagnose with AI", icon: "ai", run: () => askAi("service", f.name) }] : [];
+function frontendMenu(f: HxFrontend): MenuItem[] {
+  const ai: MenuItem[] = canAi.value ? [{ label: "Diagnose with AI", icon: "ai", run: () => askAi("frontend", f.name) }] : [];
   if (!canConfigure.value) return ai.length ? ai : [{ note: "You can view only" }];
-  return [...ai, { label: "Edit service…", icon: "file", run: () => Object.assign(svcForm, { open: true, frontend: f }) },
-    { sep: true }, { label: "Delete service…", icon: "trash", danger: true, run: () => review([{ op: "delete", kind: "frontend", name: f.name }], `Delete service ${f.name}`, true) }];
+  return [...ai, { label: "Edit frontend…", icon: "file", run: () => Object.assign(feForm, { open: true, frontend: f }) },
+    { sep: true }, { label: "Delete frontend…", icon: "trash", danger: true, run: () => review([{ op: "delete", kind: "frontend", name: f.name }], `Delete frontend ${f.name}`, true) }];
 }
 function pick(kind: string, name: string, backend?: string) {
   focus.value = kind === "frontend" ? `f:${name}` : `b:${backend || name}`;
-  router.push({ path: to(kind === "frontend" ? "haproxy-services" : "haproxy-backends"), query: { focus: focus.value } });
+  router.push({ path: to(kind === "frontend" ? "haproxy-frontends" : "haproxy-backends"), query: { focus: focus.value } });
 }
 watch(() => router.currentRoute.value.query.focus, (f) => {
   if (typeof f !== "string") return;
@@ -173,41 +155,22 @@ const rate = (st: any) => num(st.req_rate ?? st.rate);
   </template>
   <template v-else>
     <div v-if="error" class="banner show"><Icon name="crit" /><span class="msg">{{ error }}</span><button class="btn" @click="refresh">Retry</button></div>
-    <div v-if="tab === 'overview'" class="toolbar">
-      <span v-if="data" class="hint">{{ data.instance.url }} · config version {{ data.config_version }}</span><span class="grow" />
-      <button v-if="canManage && data" class="btn" @click="Object.assign(instDialog, { open: true, instance: data.instance })"><Icon name="gear" /><span>Connection</span></button>
-      <button v-if="canManage" class="btn" @click="Object.assign(instDialog, { open: true, instance: null })"><Icon name="lb" /><span>Add HAProxy</span></button>
-    </div>
+    <div v-if="tab === 'overview' && !data && error && canManage" class="toolbar"><span class="grow" />
+      <button class="btn" @click="Object.assign(instDialog, { open: true, instance: null })"><Icon name="lb" /><span>Add HAProxy</span></button></div>
 
-    <Skeleton v-if="!data && !error && ['overview', 'services', 'backends', 'topology'].includes(tab)" :rows="6" />
+    <Skeleton v-if="!data && !error && ['overview', 'frontends', 'backends', 'topology'].includes(tab)" :rows="6" />
 
     <!-- OVERVIEW -->
-    <template v-if="data && tab === 'overview'">
-      <div class="hx-cards">
-        <div class="card stat"><div class="lbl">Services</div><b>{{ services.length }}</b><span class="hint">{{ data.backends.length }} backends</span></div>
-        <div class="card stat"><div class="lbl">Servers up</div><b>{{ totals.up }} <small>/ {{ allServers.length }}</small></b>
-          <span class="hint">{{ totals.down }} down · {{ totals.out }} drained or in maintenance</span></div>
-        <div class="card stat"><div class="lbl">Current sessions</div><b>{{ num(totals.sessions) }}</b><span class="hint">across all services</span></div>
-        <div class="card stat"><div class="lbl">Requests / s</div><b>{{ num(totals.rate) }}</b><span class="hint">{{ num(totals.e5) }} server errors (5xx) since start</span></div>
-      </div>
-      <HxCharts :points="h.points" :services="services.map((f) => f.name)" :backends="data.backends.map((b) => b.name)" style="margin-top:16px" />
-      <section class="card" style="margin-top:16px"><div class="card-head"><h2>Problems</h2>
-        <div v-if="canAi" class="right"><button class="link" @click="askAi('instance')">Ask AI</button></div></div><div class="card-body">
-        <EmptyState v-if="!problems.length" title="All clear" sub="Every backend has healthy servers." icon="ok" good />
-        <ul v-else class="list"><li v-for="p in problems" :key="p.text" class="clickable" @click="pick('backend', p.backend)">
-          <span class="ic"><Icon :name="p.level === 'critical' ? 'crit' : 'warn'" :style="{ color: p.level === 'critical' ? 'var(--critical)' : 'var(--warning)' }" /></span>
-          <div><div class="main-line">{{ p.text }}</div></div></li></ul>
-      </div></section>
-      <section class="card" style="margin-top:16px"><div class="card-head"><h2>Topology</h2><div class="right"><button class="btn sm" @click="router.push(to('haproxy-topology'))">Full view</button></div></div>
-        <div class="card-body"><HxTopology :data="data" @pick="pick" /></div></section>
-    </template>
+    <HxDashboard v-if="data && tab === 'overview'" :data="data" :points="h.points" :can-ai="canAi" :can-manage="canManage"
+      @pick="pick" @ai="askAi('instance')" @go="(id) => router.push(to(id))"
+      @connection="Object.assign(instDialog, { open: true, instance: data.instance })" @add-haproxy="Object.assign(instDialog, { open: true, instance: null })" />
 
-    <!-- SERVICES (frontends) -->
-    <template v-if="data && tab === 'services'">
-      <div class="toolbar"><span class="hint">Services are HAProxy <b>frontends</b>: where clients connect, and which backend gets each request.</span><span class="grow" />
-        <button v-if="canConfigure" class="btn primary" @click="Object.assign(svcForm, { open: true, frontend: null })"><Icon name="upload" /><span>New service</span></button></div>
+    <!-- FRONTENDS -->
+    <template v-if="data && tab === 'frontends'">
+      <div class="toolbar"><span class="hint">A <b>frontend</b> is where clients connect, and which backend gets each request.</span><span class="grow" />
+        <button v-if="canConfigure" class="btn primary" @click="Object.assign(feForm, { open: true, frontend: null })"><Icon name="upload" /><span>New frontend</span></button></div>
       <section class="card flush"><div class="card-body table-wrap">
-        <table class="data"><thead><tr><th>Service</th><th>Status</th><th>Listen</th><th>Routes</th><th class="num">Sessions</th><th class="num">Req/s</th><th class="num">5xx</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+        <table class="data"><thead><tr><th>Frontend</th><th>Status</th><th>Listen</th><th>Routes</th><th class="num">Sessions</th><th class="num">Req/s</th><th class="num">5xx</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
           <tbody><tr v-for="f in data.frontends" :id="`f:${f.name}`" :key="f.name" :class="{ 'hx-focus': focus === `f:${f.name}` }">
             <td class="primary"><span class="mono">{{ f.name }}</span> <span class="chip">{{ f.mode.toUpperCase() }}</span><span v-if="f.stats_page" class="chip">stats page</span></td>
             <td><Badge :level="f.stats.status === 'OPEN' ? 'good' : 'critical'" :label="f.stats.status === 'OPEN' ? 'Open' : (f.stats.status || 'Unknown')" /></td>
@@ -221,7 +184,7 @@ const rate = (st: any) => num(st.req_rate ?? st.rate);
               <span v-if="!f.routes.length && !f.default_backend" class="dim">{{ f.stats_page ? "HAProxy statistics page" : "No backend" }}</span></div></td>
             <td class="num">{{ num(f.stats.scur) }}</td><td class="num">{{ rate(f.stats) }}</td>
             <td class="num"><b v-if="Number(f.stats.hrsp_5xx)" style="color:var(--critical)">{{ num(f.stats.hrsp_5xx) }}</b><span v-else>0</span></td>
-            <td class="actions"><RowMenu :items="() => serviceMenu(f)" :label="f.name" /></td></tr></tbody></table>
+            <td class="actions"><RowMenu :items="() => frontendMenu(f)" :label="f.name" /></td></tr></tbody></table>
       </div></section>
     </template>
 
@@ -257,7 +220,7 @@ const rate = (st: any) => num(st.req_rate ?? st.rate);
 
   <HxInstanceDialog :open="instDialog.open" :instance="instDialog.instance" @close="instDialog.open = false"
     @saved="async (id) => { instDialog.open = false; await h.loadInstances(id); h.refresh(); }" />
-  <HxServiceForm v-if="current" :open="svcForm.open" :frontend="svcForm.frontend" :backends="data?.backends || []" :instance-id="current" @close="svcForm.open = false" @review="review" />
+  <HxFrontendForm v-if="current" :open="feForm.open" :frontend="feForm.frontend" :backends="data?.backends || []" :instance-id="current" @close="feForm.open = false" @review="review" />
   <HxRollingDeploy :open="rolling.open" :backend="rolling.backend" @close="rolling.open = false" />
   <HxSyncDialog v-if="current" :open="sync.open" :instance-id="current" :backend="sync.backend" @close="sync.open = false" @changed="refresh(); historyRef?.load()" />
   <Modal :open="weight.open" :title="`Weight of ${weight.backend?.name}/${weight.server?.name}`" @close="weight.open = false">

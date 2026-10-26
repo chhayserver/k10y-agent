@@ -44,10 +44,11 @@ const legacy: RouteRecordRaw[] = NAV.filter((n) => `/${n.id}` !== pathOf(n)).map
 const routes: RouteRecordRaw[] = [
   { path: "/login", component: () => import("@/views/Login.vue"), meta: { bare: true, public: true } },
   { path: "/password", component: () => import("@/views/ChangePassword.vue"), meta: { bare: true } },
-  { path: "/", redirect: () => to(prefs.start || "home") },
+  { path: "/", redirect: () => { const p = to(prefs.start || "home"); return p === "/" ? to("home") : p; } },
   ...NAV.map((n) => ({ path: pathOf(n), component: component(n.id)!, meta: { nav: n }, props: n.tab ? { tab: n.tab } : undefined })),
   { path: "/k8s", redirect: () => to("overview") },
   { path: "/haproxy", redirect: () => to("haproxy-overview") },
+  { path: "/haproxy/services", redirect: (r) => ({ path: to("haproxy-frontends"), query: r.query }) },
   ...legacy,
   { path: "/:pathMatch(.*)*", redirect: "/" },
 ];

@@ -19,7 +19,7 @@ async function test() {
   f.busy = true; f.test = null;
   try {
     const r = await hub.post("/haproxy/test", { url: f.url, username: f.username, password: f.password || null, verify_tls: f.verify_tls, instance_id: props.instance?.id || null });
-    f.test = { ok: true, text: `Connected · Data Plane API ${r.api_version} · ${r.frontends} services, ${r.backends} backends, ${r.servers} servers` };
+    f.test = { ok: true, text: `Connected · Data Plane API ${r.api_version} · ${r.frontends} frontends, ${r.backends} backends, ${r.servers} servers` };
     return true;
   } catch (e: any) { f.test = { ok: false, text: e.message }; return false; } finally { f.busy = false; }
 }

@@ -15,7 +15,7 @@ import { useSession } from "@/stores/session";
 const props = defineProps<{ instanceId: number; data: HxOverview | null; canOperate: boolean; canConfigure: boolean }>();
 const emit = defineEmits<{ review: [ops: HxOp[], title: string]; state: [backend: string, server: string, state: "ready" | "drain" | "maint"] }>();
 const s = useSession(), route = useRoute();
-const scope = ref<"instance" | "service" | "backend">("instance"), target = ref(""), question = ref("");
+const scope = ref<"instance" | "frontend" | "backend">("instance"), target = ref(""), question = ref("");
 const running = ref(false), elapsed = ref(0), error = ref(""), result = ref<any>(null), applied = ref<Record<number, boolean>>({});
 const provider = ref<any>(null);
 const canAi = computed(() => s.canGlobal("ai.use"));
@@ -23,11 +23,11 @@ let timer = 0;
 onMounted(async () => {
   try { provider.value = await hub.get("/settings/ai"); } catch { /* shown below */ }
   const q = route.query;
-  if (q.scope === "service" || q.scope === "backend") { scope.value = q.scope; target.value = String(q.target || ""); }
+  if (q.scope === "frontend" || q.scope === "backend") { scope.value = q.scope; target.value = String(q.target || ""); }
   if (q.run && canAi.value) run();
 });
 onBeforeUnmount(() => clearInterval(timer));
-const targets = computed(() => scope.value === "service" ? (props.data?.frontends || []).filter((f) => !f.stats_page).map((f) => f.name)
+const targets = computed(() => scope.value === "frontend" ? (props.data?.frontends || []).filter((f) => !f.stats_page).map((f) => f.name)
   : scope.value === "backend" ? (props.data?.backends || []).map((b) => b.name) : []);
 watch(scope, () => { if (!targets.value.includes(target.value)) target.value = targets.value[0] || ""; });
 
@@ -52,7 +52,7 @@ function apply(a: any, i: number) {
   else emit("review", a.ops, `AI suggestion: ${title(a)}`);
   applied.value[i] = true;
 }
-const SCOPES: [string, string][] = [["instance", "Whole HAProxy"], ["service", "One service"], ["backend", "One backend"]];
+const SCOPES: [string, string][] = [["instance", "Whole HAProxy"], ["frontend", "One frontend"], ["backend", "One backend"]];
 </script>
 <template>
   <div class="hx-ai">

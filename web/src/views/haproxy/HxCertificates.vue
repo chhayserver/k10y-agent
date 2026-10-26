@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// TLS certificates stored on this HAProxy (Data Plane API storage): expiry, domains, which services use them.
+// TLS certificates stored on this HAProxy (Data Plane API storage): expiry, domains, which frontends use them.
 import { computed, onMounted, reactive, ref } from "vue";
 import Badge from "@/components/Badge.vue";
 import EmptyState from "@/components/EmptyState.vue";
@@ -43,7 +43,7 @@ function expiry(c: any): [Level, string] {
 const soonest = computed(() => (certs.value || []).filter((c) => c.days_left != null).sort((a, b) => a.days_left - b.days_left)[0]);
 </script>
 <template>
-  <div class="toolbar"><span class="hint">Certificates are stored on the HAProxy through its Data Plane API. Use them for TLS listeners on the <b>Services</b> page.
+  <div class="toolbar"><span class="hint">Certificates are stored on the HAProxy through its Data Plane API. Use them for TLS listeners on the <b>Frontends</b> page.
     <template v-if="soonest"> Next expiry: <b>{{ soonest.name }}</b> on {{ fmt.dateTime(soonest.not_after) }}.</template></span><span class="grow" />
     <button class="btn" @click="load"><Icon name="refresh" /><span>Reload</span></button>
     <button v-if="canEdit" class="btn primary" @click="openUpload()"><Icon name="upload" /><span>Upload certificate</span></button></div>
@@ -58,7 +58,7 @@ const soonest = computed(() => (certs.value || []).filter((c) => c.days_left != 
         <td class="dim">{{ c.issuer || "–" }}</td>
         <td class="wrap"><span v-for="u in c.used_by" :key="u" class="chip">{{ u }}</span><span v-if="!c.used_by.length" class="dim">not used</span></td>
         <td class="actions"><template v-if="canEdit"><button class="btn ghost sm" @click="openUpload(c.name)">Replace</button>
-          <button class="btn ghost sm" style="color:var(--critical)" :disabled="c.used_by.length > 0" :title="c.used_by.length ? 'Still used by a service' : ''" @click="remove(c)">Delete</button></template></td>
+          <button class="btn ghost sm" style="color:var(--critical)" :disabled="c.used_by.length > 0" :title="c.used_by.length ? 'Still used by a frontend' : ''" @click="remove(c)">Delete</button></template></td>
       </tr></tbody></table>
   </div></section>
   <p class="hint" style="margin-top:12px">Add an alert rule <b>HAProxy → certificate expiring</b> to get a Telegram message before a certificate expires.</p>

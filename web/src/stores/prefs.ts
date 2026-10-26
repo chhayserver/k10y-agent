@@ -14,18 +14,30 @@ interface Prefs {
   range: "5m" | "15m" | "1h";
   pages: Record<string, PageState>;
   map: { ns: string; rs: boolean; config: boolean; q: string };
+  hxDash: HxDash;
 }
+/** HAProxy dashboard layout: which sections show, and how the traffic chart looks. */
+export interface HxDash { sections: Record<string, boolean>; metric: string; by: "frontend" | "backend"; range: "15m" | "1h"; only: string[] }
+const hxDashDefaults = (): HxDash => ({ sections: { kpis: true, problems: true, frontends: true, traffic: true, topology: false }, metric: "req", by: "frontend", range: "1h", only: [] });
 
 const KEY = "k10y-prefs";
 const defaults = (): Prefs => ({
   hidden: [], theme: "system", refresh: 10, start: "home", range: "15m", pages: {},
-  map: { ns: "", rs: false, config: true, q: "" },
+  map: { ns: "", rs: false, config: true, q: "" }, hxDash: hxDashDefaults(),
 });
+// Pages that were renamed: keep people's hidden pages and start page working.
+const RENAMED: Record<string, string> = { "haproxy-services": "haproxy-frontends" };
+function migrate(p: Prefs): Prefs {
+  p.hidden = p.hidden.map((x) => RENAMED[x] || x);
+  p.start = RENAMED[p.start] || p.start;
+  p.hxDash = { ...hxDashDefaults(), ...(p.hxDash || {}), sections: { ...hxDashDefaults().sections, ...(p.hxDash?.sections || {}) } };
+  return p;
+}
 
 function load(): Prefs {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) || "null");
-    return raw ? { ...defaults(), ...raw, map: { ...defaults().map, ...(raw.map || {}) } } : defaults();
+    return raw ? migrate({ ...defaults(), ...raw, map: { ...defaults().map, ...(raw.map || {}) } }) : defaults();
   } catch { return defaults(); }
 }
 
@@ -40,6 +52,9 @@ export function page(id: string, sort: SortState = { key: "namespace", dir: 1 },
 export function resetPrefs() {
   Object.assign(prefs, defaults());
 }
+export function resetHxDash() {
+  prefs.hxDash = hxDashDefaults();
+}
 
 export function applyTheme() {
   const root = document.documentElement;
@@ -51,7 +66,7 @@ watch(() => prefs.theme, applyTheme);
 export const isDark = () => prefs.theme === "dark" || (prefs.theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
 
 // --- account sync ---------------------------------------------------------------------
-const SYNCED = ["hidden", "theme", "refresh", "start", "range"] as const;
+const SYNCED = ["hidden", "theme", "refresh", "start", "range", "hxDash"] as const;
 type Synced = Pick<Prefs, (typeof SYNCED)[number]>;
 const pick = (): Synced => Object.fromEntries(SYNCED.map((k) => [k, prefs[k]])) as Synced;
 let syncing = false, timer = 0, lastSent = "";
@@ -63,6 +78,7 @@ export async function loadAccountPrefs() {
     const { data } = await hub.get<{ data: Partial<Synced> | null }>("/auth/preferences");
     if (data) {
       for (const k of SYNCED) if (data[k] !== undefined) (prefs as any)[k] = data[k];
+      migrate(prefs);
       lastSent = JSON.stringify(pick());
     } else {
       lastSent = "";

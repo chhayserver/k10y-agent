@@ -38,11 +38,11 @@ ACTION_TYPES = ["set_server_state", "set_weight", "update_server", "update_backe
 
 TOOLS: List[Dict[str, Any]] = [
     {"name": "get_overview",
-     "description": "All services (frontends: listen addresses, routes, policies) and backends (balancing, health check, "
+     "description": "All frontends (listen addresses, routes, policies) and backends (balancing, health check, "
                     "servers with state, health-check result, weight, sessions, 5xx), plus detected problems.",
      "parameters": {"type": "object", "properties": {}}},
     {"name": "get_live_rates",
-     "description": "Latest 10-second rates: per service requests/s, 5xx/s, 5xx %, sessions and session limit; "
+     "description": "Latest 10-second rates: per frontend requests/s, 5xx/s, 5xx %, sessions and session limit; "
                     "per backend requests/s, sessions, queue and average response time (ms). Also the trend over the last minutes.",
      "parameters": {"type": "object", "properties": {}}},
     {"name": "get_recent_logs",
@@ -117,7 +117,7 @@ class HAProxyTools:
         o = self.overview()
         keep_s = ("status", "check_status", "check_desc", "check_duration", "scur", "stot", "hrsp_5xx", "eresp", "econ", "downtime", "lastchg")
         return {
-            "services": [{"name": f["name"], "mode": f["mode"], "listen": [f"{b['address']}:{b['port']}{' tls' if b['ssl'] else ''}" for b in f["binds"]],
+            "frontends": [{"name": f["name"], "mode": f["mode"], "listen": [f"{b['address']}:{b['port']}{' tls' if b['ssl'] else ''}" for b in f["binds"]],
                           "routes": f["routes"], "default_backend": f["default_backend"], "policies": f["policies"],
                           "stats": {k: f["stats"].get(k) for k in ("status", "scur", "slim", "req_rate", "hrsp_4xx", "hrsp_5xx", "ereq")}}
                          for f in o["frontends"] if not f["stats_page"]],
@@ -130,7 +130,7 @@ class HAProxyTools:
 
     def t_get_live_rates(self) -> Any:
         point = (self.latest or {}).get("point") or {}
-        trend = [{"t": p[0], "services": {n: {"req": v["req"], "e5_pct": v["e5_pct"]} for n, v in p[1]["f"].items()}} for p in self.series[-12:]]
+        trend = [{"t": p[0], "frontends": {n: {"req": v["req"], "e5_pct": v["e5_pct"]} for n, v in p[1]["f"].items()}} for p in self.series[-12:]]
         return {"now": point, "trend_last_2_min": trend} if point else {"note": "no samples yet (the hub samples every 10 seconds)"}
 
     def t_get_recent_logs(self, status: str = "any", backend: Optional[str] = None, limit: int = 40) -> Any:
@@ -218,12 +218,12 @@ def normaliser(dp_overview: Callable[[], Dict[str, Any]]) -> Callable[[Dict[str,
 
 
 def task_for(scope: str, target: str, question: str) -> str:
-    if scope == "service":
-        task = f"Investigate the service (frontend) '{target}': is it healthy, are requests failing or slow, and why?"
+    if scope in ("frontend", "service"):
+        task = f"Investigate the frontend '{target}': is it healthy, are requests failing or slow, and why?"
     elif scope == "backend":
         task = f"Investigate the backend '{target}' and its servers: are any unhealthy, overloaded or failing, and why?"
     else:
-        task = "Check this whole HAProxy: find every current problem (down servers, failing services, errors, slow responses, expiring certificates), explain root causes and propose fixes."
+        task = "Check this whole HAProxy: find every current problem (down servers, failing frontends, errors, slow responses, expiring certificates), explain root causes and propose fixes."
     if question:
         task += f"\n\nThe user also asks: {question}"
     return task

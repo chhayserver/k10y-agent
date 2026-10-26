@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Services (frontends) → backends → servers, with live health colours. Hover a box to trace its path.
+// Frontends → backends → servers, with live health colours. Hover a box to trace its path.
 import { computed, ref } from "vue";
 import { backendHealth, bindText, ROUTE_KIND, routeText, STATE, type HxOverview } from "@/lib/haproxy";
 
@@ -36,7 +36,7 @@ const layout = computed(() => {
   for (const n of feNodes) {
     const raw: [string, string][] = n.f.routes.map((r) => [r.backend, r.kind === "other" ? r.value : `${ROUTE_KIND[r.kind].toLowerCase()} ${routeText(r)}`]);
     if (n.f.default_backend) raw.push([n.f.default_backend, "default"]);
-    // One line per service -> backend pair; several routes to the same backend share it ("2 routes").
+    // One line per frontend -> backend pair; several routes to the same backend share it ("2 routes").
     const byBackend = new Map<string, string[]>();
     raw.forEach(([be, label]) => byBackend.set(be, [...(byBackend.get(be) || []), label]));
     const targets = [...byBackend].map(([be, labels]) => [be, labels.length > 1 ? `${labels.length} routes` : labels[0]] as [string, string]);
@@ -76,9 +76,9 @@ const edgeDim = (e: { from: string; to: string }) => lit.value && !(lit.value.ha
     <div class="hx-topo-legend"><span><i class="lg up" />Up</span><span><i class="lg drain" />Draining</span><span><i class="lg maint" />Maintenance</span><span><i class="lg down" />Down</span>
       <span class="hint">Hover a box to trace its traffic. Click to open it.</span></div>
     <div class="hx-topo-scroll">
-      <svg :width="X[2] + W[2] + 4" :height="layout.height + 30" role="img" aria-label="HAProxy topology: services to backends to servers">
+      <svg :width="X[2] + W[2] + 4" :height="layout.height + 30" role="img" aria-label="HAProxy topology: frontends to backends to servers">
         <g transform="translate(2,26)">
-          <text :x="X[0]" y="-10" class="col">SERVICES</text><text :x="X[1]" y="-10" class="col">BACKENDS</text><text :x="X[2]" y="-10" class="col">SERVERS</text>
+          <text :x="X[0]" y="-10" class="col">FRONTENDS</text><text :x="X[1]" y="-10" class="col">BACKENDS</text><text :x="X[2]" y="-10" class="col">SERVERS</text>
           <g v-for="e in layout.edges" :key="e.id" :class="['edge', e.cls, { dim: edgeDim(e) }]">
             <path :d="e.d" />
           </g>

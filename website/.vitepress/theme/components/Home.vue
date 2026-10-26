@@ -11,7 +11,7 @@ const demos = [
   { id: "overview", label: "Kubernetes", icon: "M3 12h4l3-8 4 16 3-8h4", img: "/shots/overview.png", url: "k10y / kubernetes / lab / overview",
     text: "Health, problems, CPU and memory for every cluster, updated live." },
   { id: "haproxy", label: "HAProxy", icon: "M9 2.5h6v5H9zM2.5 16.5h6v5h-6zM9 16.5h6v5H9zM15.5 16.5h6v5h-6zM12 7.5v9M5.5 16.5V14h13v2.5", img: "/shots/haproxy-overview.png", url: "k10y / haproxy / lab-lb / overview",
-    text: "Live traffic, server health and a service → backend → server topology for each load balancer." },
+    text: "Live traffic, server health and a frontend → backend → server topology for each load balancer." },
   { id: "logs", label: "Live logs", icon: "M4 6h16M4 12h10M4 18h13", img: "/shots/logs.png", url: "k10y / kubernetes / deployments / web / logs",
     text: "Follow the logs of every pod of a workload in one stream, tagged by pod." },
   { id: "shell", label: "Pod shell", icon: "M4 17l6-5-6-5M12 19h8", img: "/shots/shell.png", url: "k10y / kubernetes / pods / shell",
@@ -42,7 +42,7 @@ const worksWith = ["Kubernetes", "RKE2", "k3s", "Amazon EKS", "Google GKE", "Azu
 // The systems k10y manages. "now" are shipped; the others are on the public roadmap (no dates promised).
 const systemsNow = [
   { name: "Kubernetes", icon: "M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z", points: ["Every workload, pod, service and config page", "Live charts, live logs, pod shell", "Scale, restart, roll back, edit YAML, drain", "AI diagnosis with human-approved fixes"] },
-  { name: "HAProxy", icon: "M9 2.5h6v5H9zM2.5 16.5h6v5h-6zM9 16.5h6v5H9zM15.5 16.5h6v5h-6zM12 7.5v9M5.5 16.5V14h13v2.5", points: ["Services, backends, servers, topology", "Drain, maintenance, rolling deploys, canaries", "Validated config changes, history, rollback", "Certificates, rate limits, logs, Kubernetes sync"] },
+  { name: "HAProxy", icon: "M9 2.5h6v5H9zM2.5 16.5h6v5h-6zM9 16.5h6v5H9zM15.5 16.5h6v5h-6zM12 7.5v9M5.5 16.5V14h13v2.5", points: ["Frontends, backends, servers, topology", "Drain, maintenance, rolling deploys, canaries", "Validated config changes, history, rollback", "Certificates, rate limits, logs, Kubernetes sync"] },
 ];
 const systemsNext = ["Nginx", "PostgreSQL & MySQL", "Redis", "Docker hosts", "GitLab & Jenkins pipelines", "Prometheus & Grafana", "Cloud accounts (AWS, GCP, Azure)"];
 const shared = [
@@ -74,8 +74,8 @@ const features = [
     ["Dry run everything", "Scale, restart, roll back, drain, apply or edit YAML: see the result before it happens."],
     ["Guardrails", "Protected namespaces, typed confirmation for destructive actions, and conflict checks when editing."],
     ["Least privilege", "Read-only installs are one manifest. Write access is opt-in and can't create RBAC or CRDs."]] },
-  { kicker: "Balance", title: "Balance + ship safely", img: "/shots/haproxy-services.png", url: "k10y / haproxy / lab-lb / services", reverse: true, points: [
-    ["HAProxy, managed", "Services, backends and servers with live health; drain, maintenance and weights for canaries."],
+  { kicker: "Balance", title: "Balance + ship safely", img: "/shots/haproxy-services.png", url: "k10y / haproxy / lab-lb / frontends", reverse: true, points: [
+    ["HAProxy, managed", "Frontends, backends and servers with live health; drain, maintenance and weights for canaries."],
     ["Every change validated", "Prepared in a transaction, shown as a diff, checked by HAProxy itself, reloaded gracefully, kept in history."],
     ["Linked to Kubernetes", "A backend can follow a Kubernetes Service: nodes or pods come and go, HAProxy keeps up."]] },
   { kicker: "Respond", title: "Respond + fix fast", img: "/shots/logs-panel.png", url: "k10y / lab / deployments / web / logs", points: [

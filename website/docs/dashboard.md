@@ -55,4 +55,4 @@ Pods open a dedicated panel with live CPU and memory charts, logs and a **Shell*
 
 ## HAProxy
 
-**Overview**, **Services**, **Backends**, **Topology** and **Config** for the selected HAProxy instance. See [HAProxy](./haproxy).
+**Overview**, **Frontends**, **Backends**, **Topology** and **Config** for the selected HAProxy instance. See [HAProxy](./haproxy).

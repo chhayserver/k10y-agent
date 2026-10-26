@@ -686,7 +686,7 @@ class CertBody(BaseModel):
 
 
 class AiBody(BaseModel):
-    scope: str = Field("instance", pattern="^(instance|service|backend)$")
+    scope: str = Field("instance", pattern="^(instance|frontend|service|backend)$")
     target: str = Field("", max_length=64)
     question: str = Field("", max_length=2000)
 
@@ -1011,7 +1011,7 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
         inst = get(s, iid)
         if body.scope != "instance":
             try:
-                _check_name(body.target, "Service" if body.scope == "service" else "Backend")
+                _check_name(body.target, "Frontend" if body.scope in ("frontend", "service") else "Backend")
             except DataPlaneError as e:
                 raise fail(e)
         m, rx = monitor(), syslog()

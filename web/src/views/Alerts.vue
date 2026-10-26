@@ -42,9 +42,9 @@ const clusterName = (id: number | null) => (id == null ? "All clusters" : s.clus
 const TYPE_LABEL: Record<string, string> = { problems: "Cluster problems", resource: "CPU / memory threshold", unreachable: "Cluster unreachable", haproxy: "HAProxy" };
 const HX_COND: Record<string, { label: string; unit?: string; def?: number; hint: string }> = {
   server_down: { label: "A server is down", hint: "A server's health check fails." },
-  backend_down: { label: "A backend has no server up", hint: "Every server of a backend is down or out of rotation: its service is failing." },
-  error_rate: { label: "Server errors (5xx) above", unit: "% of responses", def: 5, hint: "Share of 5xx responses over the last 10 seconds, when the service gets at least 1 request/s." },
-  sessions: { label: "Sessions near the limit", unit: "% of maxconn", def: 80, hint: "Current sessions as a share of the service's session limit." },
+  backend_down: { label: "A backend has no server up", hint: "Every server of a backend is down or out of rotation: its frontend is failing." },
+  error_rate: { label: "Server errors (5xx) above", unit: "% of responses", def: 5, hint: "Share of 5xx responses over the last 10 seconds, when the frontend gets at least 1 request/s." },
+  sessions: { label: "Sessions near the limit", unit: "% of maxconn", def: 80, hint: "Current sessions as a share of the frontend's session limit." },
   cert_expiry: { label: "Certificate expiring", unit: "days or less", def: 14, hint: "A certificate stored on the HAProxy expires soon (or has expired)." },
   unreachable: { label: "HAProxy unreachable", hint: "The hub can't reach the HAProxy Data Plane API." },
 };

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Create or edit a service (an HAProxy frontend): where it listens, where requests go, and access policies.
+// Create or edit an HAProxy frontend: where it listens, where requests go, and access policies.
 import { reactive, ref, watch } from "vue";
 import Icon from "@/components/Icon.vue";
 import Modal from "@/components/Modal.vue";
@@ -30,7 +30,7 @@ const routeKey = (r: Route) => ({ kind: r.kind, value: r.value.trim(), backend: 
 
 function submit() {
   f.err = "";
-  if (!f.name.trim()) { f.err = "Give the service a name."; return; }
+  if (!f.name.trim()) { f.err = "Give the frontend a name."; return; }
   if (!f.binds.length) { f.err = "Add at least one listen address."; return; }
   if (f.binds.some((b) => b.ssl && !b.certificate)) { f.err = "Choose a certificate for each TLS listen address (upload one on the Certificates page)."; return; }
   // Only send what changed, so the config diff shows exactly the edit and nothing else.
@@ -50,12 +50,12 @@ function submit() {
       if (fe || policies.allow_ips.length || policies.redirect_https || policies.rate_limit) data.policies = policies;
   }
   if (fe && !Object.keys(data).length) { f.err = "Nothing changed."; return; }
-  emit("review", [{ op: fe ? "update" : "create", kind: "frontend", name: f.name.trim(), data }], fe ? `Edit service ${f.name}` : `New service ${f.name}`);
+  emit("review", [{ op: fe ? "update" : "create", kind: "frontend", name: f.name.trim(), data }], fe ? `Edit frontend ${f.name}` : `New frontend ${f.name}`);
 }
 </script>
 <template>
-  <Modal :open="open" :title="frontend ? `Edit service ${frontend.name}` : 'New service'" wide @close="emit('close')">
-    <p class="hint" style="margin:0">A service is an HAProxy <b>frontend</b>: the address and port clients connect to, the rules that pick a backend, and who may use it.</p>
+  <Modal :open="open" :title="frontend ? `Edit frontend ${frontend.name}` : 'New frontend'" wide @close="emit('close')">
+    <p class="hint" style="margin:0">A <b>frontend</b> is the address and port clients connect to, the rules that pick a backend, and who may use it.</p>
     <div class="two-col">
       <div class="form-row"><label class="lbl">Name</label><input v-model="f.name" class="input" :disabled="!!frontend" placeholder="e.g. web" style="font-family:var(--mono)"></div>
       <div class="form-row"><label class="lbl">Protocol</label><div class="segmented" role="group">
@@ -90,7 +90,7 @@ function submit() {
           <button class="btn sm" type="button" style="align-self:flex-start" @click="f.routes.push({ kind: 'path_prefix', value: '', backend: backends[0]?.name || '' })">Add route</button>
           <span class="hint">Checked from top to bottom; the first match wins. "Header" is handy for canaries (e.g. <code>X-Canary: yes</code> → new version).</span>
         </template>
-        <div v-else class="test-result show"><Icon name="warn" /><span>This service has custom routing rules this form can't edit safely; they're kept as they are. Edit them in <b>Raw config</b>.</span></div>
+        <div v-else class="test-result show"><Icon name="warn" /><span>This frontend has custom routing rules this form can't edit safely; they're kept as they are. Edit them in <b>Raw config</b>.</span></div>
       </div>
 
       <div class="form-row"><label class="lbl">Access</label>
@@ -99,7 +99,7 @@ function submit() {
         <div class="assign-row"><label class="pill"><input v-model="f.limit_on" type="checkbox"> Rate limit per client IP</label>
           <template v-if="f.limit_on"><input v-model="f.limit_n" class="input" type="number" min="1" style="max-width:110px" aria-label="Requests">
             <span class="hint">requests per</span><input v-model="f.limit_period" class="input" type="number" min="1" max="3600" style="max-width:90px" aria-label="Seconds"><span class="hint">seconds, then 429</span></template></div>
-        <span v-if="frontend?.policies.custom_rules" class="hint">This service also has {{ frontend.policies.custom_rules }} custom request rule(s); they're kept after these.</span></div>
+        <span v-if="frontend?.policies.custom_rules" class="hint">This frontend also has {{ frontend.policies.custom_rules }} custom request rule(s); they're kept after these.</span></div>
     </template>
     <div v-if="f.err" class="test-result show err"><Icon name="crit" /><span>{{ f.err }}</span></div>
     <template #actions><button class="btn ghost" type="button" @click="emit('close')">Cancel</button><span style="flex:1" />

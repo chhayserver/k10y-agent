@@ -2,10 +2,10 @@
 
 k10y can monitor and manage **HAProxy** load balancers next to your Kubernetes clusters:
 
-- **See** every service (frontend), backend and server, with live health, sessions, request rates and errors.
+- **See** every frontend, backend and server, with live health, sessions, request rates and errors.
 - **Control** servers instantly: drain one before a deploy, put it in maintenance, bring it back. No reload needed.
-- **Configure** services, backends and servers from forms, or edit the raw `haproxy.cfg`. Every change shows a diff, is validated by HAProxy, and only then applies.
-- **Topology:** a live diagram from service → backend → servers.
+- **Configure** frontends, backends and servers from forms, or edit the raw `haproxy.cfg`. Every change shows a diff, is validated by HAProxy, and only then applies.
+- **Topology:** a live diagram from frontend → backend → servers.
 - **Live charts, logs, certificates, stick tables, config history with rollback, alerts, rolling deploys, groups** and a **Kubernetes link** that keeps a backend in sync with a Service.
 
 <Shot src="/shots/haproxy-overview.png" alt="HAProxy overview with problems and a topology diagram" url="k10y / haproxy" />
@@ -23,7 +23,7 @@ You need the `clusters.manage` permission. Open **HAProxy → Add HAProxy** and 
 - **Username and password** of a Data Plane API user.
 - **Verify TLS:** for `https://` URLs with a certificate the hub trusts.
 
-Click **Test connection**. You'll see the API version and how many services, backends and servers it found. The password is stored encrypted in the hub's database.
+Click **Test connection**. You'll see the API version and how many frontends, backends and servers it found. The password is stored encrypted in the hub's database.
 
 ## Pages
 
@@ -31,19 +31,19 @@ Pick **HAProxy** in the system switcher, then the instance in the second switche
 
 | Page | What you see |
 |---|---|
-| **Overview** | Services, servers up/total, sessions, requests per second, **live charts** (requests/s, 5xx/s, sessions, response time for the last hour), **problems** and the topology |
-| **Services** | Each frontend: status, listen addresses, routes (path or host → backend), sessions, request rate, 5xx |
-| **Backends** | One table, a row per backend: health (x/y up), balancing, health check, which services use it, sessions, new/s, 5xx, response time. Click a row to see its servers: state, address, weight and share of traffic, health-check result, sessions, requests, 5xx, time in state. Search, filter (Problems, From Kubernetes) and sort; backends with problems open by themselves |
-| **Topology** | Services → backends → servers. Line labels show the route; colours show server health. Hover to trace a path, click to open it. |
-| **Certificates** | TLS certificates on the HAProxy: expiry, domains, which services use them; upload, replace, delete |
+| **Overview** | A dashboard you can arrange: an overall status line, key numbers (requests/s, error rate, response time, sessions, servers up) with trends, **problems** (only when there are some), each **frontend drawn as its routing** (proxy, or path routing to several backends) with live health, one **traffic chart** (pick the metric, compare by frontend or backend, 15 min or 1 hour, show only some) and an optional topology. **Customize** chooses the sections; it's saved to your account |
+| **Frontends** | Each frontend: status, listen addresses, routes (path or host → backend), sessions, request rate, 5xx |
+| **Backends** | One table, a row per backend: health (x/y up), balancing, health check, which frontends use it, sessions, new/s, 5xx, response time. Click a row to see its servers: state, address, weight and share of traffic, health-check result, sessions, requests, 5xx, time in state. Search, filter (Problems, From Kubernetes) and sort; backends with problems open by themselves |
+| **Topology** | Frontends → backends → servers. Line labels show the route; colours show server health. Hover to trace a path, click to open it. |
+| **Certificates** | TLS certificates on the HAProxy: expiry, domains, which frontends use them; upload, replace, delete |
 | **Stick tables** | Live tables, e.g. the client IPs a rate limit is tracking, with their request rates |
-| **Logs** | Live request logs: status, request, service → server, duration, bytes, client; filter by text or status class |
+| **Logs** | Live request logs: status, request, frontend → server, duration, bytes, client; filter by text or status class |
 | **Config history** | Every configuration version, who changed it, the diff, and **Restore** |
 | **Raw config** | The full `haproxy.cfg`, editable |
 
 The page refreshes every 5 seconds. Use **Pause** to stop it while you read.
 
-<Shot src="/shots/haproxy-topology.png" alt="HAProxy topology: services to backends to servers, including a server synced from Kubernetes" url="k10y / haproxy / topology" />
+<Shot src="/shots/haproxy-topology.png" alt="HAProxy topology: frontends to backends to servers, including a server synced from Kubernetes" url="k10y / haproxy / topology" />
 
 ## Drain, maintenance and back in service
 
@@ -86,13 +86,13 @@ echo reload | nc -w 5 127.0.0.1 9999 | grep -q '^Success=1'
 
 You need the `haproxy.configure` permission.
 
-- **Services:** **New service**, or **⋯ → Edit service / Delete service**. Set the protocol (HTTP or TCP), listen addresses (`*:80`, `10.0.0.5:443`…), a default backend, and **routes**: *path starts with*, *path is* or *host is* → backend. The first match wins.
+- **Frontends:** **New frontend**, or **⋯ → Edit frontend / Delete frontend**. Set the protocol (HTTP or TCP), listen addresses (`*:80`, `10.0.0.5:443`…), a default backend, and **routes**: *path starts with*, *path is* or *host is* → backend. The first match wins.
 - **Backends:** **New backend** (with its first servers), or **⋯ → Edit / Delete / Add server**. Set the balancing method and health check (HTTP path, TCP connect, or connect only). A backend still used by a service can't be deleted.
 - **Servers:** **⋯ → Edit / Remove server**. Set address, port, weight (0–256), health check, and backup.
 
-### Service options
+### Frontend options
 
-<Shot src="/shots/haproxy-service.png" alt="Editing a service: TLS listener, header route and rate limit" url="k10y / haproxy / services" />
+<Shot src="/shots/haproxy-service.png" alt="Editing a frontend: TLS listener, header route and rate limit" url="k10y / haproxy / frontends" />
 
 | Option | What it does |
 |---|---|
@@ -102,7 +102,7 @@ You need the `haproxy.configure` permission.
 | **Allow only these client IPs** | Everyone else gets 403 |
 | **Rate limit per client IP** | N requests per S seconds, then 429. The tracked IPs show on **Stick tables**. |
 
-Other request rules a service already has are kept untouched and listed as "custom rules".
+Other request rules a frontend already has are kept untouched and listed as "custom rules".
 
 ### Weight and canary releases
 
@@ -137,13 +137,13 @@ Every change goes through the same review:
 2. You see **exactly which lines of `haproxy.cfg` change**, and HAProxy's own **validation** result.
 3. **Apply** commits it. HAProxy reloads gracefully: open connections finish on the old process. k10y waits for the reload result. If the reload fails, the previous configuration stays active and you're told why.
 
-<Shot src="/shots/haproxy-change.png" alt="Reviewing an HAProxy change: one route added, validated by HAProxy" url="k10y / haproxy / services" />
+<Shot src="/shots/haproxy-change.png" alt="Reviewing an HAProxy change: one route added, validated by HAProxy" url="k10y / haproxy / frontends" />
 
 Forms only change what you changed. Routing rules that are more complex than path or host matches are kept as they are, and can be edited on the **Config** tab.
 
 ## Certificates
 
-**Certificates → Upload** takes the certificate chain and private key as PEM (paste them, or choose the files). Replacing a certificate that's in use reloads HAProxy gracefully. A certificate still used by a service can't be deleted. The page shows each certificate's expiry; add an alert rule *HAProxy → Certificate expiring* to be warned in time.
+**Certificates → Upload** takes the certificate chain and private key as PEM (paste them, or choose the files). Replacing a certificate that's in use reloads HAProxy gracefully. A certificate still used by a frontend can't be deleted. The page shows each certificate's expiry; add an alert rule *HAProxy → Certificate expiring* to be warned in time.
 
 <Shot src="/shots/haproxy-certs.png" alt="Certificates page with expiry" url="k10y / haproxy / certificates" />
 
@@ -167,7 +167,7 @@ k10y records a new version every time the configuration changes: applied from k1
 
 ## AI assistant
 
-**AI Assistant** (in the HAProxy sidebar), **Ask AI** on the Overview's problems, or **⋯ → Diagnose with AI** on a service or backend. Choose the whole HAProxy, one service or one backend, and optionally ask a question (*"why are users getting 503 on the shop?"*).
+**AI Assistant** (in the HAProxy sidebar), **Ask AI** on the Overview's problems, or **⋯ → Diagnose with AI** on a frontend or backend. Choose the whole HAProxy, one frontend or one backend, and optionally ask a question (*"why are users getting 503 on the shop?"*).
 
 The AI investigates with read-only tools:
 - server states and health-check results
@@ -187,9 +187,9 @@ Alert rules of type **HAProxy** (Alerts → New rule):
 | Condition | Fires when |
 |---|---|
 | A server is down | A server's health check fails |
-| A backend has no server up | The service using it is failing |
+| A backend has no server up | The frontend using it is failing |
 | Server errors (5xx) above | More than N% of responses are 5xx (at ≥ 1 request/s) |
-| Sessions near the limit | Current sessions reach N% of the service's limit |
+| Sessions near the limit | Current sessions reach N% of the frontend's limit |
 | Certificate expiring | A certificate expires within N days |
 | HAProxy unreachable | The hub can't reach the Data Plane API |
 
@@ -205,7 +205,7 @@ They notify through the same Telegram channels as cluster alerts.
 |---|---|
 | `haproxy.view` | All HAProxy pages (except the raw config) |
 | `haproxy.operate` | Drain, maintenance, back in service |
-| `haproxy.configure` | Add, edit and remove services, backends and servers; read and edit the raw config |
+| `haproxy.configure` | Add, edit and remove frontends, backends and servers; read and edit the raw config |
 | `clusters.manage` | Connect, edit and remove HAProxy instances (Administration → HAProxy instances) |
 
 These are global permissions: assign the role on **all clusters**. On new installs, Viewer includes `haproxy.view` and Operator includes `haproxy.view` and `haproxy.operate`.
@@ -223,7 +223,7 @@ make haproxy-lab-up      # prints the URL and the generated API password
 | | |
 |---|---|
 | Traffic | `http://localhost:8088` (`/` → shop, `/api` → api) |
-| Broken service | `http://localhost:8081` (backend `legacy`, always down) |
+| Broken frontend | `http://localhost:8081` (backend `legacy`, always down) |
 | Stats page | `http://localhost:8404/stats` |
 | Data Plane API | `http://localhost:5555/v3`, user `admin` (second HAProxy: traffic `:8098`, API `:5556`) |
 

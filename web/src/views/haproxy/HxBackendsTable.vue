@@ -99,7 +99,7 @@ const COLS: [string, string, boolean][] = [["name", "Backend", false], ["health"
           <td class="primary"><div class="hxb-name"><span class="mono">{{ r.b.name }}</span>
             <button v-if="r.b.k8s_sync" class="chip hx-sync" :class="{ err: r.b.k8s_sync.last_error }" :title="r.b.k8s_sync.last_error || r.b.k8s_sync.last_result" @click="emit('sync', r.b)">
               <Icon name="logo" /> {{ r.b.k8s_sync.namespace }}/{{ r.b.k8s_sync.service }}{{ r.b.k8s_sync.enabled ? "" : " (paused)" }}</button></div>
-            <div class="sub">{{ r.b.used_by.length ? `used by ${r.b.used_by.join(", ")}` : "not used by any service" }}</div></td>
+            <div class="sub">{{ r.b.used_by.length ? `used by ${r.b.used_by.join(", ")}` : "not used by any frontend" }}</div></td>
           <td><div class="hxb-health"><Badge :level="r.h.level" :label="r.h.label" />
             <span v-if="r.b.servers.length" class="hxb-bar" :title="`${r.counts.up} up · ${r.counts.out} out of rotation · ${r.counts.down} down`">
               <i class="up" :style="{ flexGrow: r.counts.up }" /><i class="out" :style="{ flexGrow: r.counts.out }" /><i class="down" :style="{ flexGrow: r.counts.down }" /></span></div></td>

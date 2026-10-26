@@ -6,6 +6,11 @@ title: Changelog
 
 Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached to the [GitHub release](https://github.com/zorouzumaki1111-cmd/k10y-agent/releases).
 
+## Unreleased
+
+- **HAProxy dashboard redesign:** a status line that says what's wrong, key numbers with trends (requests/s, error rate, response time, sessions, servers up), problems only when there are some, each frontend drawn as its routing (proxy, or path routing to several backends) with live server health, and one traffic chart where you pick the metric, compare by frontend or backend, and show only some. **Customize** chooses the sections; saved to your account.
+- **"Services" are now called "Frontends"** in the HAProxy pages, the AI assistant and alerts, matching HAProxy's own terms. Old `/haproxy/services` links still work.
+
 ## 2.2.1 <Badge type="tip" text="latest" />
 
 - **AI assistant for HAProxy:** investigate the whole HAProxy, one service or one backend with read-only tools (health checks, live rates, logs, config, certificates, recent changes). Proposed fixes go through the normal review; unsafe ones are refused.

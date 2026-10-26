@@ -36,7 +36,7 @@ function lbSummary(d: HxOverview) {
   const down = d.backends.filter((b) => !allDown(b)).flatMap((b) => b.servers).filter((x) => x.state === "down").length;
   const level: Level = bad ? "critical" : down ? "warning" : "good";
   return { up, total: servers.length, problems: bad + down, level,
-    rate: d.frontends.reduce((a, f) => a + (Number(f.stats.req_rate ?? f.stats.rate) || 0), 0), services: d.frontends.filter((f) => !f.stats_page).length };
+    rate: d.frontends.reduce((a, f) => a + (Number(f.stats.req_rate ?? f.stats.rate) || 0), 0), frontends: d.frontends.filter((f) => !f.stats_page).length };
 }
 
 const alerts = ref<any[] | null>(null), activity = ref<any[] | null>(null);
@@ -102,7 +102,7 @@ onBeforeUnmount(() => clearInterval(timer));
         <li v-for="x in lbs" :key="x.inst.id" @click="openLb(x.inst.id)">
           <span class="hdot" :class="x.data ? lbSummary(x.data).level : 'critical'" />
           <div style="min-width:0"><div class="main-line">{{ x.inst.name }}</div>
-            <div class="sub-line"><template v-if="x.data">{{ lbSummary(x.data).services }} services · {{ x.data.backends.length }} backends · {{ lbSummary(x.data).up }}/{{ lbSummary(x.data).total }} servers up</template>
+            <div class="sub-line"><template v-if="x.data">{{ lbSummary(x.data).frontends }} frontends · {{ x.data.backends.length }} backends · {{ lbSummary(x.data).up }}/{{ lbSummary(x.data).total }} servers up</template>
               <template v-else>{{ x.error }}</template></div></div>
           <div class="meta"><Badge v-if="x.data" :level="lbSummary(x.data).level" :label="lbSummary(x.data).problems ? `${lbSummary(x.data).problems} problems` : 'Healthy'" />
             <Badge v-else level="critical" label="Unreachable" />

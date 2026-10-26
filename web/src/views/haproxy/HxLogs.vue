@@ -61,7 +61,7 @@ async function enable() {
   </div>
   <div v-if="error" class="banner show"><Icon name="crit" /><span class="msg">{{ error }}</span></div>
   <section class="card flush"><div class="card-body table-wrap">
-    <table class="data hx-logs"><thead><tr><th>Time</th><th>Status</th><th>Request</th><th>Service → server</th><th class="num">Duration</th><th class="num">Bytes</th><th>Client</th></tr></thead>
+    <table class="data hx-logs"><thead><tr><th>Time</th><th>Status</th><th>Request</th><th>Frontend → server</th><th class="num">Duration</th><th class="num">Bytes</th><th>Client</th></tr></thead>
       <tbody>
         <tr v-if="!shown.length"><td colspan="7" class="dim">{{ lines.length ? "No lines match the filter." : "Waiting for log lines…" }}</td></tr>
         <tr v-for="l in shown" :key="l.seq">

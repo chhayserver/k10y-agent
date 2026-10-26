@@ -158,13 +158,13 @@ def evaluate_haproxy(latest: Optional[Dict[str, Any]], params: Dict[str, Any]) -
         th, min_rps = float(params.get("threshold", 5)), float(params.get("min_rps", 1))
         for fe, v in (point.get("f") or {}).items():
             if v.get("req", 0) >= min_rps and v.get("e5_pct", 0) >= th:
-                out.append((f"hx/5xx/{fe}", f"Service {fe}: {v['e5_pct']:.0f}% server errors", f"{v['e5_pct']:.1f}% of responses were 5xx at {v['req']:.1f} req/s (threshold {th:.0f}%).", f"frontend/{fe}"))
+                out.append((f"hx/5xx/{fe}", f"Frontend {fe}: {v['e5_pct']:.0f}% server errors", f"{v['e5_pct']:.1f}% of responses were 5xx at {v['req']:.1f} req/s (threshold {th:.0f}%).", f"frontend/{fe}"))
     elif cond == "sessions":
         th = float(params.get("threshold", 80))
         for fe, v in (point.get("f") or {}).items():
             if v.get("slim") and 100.0 * v.get("sess", 0) / v["slim"] >= th:
                 pct = 100.0 * v["sess"] / v["slim"]
-                out.append((f"hx/sessions/{fe}", f"Service {fe} at {pct:.0f}% of its session limit", f"{v['sess']} of {v['slim']} sessions in use.", f"frontend/{fe}"))
+                out.append((f"hx/sessions/{fe}", f"Frontend {fe} at {pct:.0f}% of its session limit", f"{v['sess']} of {v['slim']} sessions in use.", f"frontend/{fe}"))
     elif cond == "cert_expiry":
         days = float(params.get("threshold", 14))
         for c in latest.get("certs") or []:

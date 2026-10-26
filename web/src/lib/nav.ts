@@ -17,7 +17,7 @@ export interface SystemDef {
 export const SYSTEMS: SystemDef[] = [
   { id: "kubernetes", label: "Kubernetes", icon: "logo", base: "/k8s", description: "Clusters, workloads, logs and actions",
     visible: (s) => s.clusters.length > 0 || s.canGlobal("clusters.manage") },
-  { id: "haproxy", label: "HAProxy", icon: "lb", base: "/haproxy", description: "Load balancers: services, backends, servers",
+  { id: "haproxy", label: "HAProxy", icon: "lb", base: "/haproxy", description: "Load balancers: frontends, backends, servers",
     visible: (s) => s.canGlobal("haproxy.view") },
 ];
 export const systemById = (id: string | undefined) => SYSTEMS.find((x) => x.id === id);
@@ -54,7 +54,7 @@ export const NAV: NavItem[] = [
   { id: "events", label: "Events", icon: "events", section: "Activity", system: K, perm: "cluster.view", cluster: true },
 
   { id: "haproxy-overview", label: "Overview", icon: "overview", section: "Load balancer", system: H, slug: "overview", tab: "overview", global: "haproxy.view" },
-  { id: "haproxy-services", label: "Services", icon: "globe", section: "Load balancer", system: H, slug: "services", tab: "services", global: "haproxy.view" },
+  { id: "haproxy-frontends", label: "Frontends", icon: "globe", section: "Load balancer", system: H, slug: "frontends", tab: "frontends", global: "haproxy.view" },
   { id: "haproxy-backends", label: "Backends", icon: "nodes", section: "Load balancer", system: H, slug: "backends", tab: "backends", global: "haproxy.view" },
   { id: "haproxy-ai", label: "AI Assistant", icon: "ai", section: "Load balancer", system: H, slug: "ai", tab: "ai", global: "haproxy.view" },
   { id: "haproxy-topology", label: "Topology", icon: "map", section: "Load balancer", system: H, slug: "topology", tab: "topology", global: "haproxy.view" },
@@ -79,7 +79,8 @@ export function pathOf(n: NavItem): string {
   return `${sys ? sys.base : ""}/${n.slug || n.id}`;
 }
 /** URL of a page by id, e.g. to("map") -> "/k8s/map". */
+const RENAMED: Record<string, string> = { "haproxy-services": "haproxy-frontends" };
 export function to(id: string): string {
-  const n = NAV.find((x) => x.id === id);
+  const n = NAV.find((x) => x.id === (RENAMED[id] || id));
   return n ? pathOf(n) : "/";
 }
