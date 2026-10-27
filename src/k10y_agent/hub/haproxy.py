@@ -112,6 +112,24 @@ def _message(r: httpx.Response) -> str:
     return ("; ".join(found) if found else msg).strip()[:1500]
 
 
+# The Data Plane API (seen in v3.2.18) crashes with "concurrent map iteration and map write" when two
+# transactions are opened or closed at the same moment, and restarts. So every request that touches the
+# configuration, transactions or storage of one HAProxy goes through one lock (re-entrant, so a whole change
+# can hold it). Live stats and runtime state changes don't need it.
+_TX_LOCKS: Dict[str, Any] = {}
+_TX_LOCKS_GUARD = threading.Lock()
+SERIALISED = ("/configuration/", "/transactions", "/storage/")
+RETRIES = (1.0, 2.0, 4.0)       # waits before retrying a read while the Data Plane API restarts
+
+
+_ORPHANS: Dict[str, set] = {}   # transactions k10y opened but could not close (e.g. the API restarted mid-change)
+
+
+def tx_lock(dp: Any) -> Any:
+    with _TX_LOCKS_GUARD:
+        return _TX_LOCKS.setdefault(getattr(dp, "base", "") or str(id(dp)), threading.RLock())
+
+
 class DataPlane:
     """Small client for the Data Plane API v3."""
 
@@ -121,6 +139,25 @@ class DataPlane:
 
     def close(self) -> None:
         self.c.close()
+
+    def _send(self, do: Callable[[], httpx.Response], method: str, serial: bool) -> httpx.Response:
+        """Send one request (under the instance lock when needed). Reads are retried for a few seconds if
+        the Data Plane API drops the connection, e.g. while it restarts; writes are not repeated."""
+        for wait in (*RETRIES, None):
+            try:
+                if serial:
+                    with tx_lock(self):
+                        return do()
+                return do()
+            except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError) as e:
+                if method != "GET" or wait is None:
+                    hint = ("" if method == "GET" else " It may have restarted in the middle of this change: check Config history "
+                            "before trying again.")
+                    raise DataPlaneError(502, f"cannot reach the Data Plane API: {e}.{hint}")
+                time.sleep(wait)
+            except httpx.HTTPError as e:
+                raise DataPlaneError(502, f"cannot reach the Data Plane API: {e}")
+        raise AssertionError("unreachable")
 
     def __enter__(self) -> "DataPlane":
         return self
@@ -134,10 +171,9 @@ class DataPlane:
         if tx:
             params["transaction_id"] = tx
         headers = {"Content-Type": "text/plain"} if content is not None else None
-        try:
-            r = self.c.request(method, self.base + path, params=params, json=json, content=content, headers=headers)
-        except httpx.HTTPError as e:
-            raise DataPlaneError(502, f"cannot reach the Data Plane API: {e}")
+        serial = bool(tx) or any(s in path for s in SERIALISED)
+        r = self._send(lambda: self.c.request(method, self.base + path, params=params, json=json, content=content, headers=headers),
+                       method, serial)
         if r.status_code == 401:
             raise DataPlaneError(502, "the Data Plane API rejected the username or password")
         if r.status_code >= 400:
@@ -167,7 +203,39 @@ class DataPlane:
                   params={"only_validate": "true", "skip_version": "true"})
 
     def begin(self) -> str:
-        return self.call("POST", "/services/haproxy/transactions", params={"version": self.version()})["id"]
+        with tx_lock(self):
+            self._close_orphans()
+            try:
+                return self.call("POST", "/services/haproxy/transactions", params={"version": self.version()})["id"]
+            except DataPlaneError as e:
+                if "maximum amount" not in str(e):
+                    raise
+                if not self._close_outdated():
+                    raise DataPlaneError(e.status, f"{e} These are left open by another tool or an earlier crash and are for the "
+                                                   "current configuration, so k10y won't close them itself: delete them with "
+                                                   "DELETE /v3/services/haproxy/transactions/<id> on the Data Plane API.")
+                return self.call("POST", "/services/haproxy/transactions", params={"version": self.version()})["id"]
+
+    def _close_orphans(self) -> None:
+        for tx in list(_ORPHANS.get(self.base, ())):
+            try:
+                self.call("DELETE", f"/services/haproxy/transactions/{tx}")
+            except DataPlaneError as e:
+                if "not found" not in str(e).lower() and e.status != 404:
+                    continue                 # still unreachable: try again next time
+            _ORPHANS[self.base].discard(tx)
+
+    def _close_outdated(self) -> int:
+        """Close transactions that can never be committed: failed ones, or ones made for an older config version."""
+        current, closed = self.version(), 0
+        for tr in self.call("GET", "/services/haproxy/transactions") or []:
+            if tr.get("status") != "in_progress" or int(tr.get("_version") or 0) < current:
+                try:
+                    self.call("DELETE", f"/services/haproxy/transactions/{tr['id']}")
+                    closed += 1
+                except DataPlaneError:
+                    pass
+        return closed
 
     def commit(self, tx: str) -> Optional[str]:
         """Commit a transaction; returns the reload ID when HAProxy has to reload."""
@@ -198,8 +266,9 @@ class DataPlane:
     def rollback(self, tx: str) -> None:
         try:
             self.call("DELETE", f"/services/haproxy/transactions/{tx}")
-        except DataPlaneError:
-            pass
+        except DataPlaneError as e:
+            if "not found" not in str(e).lower():
+                _ORPHANS.setdefault(self.base, set()).add(tx)     # close it before the next change
 
     # runtime --------------------------------------------------------------
     def stats(self) -> List[Dict[str, Any]]:
@@ -224,10 +293,8 @@ class DataPlane:
         return out
 
     def upload_certificate(self, name: str, pem: str) -> Dict[str, Any]:
-        try:
-            r = self.c.post(self.base + "/services/haproxy/storage/ssl_certificates", files={"file_upload": (name, pem.encode(), "application/x-pem-file")})
-        except httpx.HTTPError as e:
-            raise DataPlaneError(502, f"cannot reach the Data Plane API: {e}")
+        r = self._send(lambda: self.c.post(self.base + "/services/haproxy/storage/ssl_certificates",
+                                           files={"file_upload": (name, pem.encode(), "application/x-pem-file")}), "POST", True)
         if r.status_code >= 400:
             raise DataPlaneError(400 if r.status_code < 500 else 502, _message(r))
         self.wait_reload(r.headers.get("Reload-ID"))
@@ -260,10 +327,8 @@ class DataPlane:
         """Create or replace a file in the Data Plane API storage without reloading HAProxy."""
         files = {"file_upload": (name, text.encode(), "text/plain")}
         url = self.base + "/services/haproxy/storage/general" + ("" if create else f"/{name}")
-        try:
-            r = (self.c.post(url, files=files) if create else self.c.put(url, files=files, params={"skip_reload": "true"}))
-        except httpx.HTTPError as e:
-            raise DataPlaneError(502, f"cannot reach the Data Plane API: {e}")
+        r = self._send(lambda: self.c.post(url, files=files) if create else self.c.put(url, files=files, params={"skip_reload": "true"}),
+                       "POST" if create else "PUT", True)
         if r.status_code >= 400:
             raise DataPlaneError(400 if r.status_code < 500 else 502, _message(r))
         return r.json() if r.content and "json" in r.headers.get("content-type", "") else {}
@@ -804,18 +869,6 @@ def _diff(before: str, after: str) -> str:
     """Unified diff without the Data Plane API's file header (it changes on every save)."""
     body = lambda text: [l for l in text.splitlines() if not HEADER_LINE.match(l)]
     return "\n".join(difflib.unified_diff(body(before), body(after), "current", "new", lineterm="", n=3))
-
-
-# The Data Plane API can crash when two transactions are opened or closed at the same moment (seen with
-# client-native v6.2: "concurrent map iteration and map write"), e.g. a preview while a Kubernetes sync runs.
-# So the hub runs transactions on one HAProxy one at a time.
-_TX_LOCKS: Dict[str, threading.Lock] = {}
-_TX_LOCKS_GUARD = threading.Lock()
-
-
-def tx_lock(dp: Any) -> threading.Lock:
-    with _TX_LOCKS_GUARD:
-        return _TX_LOCKS.setdefault(getattr(dp, "base", "") or str(id(dp)), threading.Lock())
 
 
 def plan_and_apply(dp: DataPlane, ops: List[Op], apply: bool) -> Dict[str, Any]:

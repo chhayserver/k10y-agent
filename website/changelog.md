@@ -16,7 +16,7 @@ Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and 
 - **Maintenance page** per frontend, with addresses that still get through.
 - **Block an IP instantly** (no reload after the first time), from **Rate limits & blocks** or a log line, and **unblock a rate-limited client**.
 - **Copy a frontend or backend to another HAProxy**, and **compare configs** across a group with "make the same".
-- Fix: k10y now runs Data Plane API transactions on each HAProxy one at a time; two at once could crash the Data Plane API.
+- **Fix: the Data Plane API could crash** ("concurrent map iteration and map write", seen in v3.2.18) when two changes ran at the same moment, e.g. a preview while the Kubernetes sync ran. k10y now sends configuration and transaction requests to each HAProxy one at a time, retries reads while the Data Plane API restarts, and closes transactions a crash left open (and outdated ones when the limit of 20 is reached). Tested with 450 parallel previews: no crash.
 
 ## 2.3.1 <Badge type="tip" text="latest" />
 

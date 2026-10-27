@@ -187,3 +187,81 @@ def test_group_copy_keeps_each_instance_log_tag():
     assert out.index("maxconn 4000") < out.index("log-tag lab-lb-2")          # stays where ref had its tag
     assert hx._keep_log_tag(ref, "global\n") == "global\n  maxconn 4000\ndefaults\n  mode http\n"
     assert hx._keep_log_tag("global\n  maxconn 1\n\ndefaults\n", theirs) == "global\n  maxconn 1\n  log-tag lab-lb-2\n\ndefaults\n"
+
+
+def test_dataplane_serialises_config_calls_and_survives_a_restart(monkeypatch):
+    """Two threads never talk to the configuration/transactions API of one HAProxy at the same time
+    (the Data Plane API can crash on that); reads are retried while it restarts, writes are not."""
+    import threading, time as _t
+    import httpx
+    monkeypatch.setattr(hx, "RETRIES", (0.01, 0.01, 0.01))
+    state = {"now": 0, "max": 0, "drop": 0, "posts": 0}
+    lock = threading.Lock()
+
+    def handler(request):
+        if state["drop"]:
+            state["drop"] -= 1
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+        if request.method == "POST":
+            state["posts"] += 1
+        if "/configuration/" in request.url.path or "/transactions" in request.url.path:
+            with lock:
+                state["now"] += 1
+                state["max"] = max(state["max"], state["now"])
+            _t.sleep(0.01)
+            with lock:
+                state["now"] -= 1
+        return httpx.Response(200, json={"id": "tx1"} if request.method == "POST" else 5)
+
+    def client():
+        return hx.DataPlane("http://lb-race:5555", "u", "p", client=httpx.Client(transport=httpx.MockTransport(handler)))
+    threads = [threading.Thread(target=lambda: [client().call("GET", "/services/haproxy/configuration/version") for _ in range(10)]) for _ in range(6)]
+    [t.start() for t in threads]; [t.join() for t in threads]
+    assert state["max"] == 1                                              # never two at once
+    state["drop"] = 2
+    assert client().call("GET", "/services/haproxy/configuration/version") == 5   # read retried after a restart
+    state["drop"], posts = 1, state["posts"]
+    with pytest.raises(hx.DataPlaneError, match="Config history"):
+        client().call("POST", "/services/haproxy/transactions")           # a write is never sent twice
+    assert state["posts"] == posts
+    # live stats don't wait for the lock
+    with hx.tx_lock(client()):
+        done = []
+        t = threading.Thread(target=lambda: done.append(client().call("GET", "/services/haproxy/stats/native")))
+        t.start(); t.join(1)
+        assert done
+
+
+def test_transactions_left_open_by_a_crash_are_closed(monkeypatch):
+    import httpx
+    monkeypatch.setattr(hx, "RETRIES", (0.01,))
+    log, st = [], {"drop_delete": True, "full": False, "open": {"old1": 3, "cur1": 7}}
+
+    def handler(request):
+        path, m = request.url.path, request.method
+        log.append((m, path.rsplit("/", 1)[-1]))
+        if path.endswith("/configuration/version"):
+            return httpx.Response(200, json=7)
+        if m == "DELETE":
+            if st["drop_delete"]:
+                st["drop_delete"] = False
+                raise httpx.RemoteProtocolError("Server disconnected")       # API restarted while closing
+            st["open"].pop(path.rsplit("/", 1)[-1], None)
+            return httpx.Response(204)
+        if m == "GET" and path.endswith("/transactions"):
+            return httpx.Response(200, json=[{"id": k, "_version": v, "status": "in_progress"} for k, v in st["open"].items()])
+        if m == "POST" and path.endswith("/transactions"):
+            if st["full"]:
+                st["full"] = False
+                return httpx.Response(406, json={"message": "cannot start a new transaction, reached the maximum amount of 20 active transactions"})
+            return httpx.Response(201, json={"id": "new"})
+        return httpx.Response(404, json={"message": "unexpected"})
+
+    dp = hx.DataPlane("http://lb-orphans:5555", "u", "p", client=httpx.Client(transport=httpx.MockTransport(handler)))
+    dp.rollback("t1")                                            # could not close it: remembered
+    assert "t1" in hx._ORPHANS[dp.base]
+    assert dp.begin() == "new"
+    assert ("DELETE", "t1") in log and "t1" not in hx._ORPHANS[dp.base]   # closed before the next change
+    st["full"] = True
+    assert dp.begin() == "new"                                   # limit reached: outdated ones are closed
+    assert "old1" not in st["open"] and "cur1" in st["open"]     # another tool's current transaction is left alone

@@ -239,6 +239,15 @@ Alert rules of type **HAProxy** (Alerts → New rule):
 
 They notify through the same Telegram channels as cluster alerts.
 
+## Troubleshooting
+
+| Message | What it means |
+|---|---|
+| *cannot reach the Data Plane API … check Config history* | The Data Plane API restarted in the middle of a change. Open **Config history** to see whether it was applied before trying again. |
+| *reached the maximum amount of 20 active transactions* | Another tool (or an older crash) left transactions open. k10y closes its own and outdated ones automatically; delete the rest with `DELETE /v3/services/haproxy/transactions/<id>` on the Data Plane API. |
+
+The Data Plane API (seen in v3.2.18) can crash when it receives two configuration changes at the same moment. k10y always sends them one at a time per HAProxy; if other tools change the same HAProxy too, run the Data Plane API with a restart policy (`restart: unless-stopped`).
+
 ## Raw configuration
 
 **Config → Edit** opens the whole `haproxy.cfg` for anything the forms don't cover, such as TLS certificates, ACLs, stick tables or global tuning. **Review change** shows the diff and the validation result before you apply. Reading the raw config needs `haproxy.configure` too, because it can contain passwords.
