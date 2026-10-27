@@ -16,7 +16,7 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from . import haproxy as hx
@@ -25,6 +25,7 @@ from .db import Cluster, utcnow
 log = logging.getLogger("k10y.haproxy")
 SAMPLE_S = 10
 HISTORY_POINTS = 360          # 1 hour at 10 s
+KEEP_MINUTES_MS = 7 * 86_400_000   # one-minute averages kept in the database for a week
 SLOW_EVERY = 3                # config / certs / syncs every 30 s
 SYNC_PREFIX = "k8s-"          # servers k10y manages for a Kubernetes sync
 
@@ -61,12 +62,17 @@ class Sample:
             elif kind == "backend":
                 key = f"b:{be}"
                 e5, tot = int(s.get("hrsp_5xx") or 0), int(s.get("stot") or 0)
-                counters[key] = (tot, e5)
+                resp = sum(int(s.get(k) or 0) for k in ("hrsp_1xx", "hrsp_2xx", "hrsp_3xx", "hrsp_4xx", "hrsp_5xx", "hrsp_other"))
+                counters[key] = (tot, e5, resp)
                 p = (prev or {}).get(key)
+                d_e5 = max(0, e5 - p[1]) if p else 0
+                d_resp = max(0, resp - p[2]) if p and len(p) > 2 else 0
                 point["b"][be] = {"req": round(max(0, tot - p[0]) / dt, 2) if p and dt else float(s.get("rate") or 0),
+                                  "rq": round(d_resp / dt, 2) if p and dt else 0.0,      # HTTP responses / s (per route)
                                   "sess": int(s.get("scur") or 0), "rtime": int(s.get("rtime") or 0),
                                   "queue": int(s.get("qcur") or 0),
-                                  "e5": round(max(0, e5 - p[1]) / dt, 3) if p and dt else 0.0}
+                                  "e5": round(d_e5 / dt, 3) if p and dt else 0.0,
+                                  "e5_pct": round(min(100.0, 100.0 * d_e5 / d_resp), 1) if d_resp else 0.0}
         return point, counters
 
 
@@ -79,6 +85,8 @@ class HAProxyMonitor:
         self.latest: Dict[int, Dict[str, Any]] = {}       # instance id -> {t, name, stats, error, certs}
         self._counters: Dict[int, Tuple[float, Dict[str, Any]]] = {}
         self._loops = 0
+        self._minute: Dict[int, Tuple[int, List[Dict[str, Any]]]] = {}   # instance id -> (minute start ms, points)
+        self._pruned = 0.0
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.lock = threading.Lock()
@@ -125,6 +133,7 @@ class HAProxyMonitor:
                 if last:
                     with self.lock:
                         self.history.setdefault(inst.id, deque(maxlen=HISTORY_POINTS)).append((int(now * 1000), point))
+                    self._add_minute(s, inst.id, int(now * 1000), point)
                 entry = self.latest.setdefault(inst.id, {})
                 entry.update({"t": now, "name": inst.name, "stats": stats, "point": point, "error": ""})
                 if slow:
@@ -136,6 +145,19 @@ class HAProxyMonitor:
                     self.run_syncs(s, inst, dp)
         except hx.DataPlaneError as e:
             self.latest.setdefault(inst.id, {}).update({"t": now, "name": inst.name, "error": str(e)})
+
+    def _add_minute(self, s: Session, iid: int, t_ms: int, point: Dict[str, Any]) -> None:
+        """Collect samples per minute; when a minute ends, store its average for the longer chart ranges."""
+        minute = t_ms - t_ms % 60_000
+        start, points = self._minute.get(iid, (minute, []))
+        if start != minute and points:
+            s.add(hx.HAProxySample(instance_id=iid, t=start, data=average(points)))
+            if time.time() - self._pruned > 3600:
+                s.execute(delete(hx.HAProxySample).where(hx.HAProxySample.t < t_ms - KEEP_MINUTES_MS))
+                self._pruned = time.time()
+            s.commit()
+            points = []
+        self._minute[iid] = (minute, points + [point])
 
     def _record_config(self, s: Session, inst: hx.HAProxyInstance, dp: hx.DataPlane) -> None:
         version = dp.version()
@@ -227,6 +249,23 @@ class HAProxyMonitor:
     def series(self, iid: int, since_ms: int = 0) -> List[Tuple[int, Dict[str, Any]]]:
         with self.lock:
             return [p for p in self.history.get(iid, ()) if p[0] > since_ms]
+
+
+def average(points: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Average a list of samples field by field (a name missing from a sample counts as absent, not zero)."""
+    out: Dict[str, Any] = {"f": {}, "b": {}}
+    for kind in ("f", "b"):
+        sums: Dict[str, Dict[str, float]] = {}
+        counts: Dict[str, int] = {}
+        for p in points:
+            for name, vals in (p.get(kind) or {}).items():
+                acc = sums.setdefault(name, {})
+                counts[name] = counts.get(name, 0) + 1
+                for k, v in vals.items():
+                    acc[k] = acc.get(k, 0.0) + float(v or 0)
+        for name, acc in sums.items():
+            out[kind][name] = {k: round(v / counts[name], 3) for k, v in acc.items()}
+    return out
 
 
 def _server_name(name: str) -> str:

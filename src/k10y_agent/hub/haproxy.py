@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, select
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Integer, String, Text, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from .db import Base, utcnow
@@ -24,7 +24,16 @@ from .db import Base, utcnow
 TIMEOUT = httpx.Timeout(20.0, connect=6.0)
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 ADMIN_STATES = ("ready", "drain", "maint")
-BALANCE = ("roundrobin", "static-rr", "leastconn", "first", "source", "uri")
+BALANCE = ("roundrobin", "static-rr", "leastconn", "first", "source", "uri", "url_param", "hdr", "random", "hash", "rdp-cookie")
+# Health check types k10y offers -> HAProxy's "option ..." (adv_check). "connect" = plain TCP connect, no option.
+CHECKS = {"connect": None, "http": "httpchk", "tcp": "tcp-check", "pgsql": "pgsql-check", "mysql": "mysql-check",
+          "redis": "redis-check", "ssl": "ssl-hello-chk", "smtp": "smtpchk", "ldap": "ldap-check"}
+CHECK_OF = {v: k for k, v in CHECKS.items() if v}
+TIMEOUTS = {"connect": "connect_timeout", "server": "server_timeout", "tunnel": "tunnel_timeout"}
+STICKY_COOKIE = "SERVERID"
+BLOCKLIST = "k10y-blocklist.lst"          # IPs refused on every frontend; edited live through the runtime API
+MAINT_MARK = "k10y-maintenance"            # marks the maintenance page rule k10y manages
+IP_RE = re.compile(r"^[0-9a-fA-F:.]+(/\d{1,3})?$")
 STAT_KEYS = ("status", "scur", "smax", "slim", "rate", "rate_max", "req_rate", "req_tot", "stot", "bin", "bout",
              "hrsp_2xx", "hrsp_3xx", "hrsp_4xx", "hrsp_5xx", "ereq", "econ", "eresp", "check_status", "check_desc",
              "check_duration", "lastchg", "downtime", "act", "bck", "weight", "qcur", "rtime", "ttime")
@@ -74,6 +83,15 @@ class HAProxyK8sSync(Base):
     last_sync_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     last_result: Mapped[str] = mapped_column(Text, default="")
     last_error: Mapped[str] = mapped_column(Text, default="")
+
+
+class HAProxySample(Base):
+    """One-minute averages of the live samples, kept for a week for the longer chart ranges."""
+    __tablename__ = "haproxy_samples"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    instance_id: Mapped[int] = mapped_column(Integer, index=True)
+    t: Mapped[int] = mapped_column(BigInteger, index=True)             # epoch ms, start of the minute
+    data: Mapped[Any] = mapped_column(JSON)
 
 
 class DataPlaneError(Exception):
@@ -230,6 +248,40 @@ class DataPlane:
     def stick_entries(self, table: str, count: int = 200) -> List[Dict[str, Any]]:
         return self.call("GET", f"/services/haproxy/runtime/stick_tables/{table}/entries", params={"count": count}) or []
 
+    def set_stick_entry(self, table: str, key: str, data: Dict[str, int]) -> None:
+        self.call("POST", f"/services/haproxy/runtime/stick_tables/{table}/entries", json={"key": key, "data_type": data})
+
+    # general files and runtime ACL lists (IP blocklist) --------------------------
+    def general_files(self) -> List[Dict[str, Any]]:
+        return self.call("GET", "/services/haproxy/storage/general") or []
+
+    def put_general_file(self, name: str, text: str, create: bool) -> Dict[str, Any]:
+        """Create or replace a file in the Data Plane API storage without reloading HAProxy."""
+        files = {"file_upload": (name, text.encode(), "text/plain")}
+        url = self.base + "/services/haproxy/storage/general" + ("" if create else f"/{name}")
+        try:
+            r = (self.c.post(url, files=files) if create else self.c.put(url, files=files, params={"skip_reload": "true"}))
+        except httpx.HTTPError as e:
+            raise DataPlaneError(502, f"cannot reach the Data Plane API: {e}")
+        if r.status_code >= 400:
+            raise DataPlaneError(400 if r.status_code < 500 else 502, _message(r))
+        return r.json() if r.content and "json" in r.headers.get("content-type", "") else {}
+
+    def runtime_acl_id(self, path: str) -> Optional[str]:
+        for a in self.call("GET", "/services/haproxy/runtime/acls") or []:
+            if a.get("storage_name") == path:
+                return str(a.get("id"))
+        return None
+
+    def acl_entries(self, acl_id: str) -> List[Dict[str, Any]]:
+        return self.call("GET", f"/services/haproxy/runtime/acls/{acl_id}/entries") or []
+
+    def add_acl_entry(self, acl_id: str, value: str) -> None:
+        self.call("POST", f"/services/haproxy/runtime/acls/{acl_id}/entries", json={"value": value})
+
+    def delete_acl_entry(self, acl_id: str, entry_id: str) -> None:
+        self.call("DELETE", f"/services/haproxy/runtime/acls/{acl_id}/entries/{entry_id}")
+
 
 # --- overview: config + live stats in one model ----------------------------------------
 
@@ -289,17 +341,38 @@ def _is_limit(r: Dict[str, Any]) -> bool:
         and re.fullmatch(r"\{ sc_http_req_rate\(0\) gt \d+ \}", r.get("cond_test") or "") is not None
 
 
+def _is_maint(r: Dict[str, Any]) -> bool:
+    return r.get("type") == "return" and int(r.get("return_status_code") or 0) == 503 and MAINT_MARK in (r.get("return_content") or "")
+
+
+def _is_block(r: Dict[str, Any]) -> bool:
+    return r.get("type") == "connection" and r.get("action") == "reject" and BLOCKLIST in (r.get("cond_test") or "")
+
+
+def _maint_page(message: str) -> str:
+    # One line, no double quotes: HAProxy keeps it as a quoted string in the config.
+    msg = re.sub(r'["\\<>$\r\n]', "", message or "").strip()[:300] or "We're doing some maintenance. Please try again in a few minutes."
+    return (f"<!-- {MAINT_MARK} --><!doctype html><html><head><meta charset='utf-8'><title>Back soon</title></head>"
+            "<body style='font-family:system-ui,sans-serif;text-align:center;padding:18vh 20px;color:#333'>"
+            f"<h1 style='font-weight:600'>Back soon</h1><p>{msg}</p></body></html>")
+
+
 def parse_policies(fe: Dict[str, Any]) -> Dict[str, Any]:
     rules = fe.get("http_request_rule_list") or []
     allow = next((r for r in rules if _is_allow(r)), None)
+    maint = next((r for r in rules if _is_maint(r)), None)
     limit = next((r for r in rules if _is_limit(r)), None)
     st = fe.get("stick_table") or {}
     period = None
     m = re.search(r"http_req_rate\((\d+)s?\)", st.get("store") or "")
     if m:
         period = int(m.group(1))
-    managed = [r for r in rules if _is_allow(r) or _is_redirect(r) or (_is_track(r) and limit) or _is_limit(r)]
+    managed = [r for r in rules if _is_allow(r) or _is_redirect(r) or (_is_track(r) and limit) or _is_limit(r) or _is_maint(r)]
+    msg = re.search(r"<p>(.*?)</p>", (maint or {}).get("return_content") or "")
     return {
+        "maintenance": {"enabled": maint is not None, "message": msg.group(1) if msg else "",
+                        "allow_ips": re.findall(r"[^\s{}]+", maint.get("cond_test") or "")[1:] if maint and maint.get("cond") == "unless" else []},
+        "blocklist": any(_is_block(r) for r in fe.get("tcp_request_rule_list") or []),
         "allow_ips": re.findall(r"[^\s{}]+", (allow or {}).get("cond_test", ""))[1:] if allow else [],
         "redirect_https": any(_is_redirect(r) for r in rules),
         "rate_limit": {"requests": int(re.search(r"gt (\d+)", limit["cond_test"]).group(1)), "period": period or 10} if limit else None,
@@ -324,6 +397,7 @@ def overview(dp: DataPlane) -> Dict[str, Any]:
                           "default_backend": fe.get("default_backend"), "routes": routes, "simple_routes": simple,
                           "stats_page": bool((fe.get("stats_options") or {}).get("stats_enable")),
                           "policies": parse_policies(fe),
+                          "timeouts": {"client": (fe.get("client_timeout") or 0) // 1000},
                           "stats": idx.get(("frontend", fe["name"]), {})})
     backends = []
     for be in bes:
@@ -332,11 +406,17 @@ def overview(dp: DataPlane) -> Dict[str, Any]:
             st = idx.get(("server", f"{be['name']}/{name}"), {})
             servers.append({"name": name, "address": s.get("address"), "port": s.get("port"), "weight": s.get("weight", 1),
                             "check": s.get("check") == "enabled", "backup": s.get("backup") == "enabled",
+                            "maxconn": s.get("maxconn") or 0, "ssl": s.get("ssl") == "enabled",
                             "state": _server_state(st.get("status")), "stats": st})
-        chk = be.get("adv_check")
-        backends.append({"name": be["name"], "mode": be.get("mode") or "http", "balance": (be.get("balance") or {}).get("algorithm") or "roundrobin",
-                         "check": {"type": "http" if chk == "httpchk" else ("tcp" if chk == "tcp-check" else "default"),
-                                   "uri": (be.get("httpchk_params") or {}).get("uri") or ""},
+        chk, bal = be.get("adv_check"), be.get("balance") or {}
+        hc = be.get("httpchk_params") or {}
+        backends.append({"name": be["name"], "mode": be.get("mode") or "http", "balance": bal.get("algorithm") or "roundrobin",
+                         "balance_arg": bal.get("hdr_name") or bal.get("url_param") or bal.get("hash_expression") or bal.get("rdp_cookie_name") or "",
+                         "check": {"type": CHECK_OF.get(chk, "connect"), "uri": hc.get("uri") or "", "method": hc.get("method") or "GET",
+                                   "host": hc.get("host") or "",
+                                   "user": (be.get("mysql_check_params") or be.get("pgsql_check_params") or {}).get("username") or ""},
+                         "sticky": bool(be.get("cookie")), "forwardfor": (be.get("forwardfor") or {}).get("enabled") == "enabled",
+                         "timeouts": {k: (be.get(f) or 0) // 1000 for k, f in TIMEOUTS.items()},
                          "servers": servers, "used_by": sorted(set(used_by.get(be["name"], []))),
                          "stats": idx.get(("backend", be["name"]), {})})
     raw = dp.raw()
@@ -421,8 +501,20 @@ def _apply_policies(fe: Dict[str, Any], pol: Dict[str, Any]) -> None:
     """Rewrite the managed http-request rules (allow-list, HTTPS redirect, rate limit); keep all others in place."""
     rules = fe.get("http_request_rule_list") or []
     had_limit = any(_is_limit(r) for r in rules)
-    rules = [r for r in rules if not (_is_allow(r) or _is_redirect(r) or _is_limit(r) or (had_limit and _is_track(r)))]
-    managed = []
+    keep_maint = "maintenance" not in pol
+    managed = [r for r in rules if _is_maint(r)] if keep_maint else []
+    rules = [r for r in rules if not (_is_allow(r) or _is_redirect(r) or _is_limit(r) or (had_limit and _is_track(r)) or _is_maint(r))]
+    maint = pol.get("maintenance") or {}
+    if not keep_maint and maint.get("enabled"):
+        bypass = [x.strip() for x in maint.get("allow_ips") or [] if str(x).strip()]
+        for x in bypass:
+            if not IP_RE.match(x):
+                raise DataPlaneError(400, f"maintenance: {x!r} is not an IP address or network")
+        rule = {"type": "return", "return_status_code": 503, "return_content_type": "text/html",
+                "return_content_format": "string", "return_content": f'"{_maint_page(maint.get("message") or "")}"'}
+        if bypass:
+            rule.update({"cond": "unless", "cond_test": "{ src " + " ".join(bypass) + " }"})
+        managed.append(rule)
     ips = [x.strip() for x in pol.get("allow_ips") or [] if str(x).strip()]
     for x in ips:
         if not re.fullmatch(r"[0-9a-fA-F:.]+(/\d{1,3})?", x):
@@ -445,6 +537,65 @@ def _apply_policies(fe: Dict[str, Any], pol: Dict[str, Any]) -> None:
     elif had_limit and "http_req_rate" in ((fe.get("stick_table") or {}).get("store") or ""):
         fe.pop("stick_table", None)
     fe["http_request_rule_list"] = managed + rules
+
+
+def _balance(alg: Any, arg: Any) -> Dict[str, Any]:
+    if isinstance(alg, dict):
+        alg, arg = alg.get("algorithm"), alg.get("arg", arg)
+    arg = str(arg or "").strip()
+    if alg not in BALANCE:
+        raise DataPlaneError(400, f"balance must be one of {', '.join(BALANCE)}")
+    out: Dict[str, Any] = {"algorithm": alg}
+    if alg == "hdr":
+        if not re.fullmatch(r"[A-Za-z0-9-]{1,64}", arg):
+            raise DataPlaneError(400, "balance by header: enter the header name, e.g. X-User-Id")
+        out["hdr_name"] = arg
+    elif alg == "url_param":
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", arg):
+            raise DataPlaneError(400, "balance by URL parameter: enter the parameter name, e.g. user_id")
+        out["url_param"] = arg
+    elif alg == "hash":
+        if not arg or re.search(r"[\s{}]", arg):
+            raise DataPlaneError(400, "balance by hash: enter a sample expression without spaces, e.g. req.cook(session)")
+        out["hash_expression"] = arg
+    elif alg == "rdp-cookie" and arg:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", arg):
+            raise DataPlaneError(400, "RDP cookie name: letters, digits, dash or underscore")
+        out["rdp_cookie_name"] = arg
+    return out
+
+
+def _set_check(be: Dict[str, Any], chk: Dict[str, Any]) -> None:
+    typ = chk.get("type") or "connect"
+    typ = "connect" if typ == "default" else typ
+    if typ not in CHECKS:
+        raise DataPlaneError(400, f"health check must be one of {', '.join(CHECKS)}")
+    for k in ("adv_check", "httpchk_params", "mysql_check_params", "pgsql_check_params", "smtpchk_params"):
+        be.pop(k, None)
+    if CHECKS[typ]:
+        be["adv_check"] = CHECKS[typ]
+    if typ == "http":
+        uri, method = str(chk.get("uri") or "/").strip(), str(chk.get("method") or "GET").upper()
+        if not uri.startswith("/") or re.search(r"\s", uri):
+            raise DataPlaneError(400, "health check path must start with / and have no spaces")
+        if method not in ("GET", "HEAD", "OPTIONS"):
+            raise DataPlaneError(400, "health check method must be GET, HEAD or OPTIONS")
+        params = {"method": method, "uri": uri}
+        host = str(chk.get("host") or "").strip()
+        if host:
+            if not re.fullmatch(r"[A-Za-z0-9.-]{1,253}(:\d+)?", host):
+                raise DataPlaneError(400, "health check host must be a host name like api.example.com")
+            params.update({"version": "HTTP/1.1", "host": host})
+        be["httpchk_params"] = params
+    elif typ in ("mysql", "pgsql"):
+        user = str(chk.get("user") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", user):
+            raise DataPlaneError(400, f"{'MySQL' if typ == 'mysql' else 'PostgreSQL'} check: enter the user it logs in with, e.g. haproxy_check")
+        be[f"{typ}_check_params"] = {"username": user, **({"client_version": "post-41"} if typ == "mysql" else {})}
+
+
+def _block_rule(path: str) -> Dict[str, Any]:
+    return {"type": "connection", "action": "reject", "cond": "if", "cond_test": "{ src -f %s }" % path}
 
 
 def apply_op(dp: DataPlane, tx: str, op: Op) -> str:
@@ -491,8 +642,20 @@ def apply_op(dp: DataPlane, tx: str, op: Op) -> str:
             if not binds:
                 raise DataPlaneError(400, "a service needs at least one listen address")
             fe["binds"] = binds
+        if "timeouts" in d:
+            fe.pop("client_timeout", None)
+            client = int((d["timeouts"] or {}).get("client") or 0)
+            if client:
+                if not 1 <= client <= 86400:
+                    raise DataPlaneError(400, "client timeout must be 1-86400 seconds")
+                fe["client_timeout"] = client * 1000
         if d.get("policies") is not None:
             _apply_policies(fe, d["policies"])
+        if op.op == "create":
+            # A frontend created after the blocklist was set up gets the same protection.
+            path = next((f.get("file") for f in dp.general_files() if f.get("storage_name") == BLOCKLIST), None)
+            if path:
+                fe["tcp_request_rule_list"] = [_block_rule(path)] + (fe.get("tcp_request_rule_list") or [])
         if d.get("routes") is not None:
             used = {r.get("cond_test") for r in fe.get("backend_switching_rule_list") or []}
             acls, rules = _routes_to_config(d["routes"], backends, [a for a in fe.get("acl_list") or [] if a["acl_name"] in used])
@@ -524,22 +687,34 @@ def apply_op(dp: DataPlane, tx: str, op: Op) -> str:
                 raise DataPlaneError(400, "mode must be http or tcp")
             be["mode"] = d["mode"]
         if "balance" in d:
-            if d["balance"] not in BALANCE:
-                raise DataPlaneError(400, f"balance must be one of {', '.join(BALANCE)}")
-            be["balance"] = {"algorithm": d["balance"]}
+            be["balance"] = _balance(d["balance"], d.get("balance_arg"))
         if "check" in d:
-            chk = d["check"] or {}
-            be.pop("adv_check", None)
-            be.pop("httpchk_params", None)
-            if chk.get("type") == "http":
-                uri = str(chk.get("uri") or "/").strip()
-                if not uri.startswith("/") or re.search(r"\s", uri):
-                    raise DataPlaneError(400, "health check path must start with / and have no spaces")
-                be["adv_check"] = "httpchk"
-                be["httpchk_params"] = {"method": "GET", "uri": uri}
-            elif chk.get("type") == "tcp":
-                be["adv_check"] = "tcp-check"
+            _set_check(be, d["check"] or {})
         be.setdefault("servers", {})
+        if "sticky" in d:
+            if d["sticky"]:
+                if (be.get("mode") or "http") != "http":
+                    raise DataPlaneError(400, "sticky sessions need an HTTP backend (they use a cookie)")
+                be["cookie"] = {"name": STICKY_COOKIE, "type": "insert", "indirect": True, "nocache": True}
+                for n, s in be["servers"].items():
+                    s.setdefault("cookie", n)
+            else:
+                be.pop("cookie", None)
+                for s in be["servers"].values():
+                    s.pop("cookie", None)
+        if "forwardfor" in d:
+            if d["forwardfor"]:
+                be["forwardfor"] = {"enabled": "enabled"}
+            else:
+                be.pop("forwardfor", None)
+        if "timeouts" in d:
+            for k, field in TIMEOUTS.items():
+                v = int((d["timeouts"] or {}).get(k) or 0)
+                be.pop(field, None)
+                if v:
+                    if not 1 <= v <= 86400:
+                        raise DataPlaneError(400, f"{k} timeout must be 1-86400 seconds")
+                    be[field] = v * 1000
         if op.op == "create":
             dp.call("POST", f"{cfg}/backends", tx, json=be, params={"full_section": "true"})
         else:
@@ -576,6 +751,22 @@ def apply_op(dp: DataPlane, tx: str, op: Op) -> str:
                 srv["backup"] = "enabled"
             else:
                 srv.pop("backup", None)
+        if "maxconn" in d:
+            m = int(d["maxconn"] or 0)
+            if not 0 <= m <= 1_000_000:
+                raise DataPlaneError(400, "max connections must be 0-1000000 (0 = no limit)")
+            if m:
+                srv["maxconn"] = m
+            else:
+                srv.pop("maxconn", None)
+        if "ssl" in d:
+            if d["ssl"]:
+                srv.update({"ssl": "enabled", "verify": "none"})
+            else:
+                srv.pop("ssl", None)
+                srv.pop("verify", None)
+        if op.op == "create" and (dp.call("GET", f"{cfg}/backends/{backend}", tx) or {}).get("cookie"):
+            srv["cookie"] = name          # sticky sessions: each server needs its own cookie value
         if op.op == "create":
             dp.call("POST", base, tx, json=srv)
         else:
@@ -683,6 +874,15 @@ class GroupChangesBody(ChangesBody):
 class CertBody(BaseModel):
     name: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9._-]+$")
     pem: str = Field(min_length=50, max_length=200_000)
+
+
+class StickResetBody(BaseModel):
+    key: str = Field(min_length=1, max_length=200, pattern=r"^[^\r\n;#]+$")
+
+
+class BlockBody(BaseModel):
+    ip: str = Field(min_length=2, max_length=64)
+    reason: str = Field("", max_length=200)
 
 
 class AiBody(BaseModel):
@@ -830,6 +1030,11 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
     def history(iid: int, since: int = 0, p=Depends(require("haproxy.view")), s: Session = Depends(db_session)) -> dict:
         get(s, iid)
         m = monitor()
+        # Up to an hour: 10-second samples from memory. Longer ranges: one-minute averages from the database.
+        if since and since < int(time.time() * 1000) - 3_600_000:
+            rows = s.execute(select(HAProxySample.t, HAProxySample.data).where(HAProxySample.instance_id == iid, HAProxySample.t > since)
+                             .order_by(HAProxySample.t)).all()
+            return {"points": [[t_, d] for t_, d in rows], "interval_s": 60}
         return {"points": m.series(iid, since) if m else [], "interval_s": 10}
 
     @r.get("/{iid}/logs")
@@ -887,6 +1092,134 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
                 return dp.stick_entries(table)
         except DataPlaneError as e:
             raise fail(e)
+
+    @r.post("/{iid}/stick-tables/{table}/reset")
+    def stick_reset(iid: int, table: str, body: StickResetBody, request: Request,
+                    p=Depends(require("haproxy.operate")), s: Session = Depends(db_session)) -> dict:
+        """Set an entry's rates back to zero, e.g. to let a client that hit the rate limit in again."""
+        inst = get(s, iid)
+        _check_name(table, "Table")
+        try:
+            with dp_for(inst) as dp:
+                entry = next((e for e in dp.stick_entries(table, 100000) if e.get("key") == body.key), None)
+                if entry is None:
+                    raise DataPlaneError(404, f"{body.key} is not in table {table} (it may have expired already)")
+                rates = {k: 0 for k in entry if k.endswith("_rate") and entry[k] is not None}
+                if not rates:
+                    raise DataPlaneError(400, "this table stores no rates to reset")
+                dp.set_stick_entry(table, body.key, rates)
+        except DataPlaneError as e:
+            audit(s, request, p, "haproxy-unblock", f"{inst.name}/{table}/{body.key}", ok=False, message=str(e))
+            raise fail(e)
+        audit(s, request, p, "haproxy-unblock", f"{inst.name}/{table}/{body.key}", message="rates reset to 0")
+        return {"ok": True, "message": f"{body.key} can send requests again"}
+
+    # --- IP blocklist: refused on every frontend, changed live without a reload --------------
+    def blocklist_state(dp: DataPlane) -> Dict[str, Any]:
+        path = next((f.get("file") for f in dp.general_files() if f.get("storage_name") == BLOCKLIST), None)
+        fes = [f for f in dp.frontends() if not (f.get("stats_options") or {}).get("stats_enable")]
+        protected = [f["name"] for f in fes if any(_is_block(r) for r in f.get("tcp_request_rule_list") or [])]
+        acl = dp.runtime_acl_id(path) if path and protected else None
+        entries = dp.acl_entries(acl) if acl else []
+        return {"path": path, "acl": acl, "entries": entries, "ready": bool(path and acl and len(protected) == len(fes)),
+                "protected": protected, "missing": [f["name"] for f in fes if f["name"] not in protected]}
+
+    @r.get("/{iid}/blocklist")
+    def get_blocklist(iid: int, p=Depends(require("haproxy.view")), s: Session = Depends(db_session)) -> dict:
+        try:
+            with dp_for(get(s, iid)) as dp:
+                st = blocklist_state(dp)
+        except DataPlaneError as e:
+            raise fail(e)
+        return {"ready": st["ready"], "ips": [e.get("value") for e in st["entries"]], "protected": st["protected"], "missing": st["missing"]}
+
+    def save_blocklist(dp: DataPlane, ips: List[str]) -> None:
+        dp.put_general_file(BLOCKLIST, "".join(f"{x}\n" for x in ips), create=False)
+
+    @r.post("/{iid}/blocklist")
+    def block_ip(iid: int, body: BlockBody, request: Request, p=Depends(require("haproxy.operate")),
+                 s: Session = Depends(db_session)) -> dict:
+        inst = get(s, iid)
+        ip = body.ip.strip()
+        try:
+            if not IP_RE.match(ip):
+                raise DataPlaneError(400, f"{ip!r} is not an IP address or network like 203.0.113.7 or 203.0.113.0/24")
+            with dp_for(inst) as dp:
+                st = blocklist_state(dp)
+                ips = [e.get("value") for e in st["entries"]]
+                if ip in ips:
+                    return {"ok": True, "message": f"{ip} is already blocked", "reloaded": False}
+                if st["ready"]:
+                    dp.add_acl_entry(st["acl"], ip)          # live, no reload
+                    save_blocklist(dp, ips + [ip])            # and kept for the next reload
+                    reloaded = False
+                else:
+                    # First use: create the list file and add one "reject" rule to every frontend (one reload).
+                    path = st["path"] or dp.put_general_file(BLOCKLIST, f"{ip}\n", create=True).get("file")
+                    if st["path"]:
+                        save_blocklist(dp, ips + [ip])
+                    if not path:
+                        raise DataPlaneError(502, "the Data Plane API did not return the blocklist file path")
+                    tx = dp.begin()
+                    try:
+                        for fe in dp.frontends(tx):
+                            if fe["name"] in st["missing"]:
+                                fe["tcp_request_rule_list"] = [_block_rule(path)] + (fe.get("tcp_request_rule_list") or [])
+                                dp.call("PUT", f"/services/haproxy/configuration/frontends/{fe['name']}", tx, json=fe, params={"full_section": "true"})
+                        dp.validate(dp.raw(tx))
+                        reload_id = dp.commit(tx)
+                    except DataPlaneError:
+                        dp.rollback(tx)
+                        raise
+                    dp.wait_reload(reload_id)
+                    snapshot(s, inst, dp, p, f"IP blocklist set up on {', '.join(st['missing'])}; blocked {ip}")
+                    reloaded = True
+        except DataPlaneError as e:
+            audit(s, request, p, "haproxy-block", f"{inst.name}/{ip}", ok=False, message=str(e))
+            raise fail(e)
+        audit(s, request, p, "haproxy-block", f"{inst.name}/{ip}", message=body.reason[:200] or "blocked")
+        return {"ok": True, "message": f"{ip} is blocked on every frontend", "reloaded": reloaded}
+
+    @r.delete("/{iid}/blocklist")
+    def unblock_ip(iid: int, ip: str, request: Request, p=Depends(require("haproxy.operate")),
+                   s: Session = Depends(db_session)) -> dict:
+        inst = get(s, iid)
+        try:
+            with dp_for(inst) as dp:
+                st = blocklist_state(dp)
+                entry = next((e for e in st["entries"] if e.get("value") == ip), None)
+                if entry is None:
+                    raise DataPlaneError(404, f"{ip} is not blocked")
+                dp.delete_acl_entry(st["acl"], str(entry.get("id")))
+                save_blocklist(dp, [e.get("value") for e in st["entries"] if e is not entry])
+        except DataPlaneError as e:
+            audit(s, request, p, "haproxy-unblock", f"{inst.name}/{ip}", ok=False, message=str(e))
+            raise fail(e)
+        audit(s, request, p, "haproxy-unblock", f"{inst.name}/{ip}", message="removed from the blocklist")
+        return {"ok": True, "message": f"{ip} is no longer blocked"}
+
+    # --- groups: do the instances share the same configuration? -------------------------
+    @r.get("/{iid}/group-drift")
+    def group_drift(iid: int, p=Depends(require("haproxy.configure")), s: Session = Depends(db_session)) -> dict:
+        from .haproxy_monitor import strip_header
+        inst = get(s, iid)
+        if not inst.group_name:
+            return {"group": "", "text": "", "others": []}
+        try:
+            with dp_for(inst) as dp:
+                ref = strip_header(dp.raw())
+        except DataPlaneError as e:
+            raise fail(e)
+        others = []
+        for o in s.execute(select(HAProxyInstance).where(HAProxyInstance.group_name == inst.group_name, HAProxyInstance.id != iid)
+                           .order_by(HAProxyInstance.name)).scalars():
+            try:
+                with dp_for(o) as dp:
+                    diff = _diff(strip_header(dp.raw()), ref)
+                others.append({"id": o.id, "name": o.name, "same": not diff, "diff": diff, "error": ""})
+            except DataPlaneError as e:
+                others.append({"id": o.id, "name": o.name, "same": False, "diff": "", "error": str(e)})
+        return {"group": inst.group_name, "text": ref, "others": others}
 
     # --- configuration changes ----------------------------------------------------------
     def run_changes(s: Session, request: Request, p: Any, inst: HAProxyInstance, body: ChangesBody) -> dict:

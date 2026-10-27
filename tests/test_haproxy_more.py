@@ -40,7 +40,8 @@ def test_policies_round_trip_and_keep_custom_rules():
     assert [r["type"] for r in fe["http_request_rule_list"]] == ["deny", "redirect", "track-sc", "deny", "set-header"]
     assert fe["stick_table"]["store"] == "http_req_rate(10s)"
     pol = hx.parse_policies(fe)
-    assert pol == {"allow_ips": ["10.0.0.0/8", "192.168.1.5"], "redirect_https": True, "rate_limit": {"requests": 50, "period": 10}, "custom_rules": 1}
+    assert pol == {"allow_ips": ["10.0.0.0/8", "192.168.1.5"], "redirect_https": True, "rate_limit": {"requests": 50, "period": 10}, "custom_rules": 1,
+                   "maintenance": {"enabled": False, "message": "", "allow_ips": []}, "blocklist": False}
     apply(dp, hx.Op(op="update", kind="frontend", name="web", data={"policies": {"allow_ips": [], "redirect_https": False, "rate_limit": None}}))
     fe = dp.live["frontends"]["web"]
     assert fe["http_request_rule_list"] == [{"type": "set-header", "hdr_name": "X-Team", "hdr_format": "shop"}] and "stick_table" not in fe

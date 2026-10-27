@@ -90,6 +90,9 @@ class FakeDataPlane:
     def info(self):
         return {"api": {"version": "v3.2.18 abc"}}
 
+    def general_files(self):
+        return list(getattr(self, "files", {}).values())
+
     def set_state(self, backend, server, state):
         self.state[(backend, server)] = state
         return {"admin_state": state}
@@ -100,6 +103,8 @@ class FakeDataPlane:
         parts = path.replace(CFG + "/", "").split("/")
         if parts[0] in ("frontends", "backends") and len(parts) <= 2:
             coll = cfg[parts[0]]
+            if method == "GET" and len(parts) == 2:
+                return copy.deepcopy(coll.get(parts[1]))
             if method == "POST":
                 coll[json["name"]] = json
             elif method == "PUT":
@@ -141,7 +146,7 @@ def test_overview_merges_config_and_stats():
     web = o["frontends"][0]
     assert web["binds"][0]["port"] == 80 and web["stats"]["req_rate"] == 7
     shop = next(b for b in o["backends"] if b["name"] == "shop")
-    assert shop["used_by"] == ["web"] and shop["check"] == {"type": "http", "uri": "/"}
+    assert shop["used_by"] == ["web"] and shop["check"] == {"type": "http", "uri": "/", "method": "GET", "host": "", "user": ""}
     assert shop["servers"][0]["state"] == "up" and shop["servers"][0]["stats"]["check_status"] == "L7OK"
     assert shop["stats"]["rtime"] == 4
     assert o["keeps_server_state"] is False
