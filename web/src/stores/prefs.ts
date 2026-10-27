@@ -17,7 +17,7 @@ interface Prefs {
   hxDash: HxDash;
 }
 /** HAProxy dashboard layout: which sections show, and how the traffic chart looks. */
-export interface HxDash { sections: Record<string, boolean>; metric: string; by: "frontend" | "backend"; range: "15m" | "1h"; only: string[] }
+export interface HxDash { sections: Record<string, boolean>; metric: string; by: "frontend" | "backend"; range: "15m" | "1h" | "6h" | "24h" | "7d"; only: string[] }
 const hxDashDefaults = (): HxDash => ({ sections: { kpis: true, problems: true, frontends: true, traffic: true, topology: false }, metric: "req", by: "frontend", range: "1h", only: [] });
 
 const KEY = "k10y-prefs";

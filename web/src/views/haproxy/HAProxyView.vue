@@ -15,7 +15,12 @@ import HxBackendsTable from "./HxBackendsTable.vue";
 import HxFrontendsTable from "./HxFrontendsTable.vue";
 import HxAi from "./HxAi.vue";
 import HxCertificates from "./HxCertificates.vue";
+import HxAddRoute from "./HxAddRoute.vue";
+import HxCopyDialog from "./HxCopyDialog.vue";
 import HxDashboard from "./HxDashboard.vue";
+import HxDrift from "./HxDrift.vue";
+import HxMaintenance from "./HxMaintenance.vue";
+import HxWizard from "./HxWizard.vue";
 import HxHistory from "./HxHistory.vue";
 import HxLogs from "./HxLogs.vue";
 import HxRollingDeploy from "./HxRollingDeploy.vue";
@@ -55,17 +60,24 @@ const instDialog = reactive({ open: false, instance: null as any });
 const feForm = reactive({ open: false, frontend: null as HxFrontend | null });
 const beForm = reactive({ open: false, backend: null as HxBackend | null });
 const srvForm = reactive({ open: false, backend: "", server: null as HxServer | null });
-const change = reactive({ open: false, title: "", ops: [] as HxOp[], danger: false, note: "" });
+type Target = { id: number; name: string } | null;     // a change for another HAProxy (copy, make the group the same)
+const change = reactive({ open: false, title: "", ops: [] as HxOp[], danger: false, note: "", target: null as Target });
+const wizard = reactive({ open: false });
+const addRoute = reactive({ open: false, frontend: null as HxFrontend | null });
+const maint = reactive({ open: false, frontend: null as HxFrontend | null });
+const copy = reactive({ open: false, kind: "backend" as "frontend" | "backend", item: null as HxFrontend | HxBackend | null });
+const drift = reactive({ open: false });
 const rolling = reactive({ open: false, backend: null as HxBackend | null });
 const sync = reactive({ open: false, backend: null as HxBackend | null });
 const weight = reactive({ open: false, backend: null as HxBackend | null, server: null as HxServer | null, value: 100 as number | string });
-const anyDialog = computed(() => instDialog.open || feForm.open || beForm.open || srvForm.open || change.open || rolling.open || sync.open || weight.open);
+const anyDialog = computed(() => instDialog.open || feForm.open || beForm.open || srvForm.open || change.open || rolling.open || sync.open || weight.open
+  || wizard.open || addRoute.open || maint.open || copy.open || drift.open);
 const configRef = ref<InstanceType<typeof HxConfig> | null>(null);
 const historyRef = ref<InstanceType<typeof HxHistory> | null>(null);
 
-function review(ops: HxOp[], title: string, danger = false, note = "") {
-  feForm.open = beForm.open = srvForm.open = weight.open = false;
-  Object.assign(change, { open: true, title, ops, danger, note });
+function review(ops: HxOp[], title: string, danger = false, note = "", target: Target = null) {
+  feForm.open = beForm.open = srvForm.open = weight.open = wizard.open = addRoute.open = maint.open = copy.open = drift.open = false;
+  Object.assign(change, { open: true, title, ops, danger, note, target });
 }
 async function changed() { change.open = false; await refresh(); configRef.value?.load(); historyRef.value?.load(); }
 
@@ -121,6 +133,7 @@ function backendMenu(b: HxBackend): MenuItem[] {
   return [...ops, ...(ops.length ? [{ sep: true }] : []), { label: "Add server…", icon: "upload", run: () => Object.assign(srvForm, { open: true, backend: b.name, server: null }) },
     { label: "Edit backend…", icon: "file", run: () => Object.assign(beForm, { open: true, backend: b }) },
     { label: b.k8s_sync ? "Kubernetes sync…" : "Sync from Kubernetes…", icon: "logo", run: () => Object.assign(sync, { open: true, backend: b }) },
+    { label: "Copy to another HAProxy…", icon: "copy", run: () => Object.assign(copy, { open: true, kind: "backend", item: b }) },
     { sep: true }, { label: "Delete backend…", icon: "trash", danger: true, disabled: b.used_by.length > 0,
       run: () => review([{ op: "delete", kind: "backend", name: b.name }], `Delete backend ${b.name}`, true) },
     ...(b.used_by.length ? [{ note: `Used by ${b.used_by.join(", ")}` }] : [])];
@@ -128,7 +141,14 @@ function backendMenu(b: HxBackend): MenuItem[] {
 function frontendMenu(f: HxFrontend): MenuItem[] {
   const ai: MenuItem[] = canAi.value ? [{ label: "Diagnose with AI", icon: "ai", run: () => askAi("frontend", f.name) }] : [];
   if (!canConfigure.value) return ai.length ? ai : [{ note: "You can view only" }];
-  return [...ai, { label: "Edit frontend…", icon: "file", run: () => Object.assign(feForm, { open: true, frontend: f }) },
+  const http = f.mode === "http" && !f.stats_page, inMaint = !!f.policies.maintenance?.enabled;
+  return [...ai, ...(ai.length ? [{ sep: true }] : []),
+    ...(http && f.simple_routes ? [{ label: "Add route…", icon: "map", run: () => Object.assign(addRoute, { open: true, frontend: f }) }] : []),
+    { label: "Edit frontend…", icon: "file", run: () => Object.assign(feForm, { open: true, frontend: f }) },
+    ...(http ? [inMaint
+      ? { label: "Turn off maintenance page", icon: "play", run: () => review([{ op: "update", kind: "frontend", name: f.name, data: { policies: { ...f.policies, maintenance: { enabled: false } } } }], `End maintenance on ${f.name}`) }
+      : { label: "Maintenance page…", icon: "pause", run: () => Object.assign(maint, { open: true, frontend: f }) }] : []),
+    { label: "Copy to another HAProxy…", icon: "copy", run: () => Object.assign(copy, { open: true, kind: "frontend", item: f }) },
     { sep: true }, { label: "Delete frontend…", icon: "trash", danger: true, run: () => review([{ op: "delete", kind: "frontend", name: f.name }], `Delete frontend ${f.name}`, true) }];
 }
 function pick(kind: string, name: string, backend?: string) {
@@ -161,11 +181,13 @@ watch(() => router.currentRoute.value.query.focus, (f) => {
     <!-- OVERVIEW -->
     <HxDashboard v-if="data && tab === 'overview'" :data="data" :points="h.points" :can-ai="canAi" :can-manage="canManage"
       @pick="pick" @ai="askAi('instance')" @go="(id) => router.push(to(id))"
-      @connection="Object.assign(instDialog, { open: true, instance: data.instance })" @add-haproxy="Object.assign(instDialog, { open: true, instance: null })" />
+      @connection="Object.assign(instDialog, { open: true, instance: data.instance })" @add-haproxy="Object.assign(instDialog, { open: true, instance: null })"
+      @drift="drift.open = true" />
 
     <!-- FRONTENDS -->
     <HxFrontendsTable v-if="data && current && tab === 'frontends'" :key="`f${current}`" :data="data" :points="h.points" :focus="focus" :can-configure="canConfigure"
-      :instance-id="current" :frontend-menu="frontendMenu" @new-frontend="Object.assign(feForm, { open: true, frontend: null })" @pick="pick" />
+      :instance-id="current" :frontend-menu="frontendMenu" @new-frontend="wizard.open = true" @pick="pick"
+      @add-route="(f) => Object.assign(addRoute, { open: true, frontend: f })" />
 
     <!-- BACKENDS + servers -->
     <template v-if="data && current && tab === 'backends'">
@@ -180,12 +202,12 @@ watch(() => router.currentRoute.value.query.focus, (f) => {
     </template>
 
     <!-- TOPOLOGY -->
-    <section v-if="data && tab === 'topology'" class="card"><div class="card-body"><HxTopology :data="data" @pick="pick" /></div></section>
+    <section v-if="data && tab === 'topology'" class="card"><div class="card-body"><HxTopology :data="data" :points="h.points" @pick="pick" /></div></section>
     <HxAi v-if="current && tab === 'ai'" :key="`a${current}`" :instance-id="current" :data="data" :can-operate="canOperate" :can-configure="canConfigure"
       @review="(ops, title) => review(ops, title)" @state="aiStateChange" />
     <HxCertificates v-if="current && tab === 'certificates'" :key="`c${current}`" :instance-id="current" :can-edit="canConfigure" />
-    <HxStickTables v-if="current && tab === 'sticktables'" :key="`s${current}`" :instance-id="current" />
-    <HxLogs v-if="current && tab === 'logs'" :key="`l${current}`" :instance-id="current" :can-edit="canConfigure" @review="(ops, title) => review(ops, title)" />
+    <HxStickTables v-if="current && tab === 'sticktables'" :key="`s${current}`" :instance-id="current" :can-operate="canOperate" />
+    <HxLogs v-if="current && tab === 'logs'" :key="`l${current}`" :instance-id="current" :can-edit="canConfigure" :can-operate="canOperate" @review="(ops, title) => review(ops, title)" />
     <HxHistory v-if="current && tab === 'history'" ref="historyRef" :key="`h${current}`" :instance-id="current" :can-edit="canConfigure"
       @review="(ops, title, note) => review(ops, title, false, note)" />
 
@@ -207,13 +229,22 @@ watch(() => router.currentRoute.value.query.focus, (f) => {
     <div class="form-row"><label class="lbl">Weight (0–256)</label><input v-model="weight.value" class="input" type="number" min="0" max="256">
       <input v-model="weight.value" type="range" min="0" max="256" aria-label="Weight slider"></div>
     <div class="test-result show ok"><Icon name="scale" /><span>About <b>{{ weightShare }}%</b> of new requests to {{ weight.backend?.name }} would go to {{ weight.server?.name }}.</span></div>
-    <p class="hint" style="margin:0">The Data Plane API can't change weights at runtime, so this is applied as a config change with a graceful reload (about two seconds, no dropped connections).</p>
+    <p class="hint" style="margin:0">HAProxy's Data Plane API has no live weight setting, so this is a config change with a seamless reload: it takes about two seconds and open connections are not dropped.</p>
     <template #actions><button class="btn ghost" type="button" @click="weight.open = false">Cancel</button><span style="flex:1" />
       <button class="btn primary" type="button" :disabled="Number(weight.value) === weight.server?.weight" @click="reviewWeight">Review change</button></template>
   </Modal>
   <HxBackendForm :open="beForm.open" :backend="beForm.backend" @close="beForm.open = false" @review="review" />
   <HxServerForm :open="srvForm.open" :backend="srvForm.backend" :server="srvForm.server" @close="srvForm.open = false" @review="review" />
-  <HxChangeDialog v-if="current" :open="change.open" :instance-id="current" :instance-name="h.current?.name" :group="data?.group" :note="change.note"
+  <HxWizard v-if="current" :open="wizard.open" :instance-id="current" :backends="data?.backends || []" :frontends="data?.frontends || []"
+    @close="wizard.open = false" @review="review" @custom="wizard.open = false; Object.assign(feForm, { open: true, frontend: null })" />
+  <HxAddRoute :open="addRoute.open" :frontend="addRoute.frontend" :backends="data?.backends || []" @close="addRoute.open = false" @review="review" />
+  <HxMaintenance :open="maint.open" :frontend="maint.frontend" @close="maint.open = false" @review="review" />
+  <HxCopyDialog v-if="current" :open="copy.open" :kind="copy.kind" :item="copy.item" :source="data" :instances="instances || []" :current-id="current"
+    @close="copy.open = false" @review="(ops, title, target) => review(ops, title, false, '', target)" />
+  <HxDrift v-if="current" :open="drift.open" :instance-id="current" :instance-name="h.current?.name || ''" :can-configure="canConfigure"
+    @close="drift.open = false" @review="(ops, title, target) => review(ops, title, true, '', target)" />
+  <HxChangeDialog v-if="current" :open="change.open" :instance-id="change.target?.id || current" :instance-name="change.target?.name || h.current?.name"
+    :group="change.target ? [] : data?.group" :note="change.note"
     :title="change.title" :ops="change.ops" :danger="change.danger"
     @close="change.open = false" @done="changed" />
 </template>

@@ -31,13 +31,13 @@ Pick **HAProxy** in the system switcher, then the instance in the second switche
 
 | Page | What you see |
 |---|---|
-| **Overview** | A dashboard you can arrange: an overall status line, key numbers (requests/s, error rate, response time, sessions, servers up) with trends, **problems** (only when there are some), each **frontend drawn as its routing** (proxy, or path routing to several backends) with live health, one **traffic chart** (pick the metric, compare by frontend or backend, 15 min or 1 hour, show only some) and an optional topology. **Customize** chooses the sections; it's saved to your account |
+| **Overview** | A dashboard you can arrange: an overall status line, key numbers (requests/s, error rate, response time, sessions, servers up) with trends, **problems** (only when there are some), each **frontend drawn as its routing** (proxy, or path routing to several backends) with live health, one **traffic chart** (pick the metric, compare by frontend or backend, 15 minutes to 7 days, show only some) and an optional topology. **Customize** chooses the sections; it's saved to your account |
 | **Frontends** | Number tiles for what's shown (frontends, requests/s, error rate, sessions, healthy backends). Filter by type (Proxy, Path routing, Other rules), problems, TLS, rate limit or IP allow-list; search by name, port, path or backend; sort by traffic or errors. **Cards** draw each frontend as its routing (path → backend with live server health); **Table** gives one row each, expandable to its routes |
 | **Backends** | Number tiles for what's shown (servers up, new sessions/s, error rate, response time), then one table, a row per backend: health (x/y up), balancing, health check, which frontends use it, sessions, new/s, 5xx, response time. Click a row to see its servers: state, address, weight and share of traffic, health-check result, sessions, requests, 5xx, time in state. Search, filter (Problems, From Kubernetes, used by a frontend) and sort; backends with problems open by themselves |
-| **Topology** | Frontends → backends → servers. Line labels show the route; colours show server health. Hover to trace a path, click to open it. |
+| **Topology** | Frontends → backends → servers with **live traffic**: thicker lines carry more requests per second, a moving line has traffic right now, orange or red lines return errors. Labels show the route and its rate; colours show server health. Hover to trace a path, click to open it. |
 | **Certificates** | TLS certificates on the HAProxy: expiry, domains, which frontends use them; upload, replace, delete |
-| **Stick tables** | Live tables, e.g. the client IPs a rate limit is tracking, with their request rates |
-| **Logs** | Live request logs: status, request, frontend → server, duration, bytes, client; filter by text or status class |
+| **Rate limits & blocks** | **Blocked IPs** (refused on every frontend, changed live without a reload) and the live stick tables, e.g. the client IPs a rate limit is tracking, with **Unblock** to let one in again |
+| **Logs** | Live request logs: status, request, frontend → server, duration, bytes, client; filter by text or status class; **Block** a client from its log line |
 | **Config history** | Every configuration version, who changed it, the diff, and **Restore** |
 | **Raw config** | The full `haproxy.cfg`, editable |
 
@@ -86,9 +86,41 @@ echo reload | nc -w 5 127.0.0.1 9999 | grep -q '^Success=1'
 
 You need the `haproxy.configure` permission.
 
-- **Frontends:** **New frontend**, or **⋯ → Edit frontend / Delete frontend**. Set the protocol (HTTP or TCP), listen addresses (`*:80`, `10.0.0.5:443`…), a default backend, and **routes**: *path starts with*, *path is* or *host is* → backend. The first match wins.
-- **Backends:** **New backend** (with its first servers), or **⋯ → Edit / Delete / Add server**. Set the balancing method and health check (HTTP path, TCP connect, or connect only). A backend still used by a service can't be deleted.
-- **Servers:** **⋯ → Edit / Remove server**. Set address, port, weight (0–256), health check, and backup.
+- **Frontends:** **New frontend** opens a guided setup (below), or **⋯ → Edit frontend / Delete frontend**. Set the protocol (HTTP or TCP), listen addresses (`*:80`, `10.0.0.5:443`…), a default backend, **routes**, access policies and the client timeout.
+- **Routes:** **+ Add route** on a frontend adds a path and its backend in one change: either a **new backend** with its servers, or an existing one. The route is placed before shorter paths that would also match it, so `/api/payments` isn't caught by `/api`.
+- **Backends:** **New backend** (start from a type: web app, API, WebSocket, PostgreSQL, MySQL, Redis, MongoDB, other TCP), or **⋯ → Edit / Delete / Add server**. A backend still used by a frontend can't be deleted.
+- **Servers:** **⋯ → Edit / Remove server**. Set address, port, weight (0–256), health check, backup, max connections and TLS to the server.
+- **Copy to another HAProxy:** **⋯ → Copy to another HAProxy** on a frontend (optionally with its backends) or a backend (with its servers). Things that already exist there are skipped, and the change is reviewed and validated on that HAProxy.
+
+### New frontend: start from what you're setting up
+
+**New frontend** asks what you're setting up, fills in the right protocol, balancing, health check and timeouts, and shows realistic example values in grey (an empty field uses its example). One reviewed change creates the frontend and every backend with its servers.
+
+| Setup | Protocol | What you fill in | Starts with |
+|---|---|---|---|
+| **Microservice gateway** | HTTP | A port, then rows of *path → backend → servers → health check path*, plus an optional default backend for everything else | `/api/users → users (10.0.1.11:8080, 10.0.1.12:8080)`, `/api/orders → orders`, rest → `web`; round robin, `GET /health`, X-Forwarded-For |
+| **Website or web app** | HTTP | A port (or HTTPS on 443 with a certificate and a redirect from 80), the app servers | round robin, `GET /healthz` |
+| **REST / JSON API** | HTTP | Port and servers | least connections, `GET /health`, 60 s server timeout |
+| **WebSocket / real-time** | HTTP | Port and servers | least connections, 1 h tunnel and client timeouts |
+| **PostgreSQL** | TCP 5432 | Port and servers (the replica is marked backup) | first available, PostgreSQL login check as `haproxy_check`, 30 min timeouts |
+| **MySQL / MariaDB** | TCP 3306 | Port and servers | first available, MySQL login check |
+| **Redis** | TCP 6379 | Port and servers | first available, Redis `PING` check |
+| **MongoDB** | TCP 27017 | Port and servers | least connections, TCP connect check |
+| **Other TCP service** | TCP | Port and servers | least connections, TCP connect check |
+
+Longer paths are always checked first. **Start from a blank form instead** opens the full frontend form.
+
+### Backend settings
+
+| Setting | Choices |
+|---|---|
+| **Balancing** | Round robin · Least connections · Random (power of two) · First available · Client IP (sticky) · Static round robin · URL path · URL parameter (`user_id`) · HTTP header (`X-Tenant-Id`) · Custom expression (`req.cook(session_id)`) · RDP cookie. Each choice explains when to use it. |
+| **Health check** | HTTP request (method, path, optional Host header) · TCP connect · PostgreSQL login · MySQL/MariaDB login · Redis PING · TLS handshake · SMTP greeting · LDAP bind |
+| **Sticky sessions** | A `SERVERID` cookie keeps each user on the same server (HTTP) |
+| **Pass the client IP** | Adds `X-Forwarded-For` (HTTP) |
+| **Timeouts** | Connect, server reply and WebSocket/tunnel, in seconds. Typical: 30–60 s for APIs, 1800–3600 s for databases and WebSocket |
+
+For the database checks, create a user with no rights, for example `CREATE ROLE haproxy_check LOGIN;` (PostgreSQL, allowed from HAProxy in `pg_hba.conf`) or `CREATE USER 'haproxy_check'@'10.0.0.%';` (MySQL).
 
 ### Frontend options
 
@@ -100,13 +132,23 @@ You need the `haproxy.configure` permission.
 | **Routes** | *Path starts with*, *path is*, *host is*, **header** (e.g. `X-Canary: yes` → new version) and **client IP in** (networks) |
 | **Redirect HTTP to HTTPS** | 301 redirect for plain HTTP requests |
 | **Allow only these client IPs** | Everyone else gets 403 |
-| **Rate limit per client IP** | N requests per S seconds, then 429. The tracked IPs show on **Stick tables**. |
+| **Rate limit per client IP** | N requests per S seconds, then 429. The tracked IPs show on **Rate limits & blocks**, where **Unblock** lets one in again. |
+| **Client idle timeout** | How long a client may stay idle, e.g. 30 s for websites, 3600 s for WebSocket |
+
+### Maintenance page
+
+**⋯ → Maintenance page** on a frontend answers every request with a simple "Back soon" page (HTTP 503) and your message, while the servers keep running. List your office or VPN addresses to still let them through for testing. **⋯ → Turn off maintenance page** ends it. Frontends in maintenance show a **Maintenance** badge.
+
+### Block an IP and unblock a rate-limited client
+
+- **Block:** on **Rate limits & blocks → Blocked IPs**, or **Block** next to a client on the **Logs** page. Connections from that address (or network, like `203.0.113.0/24`) are refused on every frontend. The first block on an HAProxy adds the list to every frontend with one seamless reload; after that, blocking and unblocking are **instant, without a reload**, and the list is kept for future reloads. Frontends created later are protected too.
+- **Unblock a rate-limited client:** on **Rate limits & blocks**, **Unblock** resets that client's counters to 0, so the rate limit lets it in again right away.
 
 Other request rules a frontend already has are kept untouched and listed as "custom rules".
 
 ### Weight and canary releases
 
-**⋯ → Change weight** on a server shows what share of the backend's traffic it will get (e.g. weight 10 next to two servers at 100 → about 5%). The Data Plane API can't change weights at runtime, so this is a small config change with a graceful reload (about two seconds, no dropped connections). For a header-based canary, add a **header route** instead.
+**⋯ → Change weight** on a server shows what share of the backend's traffic it will get (e.g. weight 10 next to two servers at 100 → about 5%). HAProxy's Data Plane API has no live weight setting, so this is a small config change with a seamless reload (about two seconds, open connections are not dropped). For a header-based canary, add a **header route** instead.
 
 ### Rolling deploy
 
@@ -117,6 +159,8 @@ Other request rules a frontend already has are kept untouched and listed as "cus
 ### Groups (several HAProxy at once)
 
 Give instances the same **group** (Administration → HAProxy instances), for example the two load balancers of an HA pair. Every change dialog then offers **Also apply to the same group**: you see the diff and validation **for each instance**, and **Apply** changes them one after another, stopping at the first failure.
+
+**Compare configs** (on the Overview's status line) shows whether the others in the group have the same configuration, with the exact difference, and **Make … the same** copies this configuration to another member after a review. Each HAProxy keeps its own `log-tag`.
 
 <Shot src="/shots/haproxy-group.png" alt="One weight change previewed on two HAProxy instances" url="k10y / haproxy / backends" />
 

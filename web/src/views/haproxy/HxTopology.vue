@@ -1,9 +1,11 @@
 <script setup lang="ts">
-// Frontends → backends → servers, with live health colours. Hover a box to trace its path.
+// Frontends → backends → servers, with live health colours and live traffic (line width = requests/s,
+// orange/red = errors). Hover a box to trace its path.
 import { computed, ref } from "vue";
-import { backendHealth, bindText, ROUTE_KIND, routeText, STATE, type HxOverview } from "@/lib/haproxy";
+import { backendHealth, bindText, fmtRate, ROUTE_KIND, routeNumbers, routeText, STATE, type HxOverview, type HxPoint } from "@/lib/haproxy";
 
-const props = defineProps<{ data: HxOverview }>();
+const props = defineProps<{ data: HxOverview; points?: HxPoint[] }>();
+const last = computed(() => props.points?.[props.points.length - 1]?.[1]);
 const emit = defineEmits<{ pick: [kind: "frontend" | "backend" | "server", name: string, backend?: string] }>();
 const W = [250, 230, 250], GAP = 120, NODE_H = 54, SRV_H = 40, PAD = 14;
 const X = [0, W[0] + GAP, W[0] + GAP + W[1] + GAP];
@@ -31,7 +33,7 @@ const layout = computed(() => {
   const step = Math.max(NODE_H + 22, (Math.max(ys, beNodes.length * (NODE_H + 14)) ) / Math.max(fes.length, 1));
   const feNodes = fes.map((f, i) => ({ key: `f:${f.name}`, f, y: i * step }));
   const beY = new Map(beNodes.map((n) => [n.b.name, n.y]));
-  const edges: { id: string; from: string; to: string; d: string; label: string; cls: string; ly: number }[] = [];
+  const edges: { id: string; from: string; to: string; d: string; label: string; cls: string; ly: number; w?: number }[] = [];
   const curve = (x1: number, y1: number, x2: number, y2: number) => `M${x1},${y1} C${(x1 + x2) / 2},${y1} ${(x1 + x2) / 2},${y2} ${x2},${y2}`;
   for (const n of feNodes) {
     const raw: [string, string][] = n.f.routes.map((r) => [r.backend, r.kind === "other" ? r.value : `${ROUTE_KIND[r.kind].toLowerCase()} ${routeText(r)}`]);
@@ -43,7 +45,11 @@ const layout = computed(() => {
     targets.forEach(([be, label], k) => {
       const y2 = beY.get(be);
       if (y2 == null) return;
-      edges.push({ id: `${n.key}>${be}>${k}`, from: n.key, to: `b:${be}`, label, cls: "fe", ly: (n.y + y2) / 2 + NODE_H / 2 - 5,
+      const live = routeNumbers(last.value, be);
+      const cls = `fe${live.rate > 0 ? " flow" : ""}${live.err >= 5 ? " err" : live.err >= 1 ? " warnx" : ""}`;
+      edges.push({ id: `${n.key}>${be}>${k}`, from: n.key, to: `b:${be}`, cls, ly: (n.y + y2) / 2 + NODE_H / 2 - 5,
+        label: live.rate > 0 ? `${label} · ${fmtRate(live.rate)}/s${live.err >= 1 ? ` · ${fmtRate(live.err)}% err` : ""}` : label,
+        w: 1.6 + Math.min(6, Math.log2(1 + live.rate) * 1.3),
         d: curve(X[0] + W[0], n.y + NODE_H / 2, X[1], y2 + NODE_H / 2) });
     });
   }
@@ -80,24 +86,25 @@ const edgeDim = (e: { from: string; to: string }) => lit.value && !(lit.value.ha
         <g transform="translate(2,26)">
           <text :x="X[0]" y="-10" class="col">FRONTENDS</text><text :x="X[1]" y="-10" class="col">BACKENDS</text><text :x="X[2]" y="-10" class="col">SERVERS</text>
           <g v-for="e in layout.edges" :key="e.id" :class="['edge', e.cls, { dim: edgeDim(e) }]">
-            <path :d="e.d" />
+            <path :d="e.d" :style="e.w ? { strokeWidth: e.w } : undefined" />
           </g>
           <g v-for="e in layout.edges.filter((x) => x.label)" :key="e.id + 'l'" :class="{ dim: edgeDim(e) }">
             <text :x="X[0] + W[0] + GAP / 2" class="elabel" text-anchor="middle"
-:y="e.ly">{{ e.label.length > 20 ? e.label.slice(0, 19) + "…" : e.label }}</text>
+:y="e.ly">{{ e.label.length > 30 ? e.label.slice(0, 29) + "…" : e.label }}</text>
           </g>
           <g v-for="n in layout.feNodes" :key="n.key" :class="['node', 'fe', { dim: dim(n.key) }]" :transform="`translate(${X[0]},${n.y})`"
             tabindex="0" @mouseenter="hover = n.key" @mouseleave="hover = null" @focus="hover = n.key" @blur="hover = null" @click="emit('pick', 'frontend', n.f.name)">
             <rect :width="W[0]" :height="NODE_H" rx="10" />
             <text x="14" y="22" class="t">{{ n.f.name }}</text>
             <text x="14" y="40" class="s">{{ n.f.binds.map(bindText).join(", ").slice(0, 34) }} · {{ n.f.mode.toUpperCase() }}</text>
-            <text :x="W[0] - 12" y="22" class="r" text-anchor="end">{{ n.f.stats.req_rate ?? n.f.stats.rate ?? 0 }}/s</text>
+            <text :x="W[0] - 12" y="22" class="r" text-anchor="end">{{ fmtRate(last?.f[n.f.name]?.req ?? Number(n.f.stats.req_rate ?? n.f.stats.rate ?? 0)) }}/s</text>
           </g>
           <g v-for="n in layout.beNodes" :key="n.key" :class="['node', 'be', n.h.level, { dim: dim(n.key) }]" :transform="`translate(${X[1]},${n.y})`"
             tabindex="0" @mouseenter="hover = n.key" @mouseleave="hover = null" @focus="hover = n.key" @blur="hover = null" @click="emit('pick', 'backend', n.b.name)">
             <rect :width="W[1]" :height="NODE_H" rx="10" /><rect class="bar" :width="5" :height="NODE_H" rx="2" />
             <text x="16" y="22" class="t">{{ n.b.name }}</text>
             <text x="16" y="40" class="s">{{ n.b.balance }} · {{ n.h.label }}</text>
+            <text v-if="last?.b[n.b.name]" :x="W[1] - 12" y="22" class="r" text-anchor="end">{{ fmtRate(routeNumbers(last, n.b.name).rate) }}/s</text>
           </g>
           <g v-for="s in layout.servers" :key="s.key" :class="['node', 'srv', s.s.state, { dim: dim(s.key) }]" :transform="`translate(${X[2]},${s.y})`"
             tabindex="0" @mouseenter="hover = s.key" @mouseleave="hover = null" @focus="hover = s.key" @blur="hover = null" @click="emit('pick', 'server', s.s.name, s.be)">
@@ -111,3 +118,11 @@ const edgeDim = (e: { from: string; to: string }) => lit.value && !(lit.value.ha
     </div>
   </div>
 </template>
+
+<style scoped>
+.edge.fe.flow path { stroke-dasharray: 6 5; animation: hx-flow 1.2s linear infinite; }
+.edge.fe.warnx path { stroke: var(--warning); }
+.edge.fe.err path { stroke: var(--critical); }
+@keyframes hx-flow { to { stroke-dashoffset: -22; } }
+@media (prefers-reduced-motion: reduce) { .edge.fe.flow path { animation: none; stroke-dasharray: none; } }
+</style>

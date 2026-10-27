@@ -9,6 +9,7 @@ validates again and reloads HAProxy.
 
 import difflib
 import re
+import threading
 import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
@@ -274,7 +275,12 @@ class DataPlane:
         return None
 
     def acl_entries(self, acl_id: str) -> List[Dict[str, Any]]:
-        return self.call("GET", f"/services/haproxy/runtime/acls/{acl_id}/entries") or []
+        try:
+            return self.call("GET", f"/services/haproxy/runtime/acls/{acl_id}/entries") or []
+        except DataPlaneError as e:
+            if "not found" in str(e):      # the API answers "not found" for an empty list
+                return []
+            raise
 
     def add_acl_entry(self, acl_id: str, value: str) -> None:
         self.call("POST", f"/services/haproxy/runtime/acls/{acl_id}/entries", json={"value": value})
@@ -530,7 +536,7 @@ def _apply_policies(fe: Dict[str, Any], pol: Dict[str, Any]) -> None:
             raise DataPlaneError(400, "rate limit: 1-1000000 requests per 1-3600 seconds")
         st = fe.get("stick_table") or {}
         if st and "http_req_rate" not in (st.get("store") or ""):
-            raise DataPlaneError(400, "this service already has a different stick table; set the rate limit in the raw config")
+            raise DataPlaneError(400, "this frontend already has a different stick table; set the rate limit in the raw config")
         fe["stick_table"] = {"type": "ip", "size": 100000, "expire": period * 1000, "store": f"http_req_rate({period}s)"}
         managed += [{"type": "track-sc", "track_sc_key": "src", "track_sc_stick_counter": 0},
                     {"type": "deny", "deny_status": 429, "cond": "if", "cond_test": "{ sc_http_req_rate(0) gt %d }" % n}]
@@ -603,16 +609,16 @@ def apply_op(dp: DataPlane, tx: str, op: Op) -> str:
     cfg = "/services/haproxy/configuration"
     d = op.data
     if op.kind == "frontend":
-        name = _check_name(op.name, "Service")
+        name = _check_name(op.name, "Frontend")
         if op.op == "delete":
             dp.call("DELETE", f"{cfg}/frontends/{name}", tx)
-            return f"delete service {name}"
+            return f"delete frontend {name}"
         backends = {b["name"] for b in dp.backends(tx)}
         current = next((f for f in dp.frontends(tx) if f["name"] == name), None)
         if op.op == "create" and current:
-            raise DataPlaneError(400, f"service {name} already exists")
+            raise DataPlaneError(400, f"frontend {name} already exists")
         if op.op == "update" and not current:
-            raise DataPlaneError(404, f"service {name} not found")
+            raise DataPlaneError(404, f"frontend {name} not found")
         fe = dict(current or {"name": name})
         if "mode" in d:
             if d["mode"] not in ("http", "tcp"):
@@ -640,7 +646,7 @@ def apply_op(dp: DataPlane, tx: str, op: Op) -> str:
                     bind.update({"ssl": True, "ssl_certificate": cert_dir[cert]})
                 binds[bind["name"]] = bind
             if not binds:
-                raise DataPlaneError(400, "a service needs at least one listen address")
+                raise DataPlaneError(400, "a frontend needs at least one listen address")
             fe["binds"] = binds
         if "timeouts" in d:
             fe.pop("client_timeout", None)
@@ -665,7 +671,7 @@ def apply_op(dp: DataPlane, tx: str, op: Op) -> str:
             dp.call("POST", f"{cfg}/frontends", tx, json=fe, params={"full_section": "true"})
         else:
             dp.call("PUT", f"{cfg}/frontends/{name}", tx, json=fe, params={"full_section": "true"})
-        return f"{op.op} service {name}"
+        return f"{op.op} frontend {name}"
 
     if op.kind == "backend":
         name = _check_name(op.name, "Backend")
@@ -776,6 +782,21 @@ def apply_op(dp: DataPlane, tx: str, op: Op) -> str:
     raise DataPlaneError(400, f"unsupported operation {op.op} {op.kind}")
 
 
+LOG_TAG_RE = re.compile(r"^\s*log-tag\s")
+
+
+def _keep_log_tag(ref: str, theirs: str) -> str:
+    """ref's configuration, but with the other instance's own log-tag lines (in the same place when ref has one)."""
+    own = [l for l in theirs.splitlines() if LOG_TAG_RE.match(l)]
+    lines = ref.splitlines()
+    at = next((i for i, l in enumerate(lines) if LOG_TAG_RE.match(l)), None)
+    if at is None:      # at the end of the global section, after its last setting
+        g = next((i for i, l in enumerate(lines) if re.match(r"^global\b", l)), None)
+        at = len(lines) if g is None else next((i for i in range(g + 1, len(lines)) if re.match(r"^[^\s#]", lines[i])), len(lines))
+        while g is not None and at > g + 1 and not lines[at - 1].strip():
+            at -= 1
+    out = [l for l in lines[:at] if not LOG_TAG_RE.match(l)] + own + [l for l in lines[at:] if not LOG_TAG_RE.match(l)]
+    return "\n".join(out) + "\n"
 HEADER_LINE = re.compile(r"^# (_md5hash=|_version=|Dataplaneapi managed File|changing file directly)")
 
 
@@ -785,8 +806,25 @@ def _diff(before: str, after: str) -> str:
     return "\n".join(difflib.unified_diff(body(before), body(after), "current", "new", lineterm="", n=3))
 
 
+# The Data Plane API can crash when two transactions are opened or closed at the same moment (seen with
+# client-native v6.2: "concurrent map iteration and map write"), e.g. a preview while a Kubernetes sync runs.
+# So the hub runs transactions on one HAProxy one at a time.
+_TX_LOCKS: Dict[str, threading.Lock] = {}
+_TX_LOCKS_GUARD = threading.Lock()
+
+
+def tx_lock(dp: Any) -> threading.Lock:
+    with _TX_LOCKS_GUARD:
+        return _TX_LOCKS.setdefault(getattr(dp, "base", "") or str(id(dp)), threading.Lock())
+
+
 def plan_and_apply(dp: DataPlane, ops: List[Op], apply: bool) -> Dict[str, Any]:
     """Preview (diff + validation) or apply a list of operations as one change."""
+    with tx_lock(dp):
+        return _plan_and_apply(dp, ops, apply)
+
+
+def _plan_and_apply(dp: DataPlane, ops: List[Op], apply: bool) -> Dict[str, Any]:
     if not ops:
         raise DataPlaneError(400, "nothing to change")
     raw_ops = [o for o in ops if o.op == "raw"]
@@ -1048,7 +1086,7 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
     @r.get("/{iid}/config")
     def raw_config(iid: int, p=Depends(require("haproxy.configure")), s: Session = Depends(db_session)) -> dict:
         try:
-            with dp_for(get(s, iid)) as dp:
+            with dp_for(get(s, iid)) as dp, tx_lock(dp):
                 tx = dp.begin()
                 try:
                     return {"text": dp.raw(tx), "version": dp.version()}
@@ -1160,17 +1198,18 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
                         save_blocklist(dp, ips + [ip])
                     if not path:
                         raise DataPlaneError(502, "the Data Plane API did not return the blocklist file path")
-                    tx = dp.begin()
-                    try:
-                        for fe in dp.frontends(tx):
-                            if fe["name"] in st["missing"]:
-                                fe["tcp_request_rule_list"] = [_block_rule(path)] + (fe.get("tcp_request_rule_list") or [])
-                                dp.call("PUT", f"/services/haproxy/configuration/frontends/{fe['name']}", tx, json=fe, params={"full_section": "true"})
-                        dp.validate(dp.raw(tx))
-                        reload_id = dp.commit(tx)
-                    except DataPlaneError:
-                        dp.rollback(tx)
-                        raise
+                    with tx_lock(dp):
+                        tx = dp.begin()
+                        try:
+                            for fe in dp.frontends(tx):
+                                if fe["name"] in st["missing"]:
+                                    fe["tcp_request_rule_list"] = [_block_rule(path)] + (fe.get("tcp_request_rule_list") or [])
+                                    dp.call("PUT", f"/services/haproxy/configuration/frontends/{fe['name']}", tx, json=fe, params={"full_section": "true"})
+                            dp.validate(dp.raw(tx))
+                            reload_id = dp.commit(tx)
+                        except DataPlaneError:
+                            dp.rollback(tx)
+                            raise
                     dp.wait_reload(reload_id)
                     snapshot(s, inst, dp, p, f"IP blocklist set up on {', '.join(st['missing'])}; blocked {ip}")
                     reloaded = True
@@ -1215,8 +1254,11 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
                            .order_by(HAProxyInstance.name)).scalars():
             try:
                 with dp_for(o) as dp:
-                    diff = _diff(strip_header(dp.raw()), ref)
-                others.append({"id": o.id, "name": o.name, "same": not diff, "diff": diff, "error": ""})
+                    theirs = strip_header(dp.raw())
+                # Each instance keeps its own log-tag (that's how k10y tells their logs apart).
+                text = _keep_log_tag(ref, theirs)
+                diff = _diff(theirs, text)
+                others.append({"id": o.id, "name": o.name, "same": not diff, "diff": diff, "text": text, "error": ""})
             except DataPlaneError as e:
                 others.append({"id": o.id, "name": o.name, "same": False, "diff": "", "error": str(e)})
         return {"group": inst.group_name, "text": ref, "others": others}

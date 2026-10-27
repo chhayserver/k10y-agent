@@ -5,12 +5,12 @@ import { computed, reactive, ref, watch } from "vue";
 import EmptyState from "@/components/EmptyState.vue";
 import Icon from "@/components/Icon.vue";
 import RowMenu from "@/components/RowMenu.vue";
-import { FRONTEND_KIND, backendHealth, fmtRate, frontendShape, num, serverDots, type FrontendKind, type HxFrontend, type HxOverview, type HxPoint } from "@/lib/haproxy";
+import { FRONTEND_KIND, backendHealth, fmtRate, frontendShape, num, routeNumbers, serverDots, type FrontendKind, type HxFrontend, type HxOverview, type HxPoint } from "@/lib/haproxy";
 import type { MenuItem } from "@/stores/ui";
 import HxKpis, { type Kpi } from "./HxKpis.vue";
 
 const props = defineProps<{ data: HxOverview; points: HxPoint[]; focus: string; canConfigure: boolean; instanceId: number; frontendMenu: (f: HxFrontend) => MenuItem[] }>();
-const emit = defineEmits<{ newFrontend: []; pick: [kind: string, name: string] }>();
+const emit = defineEmits<{ newFrontend: []; pick: [kind: string, name: string]; addRoute: [f: HxFrontend] }>();
 
 // --- filters (remembered per HAProxy in this browser) --------------------------------------
 const KEY = `k10y.hx.frontends.${props.instanceId}`;
@@ -110,6 +110,7 @@ const errClass = (e: number) => (e >= 5 ? "bad" : e >= 1 ? "warn" : "");
     <article v-for="r in rows" :id="`f:${r.fe.name}`" :key="r.fe.name" class="card hxf-card" :class="[r.problem ? r.shape.level : '', { 'hx-focus': focus === `f:${r.fe.name}` }]">
       <header class="hxf-head">
         <div class="hxf-title"><span class="mono">{{ r.fe.name }}</span><span class="chip"><Icon :name="r.shape.icon" />{{ r.shape.label }}</span>
+          <span v-if="r.fe.policies?.maintenance?.enabled" class="chip sm hxf-maint" title="Clients get the maintenance page">Maintenance</span>
           <span class="grow" /><RowMenu :items="() => frontendMenu(r.fe)" :label="r.fe.name" /></div>
         <div class="hxf-listen"><span v-for="b in listen(r.fe)" :key="b.text" class="mono"><Icon v-if="b.ssl" name="lock" />{{ b.text }}</span>
           <span class="dim">{{ r.fe.mode.toUpperCase() }}</span>
@@ -127,7 +128,10 @@ const errClass = (e: number) => (e >= 5 ? "bad" : e >= 1 ? "warn" : "");
           <span class="hxf-match"><span v-if="l.kind" class="dim">{{ l.kind }}</span> <code>{{ l.match }}</code></span><span class="hxf-arrow">→</span>
           <span class="hxf-be"><span class="mono">{{ l.backend }}</span><span class="hxf-dots"><i v-for="(s, j) in serverDots(backends.get(l.backend))" :key="j" :class="s" /></span>
             <span v-if="!backends.get(l.backend)" class="chip sm bad">missing</span></span>
-          <span class="hxf-rate dim">{{ fmtRate(last?.b[l.backend]?.req || 0) }}/s</span></li>
+          <span class="hxf-rate"><b>{{ fmtRate(routeNumbers(last, l.backend).rate) }}</b>/s
+            <span :class="errClass(routeNumbers(last, l.backend).err)">{{ fmtRate(routeNumbers(last, l.backend).err) }}%</span>
+            <span class="dim">{{ routeNumbers(last, l.backend).ms ? `${routeNumbers(last, l.backend).ms} ms` : "–" }}</span></span></li>
+        <li v-if="canConfigure && r.fe.simple_routes && r.fe.mode === 'http' && !r.fe.stats_page" class="hxf-add"><button class="link" @click="emit('addRoute', r.fe)">+ Add route</button></li>
         <li v-if="r.fe.stats_page" class="dim">HAProxy statistics page</li>
         <li v-else-if="!r.shape.lanes.length" class="dim">No backend: every request gets a 503.</li>
         <li v-if="!r.fe.simple_routes" class="dim">Also has custom routing rules (see Raw config).</li>
@@ -155,7 +159,10 @@ const errClass = (e: number) => (e >= 5 ? "bad" : e >= 1 ? "warn" : "");
             <li v-for="(l, i) in r.shape.lanes" :key="i" class="clickable" @click="emit('pick', 'backend', l.backend)">
               <span class="hxf-match"><span v-if="l.kind" class="dim">{{ l.kind }}</span> <code>{{ l.match }}</code></span><span class="hxf-arrow">→</span>
               <span class="hxf-be"><span class="mono">{{ l.backend }}</span><span class="hxf-dots"><i v-for="(s, j) in serverDots(backends.get(l.backend))" :key="j" :class="s" /></span></span>
-              <span class="hxf-rate dim">{{ fmtRate(last?.b[l.backend]?.req || 0) }}/s</span></li>
+              <span class="hxf-rate"><b>{{ fmtRate(routeNumbers(last, l.backend).rate) }}</b>/s
+                <span :class="errClass(routeNumbers(last, l.backend).err)">{{ fmtRate(routeNumbers(last, l.backend).err) }}%</span>
+                <span class="dim">{{ routeNumbers(last, l.backend).ms ? `${routeNumbers(last, l.backend).ms} ms` : "–" }}</span></span></li>
+            <li v-if="canConfigure && r.fe.simple_routes && r.fe.mode === 'http' && !r.fe.stats_page" class="hxf-add"><button class="link" @click="emit('addRoute', r.fe)">+ Add route</button></li>
             <li v-if="!r.shape.lanes.length" class="dim">{{ r.fe.stats_page ? "HAProxy statistics page" : "No backend: every request gets a 503." }}</li>
           </ul>
           <div class="hxf-pol"><span v-if="r.fe.policies?.redirect_https" class="chip sm">→ HTTPS</span>
@@ -196,7 +203,7 @@ const errClass = (e: number) => (e >= 5 ? "bad" : e >= 1 ? "warn" : "");
 .hxf-spark { flex: 1; min-width: 60px; max-width: 160px; height: 20px; margin-left: auto; }
 .hxf-spark path { fill: none; stroke: var(--accent); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
 .hxf-lanes { list-style: none; margin: 0; padding: 6px 0; }
-.hxf-lanes li { display: grid; grid-template-columns: minmax(0, 1.1fr) 18px minmax(0, 1fr) 56px; align-items: center; gap: 8px; padding: 7px 16px; font-size: 13px; }
+.hxf-lanes li { display: grid; grid-template-columns: minmax(0, 1.1fr) 18px minmax(0, 1fr) 150px; align-items: center; gap: 8px; padding: 7px 16px; font-size: 13px; }
 .hxf-lanes.flat li { padding: 6px 8px; }
 .hxf-lanes li.clickable { cursor: pointer; } .hxf-lanes li.clickable:hover { background: var(--surface-hover); }
 .hxf-match { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -206,7 +213,11 @@ const errClass = (e: number) => (e >= 5 ? "bad" : e >= 1 ? "warn" : "");
 .hxf-dots { display: inline-flex; gap: 3px; align-items: center; flex-wrap: wrap; }
 .hxf-dots i { width: 8px; height: 8px; border-radius: 50%; display: block; }
 .hxf-dots .up { background: var(--good); } .hxf-dots .out { background: var(--warning); } .hxf-dots .down { background: var(--critical); }
-.hxf-rate { text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; }
+.hxf-rate { display: flex; gap: 8px; justify-content: flex-end; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
+.hxf-rate b { color: var(--text); font-weight: 600; }
+.hxf-rate .warn { color: var(--warning); } .hxf-rate .bad { color: var(--critical); }
+.hxf-lanes li.hxf-add { display: block; padding-top: 4px; }
+.hxf-maint { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
 
 .hxf-caret { width: 30px; padding-right: 0 !important; }
 .hxf-caret .icon { width: 14px; height: 14px; color: var(--muted); transform: rotate(90deg); transition: transform .15s; }

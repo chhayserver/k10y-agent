@@ -10,7 +10,7 @@ const emit = defineEmits<{ close: []; review: [ops: HxOp[], title: string] }>();
 type Bind = { address: string; port: number | string; ssl: boolean; certificate: string };
 type Route = { kind: string; value: string; backend: string; header?: string };
 const f = reactive({ name: "", mode: "http", binds: [] as Bind[], default_backend: "", routes: [] as Route[],
-  allow: "", redirect_https: false, limit_on: false, limit_n: 100 as number | string, limit_period: 10 as number | string, err: "" });
+  allow: "", redirect_https: false, limit_on: false, limit_n: 100 as number | string, limit_period: 10 as number | string, client: 0 as number | string, err: "" });
 const certs = ref<any[]>([]);
 
 watch(() => props.open, async (o) => {
@@ -22,6 +22,7 @@ watch(() => props.open, async (o) => {
     routes: fe && fe.simple_routes ? fe.routes.map((r) => ({ ...r })) : [],
     allow: (pol?.allow_ips || []).join("\n"), redirect_https: !!pol?.redirect_https,
     limit_on: !!pol?.rate_limit, limit_n: pol?.rate_limit?.requests || 100, limit_period: pol?.rate_limit?.period || 10,
+    client: fe?.timeouts?.client || 0,
   });
   try { certs.value = await hx.certificates(props.instanceId); } catch { certs.value = []; }
 });
@@ -49,6 +50,7 @@ function submit() {
     if (!fe || !same(policies, { allow_ips: old?.allow_ips || [], redirect_https: !!old?.redirect_https, rate_limit: old?.rate_limit || null }))
       if (fe || policies.allow_ips.length || policies.redirect_https || policies.rate_limit) data.policies = policies;
   }
+  if (!fe ? Number(f.client) > 0 : (Number(f.client) || 0) !== (fe.timeouts?.client || 0)) data.timeouts = { client: Number(f.client) || 0 };
   if (fe && !Object.keys(data).length) { f.err = "Nothing changed."; return; }
   emit("review", [{ op: fe ? "update" : "create", kind: "frontend", name: f.name.trim(), data }], fe ? `Edit frontend ${f.name}` : `New frontend ${f.name}`);
 }
@@ -72,6 +74,10 @@ function submit() {
         <button class="btn icon-only ghost" type="button" aria-label="Remove listen address" :disabled="f.binds.length === 1" @click="f.binds.splice(i, 1)"><Icon name="x" /></button></div>
       <button class="btn sm" type="button" style="align-self:flex-start" @click="f.binds.push({ address: '*', port: '', ssl: false, certificate: '' })">Add address</button>
       <span v-if="f.binds.some((b) => b.ssl) && !certs.length" class="hint" style="color:var(--critical)">No certificates uploaded yet: add one on the Certificates page first.</span></div>
+
+    <div class="form-row"><label class="lbl">Client idle timeout</label>
+      <div class="assign-row"><input v-model="f.client" class="input" type="number" min="0" max="86400" placeholder="0" style="max-width:120px" aria-label="Client timeout in seconds"><span class="hint">seconds</span></div>
+      <span class="hint">How long a client may stay idle. 0 = the default from the config. Typical: 30 for websites, 3600 for WebSocket, 1800 for databases.</span></div>
 
     <div class="form-row"><label class="lbl">Default backend</label>
       <select v-model="f.default_backend" class="select"><option value="">None</option><option v-for="b in backends" :key="b.name" :value="b.name">{{ b.name }}</option></select>

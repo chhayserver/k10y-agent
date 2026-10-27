@@ -177,3 +177,13 @@ def test_group_drift_shows_differences(client, monkeypatch):
     assert d["group"] == "edge" and d["others"][0]["name"] == "b" and not d["others"][0]["same"] and "leastconn" in d["others"][0]["diff"]
     b.live = a.live
     assert client.get(f"/api/hub/haproxy/{ia}/group-drift").json()["others"][0]["same"] is True
+
+
+def test_group_copy_keeps_each_instance_log_tag():
+    ref = "global\n  maxconn 4000\n  log-tag lab-lb\ndefaults\n  mode http\n"
+    theirs = "global\n  log-tag lab-lb-2\n  maxconn 2000\ndefaults\n  mode http\n"
+    out = hx._keep_log_tag(ref, theirs)
+    assert "log-tag lab-lb-2" in out and "log-tag lab-lb\n" not in out and "maxconn 4000" in out
+    assert out.index("maxconn 4000") < out.index("log-tag lab-lb-2")          # stays where ref had its tag
+    assert hx._keep_log_tag(ref, "global\n") == "global\n  maxconn 4000\ndefaults\n  mode http\n"
+    assert hx._keep_log_tag("global\n  maxconn 1\n\ndefaults\n", theirs) == "global\n  maxconn 1\n  log-tag lab-lb-2\n\ndefaults\n"

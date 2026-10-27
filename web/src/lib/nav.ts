@@ -59,7 +59,7 @@ export const NAV: NavItem[] = [
   { id: "haproxy-ai", label: "AI Assistant", icon: "ai", section: "Load balancer", system: H, slug: "ai", tab: "ai", global: "haproxy.view" },
   { id: "haproxy-topology", label: "Topology", icon: "map", section: "Load balancer", system: H, slug: "topology", tab: "topology", global: "haproxy.view" },
   { id: "haproxy-certificates", label: "Certificates", icon: "lock", section: "Traffic & security", system: H, slug: "certificates", tab: "certificates", global: "haproxy.view" },
-  { id: "haproxy-sticktables", label: "Stick tables", icon: "db", section: "Traffic & security", system: H, slug: "stick-tables", tab: "sticktables", global: "haproxy.view" },
+  { id: "haproxy-sticktables", label: "Rate limits & blocks", icon: "ban", section: "Traffic & security", system: H, slug: "stick-tables", tab: "sticktables", global: "haproxy.view" },
   { id: "haproxy-logs", label: "Logs", icon: "events", section: "Traffic & security", system: H, slug: "logs", tab: "logs", global: "haproxy.view" },
   { id: "haproxy-history", label: "Config history", icon: "rollback", section: "Configuration", system: H, slug: "history", tab: "history", global: "haproxy.view" },
   { id: "haproxy-config", label: "Raw config", icon: "file", section: "Configuration", system: H, slug: "config", tab: "config", global: "haproxy.configure" },

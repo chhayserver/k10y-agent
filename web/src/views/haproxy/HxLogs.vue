@@ -3,8 +3,9 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import Icon from "@/components/Icon.vue";
 import { hx, type HxOp } from "@/lib/haproxy";
+import { openAction } from "@/stores/ui";
 
-const props = defineProps<{ instanceId: number; canEdit: boolean }>();
+const props = defineProps<{ instanceId: number; canEdit: boolean; canOperate?: boolean }>();
 const emit = defineEmits<{ review: [ops: HxOp[], title: string] }>();
 const info = ref<{ enabled: boolean; port: number | null; tag: string; other_tags: string[] } | null>(null);
 const lines = ref<any[]>([]), paused = ref(false), q = ref(""), cls = ref("all"), error = ref("");
@@ -24,6 +25,13 @@ const shown = computed(() => {
   return lines.value.filter((l) => (cls.value === "all" || (l.status != null && String(l.status)[0] === cls.value[0]) || (cls.value === "other" && l.status == null))
     && (!s || JSON.stringify(l).toLowerCase().includes(s))).slice(-500).reverse();
 });
+// "203.0.113.7:51234" or "[2001:db8::1]:443" -> the IP alone
+const clientIp = (c: string) => (c || "").replace(/^\[?([^\]]+?)\]?:\d+$/, "$1");
+function block(ip: string) {
+  openAction({ title: `Block ${ip}`, confirmLabel: "Block", noDryRun: true,
+    desc: "Connections from this address are refused on every frontend. The first block on an HAProxy sets the list up with one seamless reload; after that it's instant. Undo it on the Rate limits & blocks page.",
+    run: async () => (await hx.block(props.instanceId, ip, "blocked from the logs")).message });
+}
 const statusColor = (s: number) => (s >= 500 ? "var(--critical)" : s >= 400 ? "#e8a33a" : s >= 300 ? "var(--accent-ink)" : "var(--good)");
 const setup = reactive({ open: false, address: `${location.hostname === "localhost" ? "host.docker.internal" : location.hostname}:5514` });
 async function enable() {
@@ -70,7 +78,8 @@ async function enable() {
             <td><b :style="{ color: statusColor(l.status) }">{{ l.status }}</b></td>
             <td class="mono wrap">{{ l.request }}</td>
             <td class="mono">{{ l.frontend }} → {{ l.backend }}/{{ l.server }}</td>
-            <td class="num">{{ l.ms }} ms</td><td class="num">{{ l.bytes }}</td><td class="mono dim">{{ l.client }}</td>
+            <td class="num">{{ l.ms }} ms</td><td class="num">{{ l.bytes }}</td><td class="mono dim">{{ l.client }}
+              <button v-if="canOperate && clientIp(l.client)" class="link hx-block" type="button" :title="`Block ${clientIp(l.client)} on every frontend`" @click="block(clientIp(l.client))">Block</button></td>
           </template>
           <td v-else colspan="6" class="mono wrap">{{ l.msg }}</td>
         </tr></tbody></table>

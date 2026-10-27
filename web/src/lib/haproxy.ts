@@ -5,13 +5,16 @@ import type { Level } from "./format";
 export interface HxStats { [k: string]: any }
 export interface HxBind { address: string; port: number; ssl: boolean; name: string; certificate?: string }
 export interface HxRoute { kind: "path_prefix" | "path" | "host" | "header" | "src" | "other"; value: string; backend: string; header?: string }
-export interface HxPolicies { allow_ips: string[]; redirect_https: boolean; rate_limit: { requests: number; period: number } | null; custom_rules: number }
-export interface HxFrontend { name: string; mode: string; binds: HxBind[]; default_backend: string | null; routes: HxRoute[]; simple_routes: boolean; stats_page: boolean; stats: HxStats; policies: HxPolicies }
+export interface HxMaintenance { enabled: boolean; message: string; allow_ips: string[] }
+export interface HxPolicies { allow_ips: string[]; redirect_https: boolean; rate_limit: { requests: number; period: number } | null; custom_rules: number; maintenance?: HxMaintenance; blocklist?: boolean }
+export interface HxFrontend { name: string; mode: string; binds: HxBind[]; default_backend: string | null; routes: HxRoute[]; simple_routes: boolean; stats_page: boolean; stats: HxStats; policies: HxPolicies; timeouts?: { client: number } }
 export interface HxSync { id: number; backend: string; cluster_id: number; namespace: string; service: string; port: string; mode: string; enabled: boolean; last_result: string; last_error: string; last_sync_at: string | null }
-export interface HxServer { name: string; address: string; port: number; weight: number; check: boolean; backup: boolean; state: string; stats: HxStats }
-export interface HxBackend { name: string; mode: string; balance: string; check: { type: string; uri: string }; servers: HxServer[]; used_by: string[]; stats: HxStats; k8s_sync: HxSync | null }
+export interface HxServer { name: string; address: string; port: number; weight: number; check: boolean; backup: boolean; maxconn?: number; ssl?: boolean; state: string; stats: HxStats }
+export interface HxCheck { type: string; uri: string; method?: string; host?: string; user?: string }
+export interface HxBackend { name: string; mode: string; balance: string; balance_arg?: string; check: HxCheck; sticky?: boolean; forwardfor?: boolean;
+  timeouts?: { connect: number; server: number; tunnel: number }; servers: HxServer[]; used_by: string[]; stats: HxStats; k8s_sync: HxSync | null }
 export interface HxOverview { instance: any; group: any[]; frontends: HxFrontend[]; backends: HxBackend[]; config_version: number; keeps_server_state: boolean }
-export type HxPoint = [number, { f: Record<string, { req: number; sess: number; slim: number; e5: number; e5_pct: number; in: number; out: number }>; b: Record<string, { req: number; sess: number; rtime: number; queue: number; e5: number }> }];
+export type HxPoint = [number, { f: Record<string, { req: number; sess: number; slim: number; e5: number; e5_pct: number; in: number; out: number }>; b: Record<string, { req: number; rq?: number; sess: number; rtime: number; queue: number; e5: number; e5_pct?: number }> }];
 export interface HxOp { op: "create" | "update" | "delete" | "raw"; kind: "frontend" | "backend" | "server" | "config"; name?: string; backend?: string; data?: Record<string, any> }
 
 export const STATE: Record<string, { level: Level; label: string }> = {
@@ -19,7 +22,6 @@ export const STATE: Record<string, { level: Level; label: string }> = {
   maint: { level: "neutral", label: "Maintenance" }, nocheck: { level: "neutral", label: "No check" }, unknown: { level: "neutral", label: "Unknown" },
 };
 export const ROUTE_KIND: Record<string, string> = { path_prefix: "Path starts with", path: "Path is", host: "Host is", header: "Header", src: "Client IP in", other: "Rule" };
-export const BALANCE = [["roundrobin", "Round robin"], ["leastconn", "Least connections"], ["source", "Source IP (sticky)"], ["static-rr", "Static round robin"], ["first", "First available"], ["uri", "URI hash"]];
 
 export const bindText = (b: HxBind) => `${b.address === "*" ? "*" : b.address}:${b.port}${b.ssl ? " (TLS)" : ""}`;
 export function routeText(r: HxRoute) { return r.kind === "header" ? `${r.header}: ${r.value}` : r.value; }
@@ -51,6 +53,11 @@ export const hx = {
   setSync: (id: number, backend: string, body: any) => hub.put<HxSync & { message: string }>(`/haproxy/${id}/k8s-sync/${encodeURIComponent(backend)}`, body),
   runSync: (id: number, backend: string) => hub.post<HxSync & { message: string }>(`/haproxy/${id}/k8s-sync/${encodeURIComponent(backend)}/run`),
   deleteSync: (id: number, backend: string) => hub.del(`/haproxy/${id}/k8s-sync/${encodeURIComponent(backend)}`),
+  stickReset: (id: number, table: string, key: string) => hub.post<{ message: string }>(`/haproxy/${id}/stick-tables/${encodeURIComponent(table)}/reset`, { key }),
+  blocklist: (id: number) => hub.get<{ ready: boolean; ips: string[]; protected: string[]; missing: string[] }>(`/haproxy/${id}/blocklist`),
+  block: (id: number, ip: string, reason = "") => hub.post<{ message: string; reloaded: boolean }>(`/haproxy/${id}/blocklist`, { ip, reason }, 60000),
+  unblock: (id: number, ip: string) => hub.del<{ message: string }>(`/haproxy/${id}/blocklist`, { ip }),
+  groupDrift: (id: number) => hub.get<{ group: string; text: string; others: { id: number; name: string; same: boolean; diff: string; text?: string; error: string }[] }>(`/haproxy/${id}/group-drift`),
 };
 
 export interface HxPlan { diff: string; valid: boolean; error: string; applied: boolean; summary: string[] }
@@ -75,4 +82,9 @@ export function frontendShape(f: HxFrontend, backends: Map<string, HxBackend>) {
   const health = names.map((n) => backends.get(n)).map((b) => (b ? backendHealth(b).level : "critical"));
   const level: Level = health.includes("critical") ? "critical" : health.includes("warning") ? "warning" : kind === "none" ? "warning" : "good";
   return { kind, label, lanes, backends: names, level, icon: kind === "proxy" ? "lb" : "map" };
+}
+/** Live numbers for one route = its backend's latest sample: requests/s (sessions/s for TCP), 5xx %, response time. */
+export function routeNumbers(p: HxPoint[1] | undefined, backend: string) {
+  const b = p?.b[backend];
+  return b ? { rate: b.rq || b.req || 0, err: b.e5_pct || 0, ms: b.rtime || 0 } : { rate: 0, err: 0, ms: 0 };
 }

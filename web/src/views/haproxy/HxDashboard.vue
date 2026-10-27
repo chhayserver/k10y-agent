@@ -1,18 +1,18 @@
 <script setup lang="ts">
 // HAProxy dashboard: one status line, key numbers, problems, each frontend drawn as its routing
 // (proxy or path routing), one flexible traffic chart and an optional topology. Layout is per user.
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import Badge from "@/components/Badge.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import Icon from "@/components/Icon.vue";
 import LineChart from "@/components/LineChart.vue";
-import { backendHealth, fmtRate as fmtN, frontendShape, num, serverDots as dots, type HxFrontend, type HxOverview, type HxPoint } from "@/lib/haproxy";
+import { backendHealth, fmtRate as fmtN, frontendShape, hx, num, routeNumbers, serverDots as dots, type HxFrontend, type HxOverview, type HxPoint } from "@/lib/haproxy";
 import { prefs, resetHxDash } from "@/stores/prefs";
 import HxKpis, { type Kpi } from "./HxKpis.vue";
 import HxTopology from "./HxTopology.vue";
 
 const props = defineProps<{ data: HxOverview; points: HxPoint[]; canAi: boolean; canManage: boolean }>();
-const emit = defineEmits<{ pick: [kind: string, name: string]; ai: []; go: [page: string]; connection: []; addHaproxy: [] }>();
+const emit = defineEmits<{ pick: [kind: string, name: string]; ai: []; go: [page: string]; connection: []; addHaproxy: []; drift: [] }>();
 const d = computed(() => prefs.hxDash);
 const on = (k: string) => d.value.sections[k] !== false;
 
@@ -63,7 +63,6 @@ const status = computed(() => {
 const shape = (f: HxFrontend) => frontendShape(f, backendsBy.value);
 const feRate = (f: HxFrontend) => last.value?.f[f.name]?.req ?? (Number(f.stats.req_rate ?? f.stats.rate) || 0);
 const feErr = (f: HxFrontend) => last.value?.f[f.name]?.e5_pct ?? 0;
-const beRate = (name: string) => last.value?.b[name]?.req ?? 0;
 
 // --- traffic chart ---------------------------------------------------------------------------
 const METRICS: Record<string, { label: string; field: string; fmt: (v: number) => string; backendOnly?: boolean }> = {
@@ -76,14 +75,30 @@ const METRICS: Record<string, { label: string; field: string; fmt: (v: number) =
 const COLORS = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)", "var(--series-5)", "var(--series-6)", "var(--series-7)", "var(--series-8)"];
 const by = computed(() => (METRICS[d.value.metric]?.backendOnly ? "backend" : d.value.by));
 const names = computed(() => (by.value === "frontend" ? frontends.value.map((f) => f.name) : props.data.backends.map((b) => b.name)));
+// Ranges up to an hour use the live 10-second samples; longer ones load one-minute averages (kept a week).
+const RANGES: Record<string, [string, number]> = { "15m": ["15 min", 15 * 60e3], "1h": ["1 hour", 3600e3], "6h": ["6 hours", 6 * 3600e3], "24h": ["24 hours", 86400e3], "7d": ["7 days", 7 * 86400e3] };
+const span = computed(() => (RANGES[d.value.range] || RANGES["1h"])[1]);
+const longPoints = ref<HxPoint[]>([]);
+let longTimer = 0;
+async function loadLong() {
+  try { longPoints.value = (await hx.history(props.data.instance.id, Date.now() - span.value)).points; } catch { /* keep what we have */ }
+}
+watch([span, () => props.data.instance.id], () => {
+  clearInterval(longTimer); longPoints.value = [];
+  if (span.value > 3600e3) { loadLong(); longTimer = window.setInterval(loadLong, 60000); }
+}, { immediate: true });
+onBeforeUnmount(() => clearInterval(longTimer));
+const source = computed(() => (span.value > 3600e3 ? longPoints.value : props.points));
 const chart = computed(() => {
   const m = METRICS[d.value.metric] || METRICS.req, key = by.value === "frontend" ? "f" : "b";
   const pick = d.value.only.filter((n) => names.value.includes(n));
   return names.value.map((n, i) => ({ n, color: COLORS[i % COLORS.length] })).filter((x) => !pick.length || pick.includes(x.n)).map(({ n, color }) => ({
     label: n, color,
-    points: props.points.filter((p) => (p[1] as any)[key][n]).map((p) => {
+    points: source.value.filter((p) => (p[1] as any)[key][n]).map((p) => {
       const v: any = (p[1] as any)[key][n];
-      const y = m.field === "e5_pct" && key === "b" ? (v.req ? (100 * v.e5) / v.req : 0) : Number(v[m.field]) || 0;
+      // Backends: HTTP requests/s when known (rq), else new sessions/s (TCP).
+      const y = key === "b" && m.field === "req" ? Number(v.rq || v.req) || 0
+        : m.field === "e5_pct" && key === "b" && v.e5_pct == null ? (v.req ? (100 * v.e5) / v.req : 0) : Number(v[m.field]) || 0;
       return [p[0], y] as [number, number];
     }),
   }));
@@ -106,7 +121,8 @@ const customizing = ref(false);
   <div class="hxd-status" :class="status.level">
     <span class="hxd-status-ic"><Icon :name="status.icon" /></span>
     <div class="hxd-status-text"><b>{{ status.text }}</b>
-      <span class="hint">{{ data.instance.name }} · {{ data.instance.url }} · config version {{ data.config_version }}<template v-if="data.instance.group_name"> · group {{ data.instance.group_name }} ({{ data.group.length + 1 }} HAProxy)</template></span></div>
+      <span class="hint">{{ data.instance.name }} · {{ data.instance.url }} · config version {{ data.config_version }}<template v-if="data.instance.group_name"> · group {{ data.instance.group_name }} ({{ data.group.length + 1 }} HAProxy)
+        <button class="link" @click="emit('drift')">compare configs</button></template></span></div>
     <span class="grow" />
     <button v-if="canAi" class="btn" @click="emit('ai')"><Icon name="ai" /><span>{{ problems.length ? "Ask AI why" : "Ask AI" }}</span></button>
     <button class="btn" :aria-pressed="customizing" @click="customizing = !customizing"><Icon name="gear" /><span>Customize</span></button>
@@ -142,7 +158,8 @@ const customizing = ref(false);
     <div v-else class="hxd-fes">
       <article v-for="f in frontends" :key="f.name" class="card hxd-fe">
         <header class="hxd-fe-head" role="button" tabindex="0" @click="emit('pick', 'frontend', f.name)" @keydown.enter="emit('pick', 'frontend', f.name)">
-          <div class="hxd-fe-title"><span class="mono">{{ f.name }}</span><span class="chip"><Icon :name="shape(f).icon" />{{ shape(f).label }}</span></div>
+          <div class="hxd-fe-title"><span class="mono">{{ f.name }}</span><span class="chip"><Icon :name="shape(f).icon" />{{ shape(f).label }}</span>
+            <span v-if="f.policies?.maintenance?.enabled" class="chip sm hxd-maint">Maintenance</span></div>
           <div class="hxd-fe-listen">
             <span v-for="b in f.binds" :key="`${b.address}:${b.port}`" class="mono"><Icon v-if="b.ssl" name="lock" />{{ b.address === "*" ? "" : b.address }}:{{ b.port }}</span>
             <span v-if="f.policies?.rate_limit" class="chip sm">rate limit</span><span v-if="f.policies?.allow_ips?.length" class="chip sm">IP allow-list</span></div>
@@ -157,7 +174,9 @@ const customizing = ref(false);
             <span class="hxd-be"><span class="mono">{{ l.backend }}</span>
               <span class="hxd-dots" :title="backendsBy.get(l.backend) ? backendHealth(backendsBy.get(l.backend)!).label : 'missing backend'">
                 <i v-for="(s, j) in dots(backendsBy.get(l.backend))" :key="j" :class="s" /><Badge v-if="!backendsBy.get(l.backend)" level="critical" label="missing" /></span></span>
-            <span class="hxd-lane-rate dim">{{ fmtN(beRate(l.backend)) }}/s</span>
+            <span class="hxd-lane-rate"><b>{{ fmtN(routeNumbers(last, l.backend).rate) }}</b>/s
+              <span :class="{ bad: routeNumbers(last, l.backend).err >= 5, warn: routeNumbers(last, l.backend).err >= 1 && routeNumbers(last, l.backend).err < 5 }">{{ fmtN(routeNumbers(last, l.backend).err) }}%</span>
+              <span class="dim">{{ routeNumbers(last, l.backend).ms ? `${routeNumbers(last, l.backend).ms} ms` : "–" }}</span></span>
           </li>
           <li v-if="!shape(f).lanes.length" class="dim">No backend: requests get a 503.</li>
           <li v-if="!f.simple_routes" class="dim">Also has custom routing rules (see Raw config).</li>
@@ -176,21 +195,21 @@ const customizing = ref(false);
         <button :aria-pressed="by === 'backend'" @click="d.by = 'backend'">By backend</button></div>
       <span class="grow" />
       <div class="segmented sm" role="group" aria-label="Time range">
-        <button :aria-pressed="d.range === '15m'" @click="d.range = '15m'">15 min</button><button :aria-pressed="d.range === '1h'" @click="d.range = '1h'">1 hour</button></div>
+        <button v-for="(r, k) in RANGES" :key="k" :aria-pressed="d.range === k" @click="d.range = k as any">{{ r[0] }}</button></div>
     </div>
     <div class="card-body">
       <div class="hxd-legend">
         <button v-for="n in names" :key="n" class="hxd-legend-item" :aria-pressed="!d.only.length || d.only.includes(n)" @click="toggleOnly(n)">
           <i :style="{ background: colorOf(n) }" />{{ n }}</button>
         <button v-if="d.only.length" class="link" @click="d.only = []">Show all</button></div>
-      <LineChart :series="chart" :y-fmt="(METRICS[d.metric] || METRICS.req).fmt" :range="d.range === '15m' ? 15 * 60e3 : 60 * 60e3" :height="240"
-        empty-sub="Collecting samples (every 10 s)…" :aria-label="`${(METRICS[d.metric] || METRICS.req).label} by ${by}`" />
+      <LineChart :series="chart" :y-fmt="(METRICS[d.metric] || METRICS.req).fmt" :range="span" :height="240"
+        :empty-sub="span > 3600e3 ? 'Longer ranges fill in as k10y keeps one-minute averages (up to 7 days).' : 'Collecting samples (every 10 s)…'" :aria-label="`${(METRICS[d.metric] || METRICS.req).label} by ${by}`" />
     </div>
   </section>
 
   <!-- topology -->
   <section v-if="on('topology')" class="card hxd-section"><div class="card-head"><h2>Topology</h2><div class="right"><button class="btn sm" @click="emit('go', 'haproxy-topology')">Full view</button></div></div>
-    <div class="card-body"><HxTopology :data="data" @pick="(k: string, n: string) => emit('pick', k, n)" /></div></section>
+    <div class="card-body"><HxTopology :data="data" :points="points" @pick="(k: string, n: string) => emit('pick', k, n)" /></div></section>
 </template>
 
 <style scoped>
@@ -236,7 +255,7 @@ const customizing = ref(false);
 .hxd-fe-nums b { color: var(--text); font-variant-numeric: tabular-nums; }
 .hxd-fe-nums .warn b { color: var(--warning); } .hxd-fe-nums .bad b { color: var(--critical); }
 .hxd-lanes { list-style: none; margin: 0; padding: 6px 0; }
-.hxd-lanes li { display: grid; grid-template-columns: minmax(0, 1.1fr) 18px minmax(0, 1fr) 56px; align-items: center; gap: 8px; padding: 7px 16px; font-size: 13px; }
+.hxd-lanes li { display: grid; grid-template-columns: minmax(0, 1.1fr) 18px minmax(0, 1fr) 150px; align-items: center; gap: 8px; padding: 7px 16px; font-size: 13px; }
 .hxd-lanes li.clickable { cursor: pointer; } .hxd-lanes li.clickable:hover { background: var(--surface-hover); }
 .hxd-match { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hxd-arrow { color: var(--muted); text-align: center; }
@@ -245,7 +264,10 @@ const customizing = ref(false);
 .hxd-dots { display: inline-flex; gap: 3px; align-items: center; flex-wrap: wrap; }
 .hxd-dots i { width: 8px; height: 8px; border-radius: 50%; display: block; }
 .hxd-dots .up { background: var(--good); } .hxd-dots .out { background: var(--warning); } .hxd-dots .down { background: var(--critical); }
-.hxd-lane-rate { text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; }
+.hxd-lane-rate { display: flex; gap: 8px; justify-content: flex-end; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
+.hxd-lane-rate b { color: var(--text); font-weight: 600; }
+.hxd-lane-rate .warn { color: var(--warning); } .hxd-lane-rate .bad { color: var(--critical); }
+.hxd-maint { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
 
 .hxd-chart-head { flex-wrap: wrap; gap: 10px; }
 .hxd-legend { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; align-items: center; }

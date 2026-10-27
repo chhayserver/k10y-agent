@@ -6,6 +6,18 @@ title: Changelog
 
 Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached to the [GitHub release](https://github.com/zorouzumaki1111-cmd/k10y-agent/releases).
 
+## Unreleased
+
+- **New frontend, guided:** pick what you're setting up (microservice gateway by path, website, API, WebSocket, PostgreSQL, MySQL, Redis, MongoDB, other TCP) and fill in only what it needs, with realistic example values. One reviewed change creates the frontend and all its backends with their servers.
+- **Every balancing method and health check:** round robin, least connections, random, first available, client IP, URL path/parameter, header, custom hash, RDP cookie; HTTP (method, path, Host), TCP, PostgreSQL, MySQL, Redis, TLS, SMTP and LDAP checks. Plus sticky sessions, X-Forwarded-For, timeouts, and server max connections and TLS. Each option says when to use it.
+- **Add a route in one step:** path → new backend with its servers (or an existing one), placed before shorter paths.
+- **Live numbers per route** (requests/s, error rate, response time) on Frontends and the Overview, and **live traffic on the topology**.
+- **Charts up to 7 days** (15 min, 1 h, 6 h, 24 h, 7 days) from one-minute averages kept in PostgreSQL.
+- **Maintenance page** per frontend, with addresses that still get through.
+- **Block an IP instantly** (no reload after the first time), from **Rate limits & blocks** or a log line, and **unblock a rate-limited client**.
+- **Copy a frontend or backend to another HAProxy**, and **compare configs** across a group with "make the same".
+- Fix: k10y now runs Data Plane API transactions on each HAProxy one at a time; two at once could crash the Data Plane API.
+
 ## 2.3.1 <Badge type="tip" text="latest" />
 
 - **OpenRouter as an AI provider:** one key for models from many vendors (Gemini, GPT, Claude, DeepSeek, Qwen…). **Load models** lists only models that support tool calling. Keys for Gemini, CodeCraft and OpenRouter are kept side by side; switch with one click when one is down.

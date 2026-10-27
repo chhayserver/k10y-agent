@@ -6,17 +6,17 @@ import type { HxOp, HxServer } from "@/lib/haproxy";
 
 const props = defineProps<{ open: boolean; backend: string; server: HxServer | null }>();
 const emit = defineEmits<{ close: []; review: [ops: HxOp[], title: string] }>();
-const f = reactive({ name: "", address: "", port: 80 as number | string, weight: 100 as number | string, check: true, backup: false, err: "" });
+const f = reactive({ name: "", address: "", port: 80 as number | string, weight: 100 as number | string, check: true, backup: false, maxconn: 0 as number | string, ssl: false, err: "" });
 watch(() => props.open, (o) => {
   if (!o) return;
   const s = props.server;
-  Object.assign(f, { name: s?.name || "", address: s?.address || "", port: s?.port || 80, weight: s?.weight ?? 100, check: s ? s.check : true, backup: s?.backup || false, err: "" });
+  Object.assign(f, { name: s?.name || "", address: s?.address || "", port: s?.port || 80, weight: s?.weight ?? 100, check: s ? s.check : true, backup: s?.backup || false, maxconn: s?.maxconn || 0, ssl: !!s?.ssl, err: "" });
 });
 function submit() {
   f.err = "";
   if (!f.name.trim() || !f.address.trim()) { f.err = "Name and address are required."; return; }
   emit("review", [{ op: props.server ? "update" : "create", kind: "server", backend: props.backend, name: f.name.trim(),
-    data: { address: f.address.trim(), port: Number(f.port), weight: Number(f.weight), check: f.check, backup: f.backup } }],
+    data: { address: f.address.trim(), port: Number(f.port), weight: Number(f.weight), check: f.check, backup: f.backup, maxconn: Number(f.maxconn) || 0, ssl: f.ssl } }],
   props.server ? `Edit server ${props.backend}/${f.name}` : `Add server to ${props.backend}`);
 }
 </script>
@@ -28,10 +28,13 @@ function submit() {
       <div class="form-row"><label class="lbl">Port</label><input v-model="f.port" class="input" type="number" min="1" max="65535"></div>
     </div>
     <div class="form-row"><label class="lbl">Weight</label><input v-model="f.weight" class="input" type="number" min="0" max="256">
-      <span class="hint">Share of traffic relative to the other servers (0–256). 0 sends no new traffic.</span></div>
+      <span class="hint">Share of traffic relative to the other servers (0–256), e.g. 100 for normal servers and 10 for a canary. 0 sends no new traffic.</span></div>
+    <div class="form-row"><label class="lbl">Max connections</label><input v-model="f.maxconn" class="input" type="number" min="0" placeholder="0" style="max-width:160px">
+      <span class="hint">Extra connections wait in HAProxy's queue instead of overloading the server, e.g. 200 for an app server, 100 for a database. 0 = no limit.</span></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <label class="pill"><input v-model="f.check" type="checkbox"> Health check</label>
-      <label class="pill"><input v-model="f.backup" type="checkbox"> Backup (only used when all others are down)</label></div>
+      <label class="pill"><input v-model="f.backup" type="checkbox"> Backup (only used when all others are down)</label>
+      <label class="pill"><input v-model="f.ssl" type="checkbox"> TLS to the server (e.g. port 443)</label></div>
     <p class="hint" style="margin:0">To take a server out of rotation temporarily, use <b>Drain</b> or <b>Maintenance</b> in its menu instead: that's instant and needs no reload.</p>
     <div v-if="f.err" class="test-result show err"><Icon name="crit" /><span>{{ f.err }}</span></div>
     <template #actions><button class="btn ghost" type="button" @click="emit('close')">Cancel</button><span style="flex:1" />
