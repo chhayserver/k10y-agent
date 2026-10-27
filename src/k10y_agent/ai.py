@@ -6,7 +6,8 @@ through the normal control API (protected namespaces, dry run, confirmation, aud
 
 Providers:
   gemini    Google Gemini generateContent API (function calling)
-  openai    any OpenAI-compatible /chat/completions API, e.g. CodeCraft API
+  openai      any OpenAI-compatible /chat/completions API, e.g. CodeCraft API
+  openrouter  OpenRouter (OpenAI-compatible; one key for models from many vendors)
 """
 
 import base64
@@ -28,7 +29,10 @@ PROVIDERS = {
                "default_model": "gemini-3.8-flash"},
     "openai": {"label": "CodeCraft API (OpenAI-compatible)", "base_url": "https://codecraftapi.com/v1",
                "default_model": ""},
+    "openrouter": {"label": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "default_model": ""},
 }
+# OpenRouter shows these on its dashboard so you can see which app made each call.
+OPENROUTER_HEADERS = {"HTTP-Referer": "https://k10y.pages.dev", "X-Title": "k10y"}
 AI_SECRET = "k10y-ai"
 MAX_STEPS = 16
 MAX_TOOL_OUTPUT = 7000
@@ -322,9 +326,10 @@ class GeminiChat:
 
 
 class OpenAIChat:
-    def __init__(self, api_key: str, model: str, base_url: str, system: str, tools: List[dict]):
+    def __init__(self, api_key: str, model: str, base_url: str, system: str, tools: List[dict],
+                 extra_headers: Optional[Dict[str, str]] = None):
         self.url = f"{base_url.rstrip('/')}/chat/completions"
-        self.headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        self.headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", **(extra_headers or {})}
         self.model = model
         self.tools = [{"type": "function", "function": t} for t in tools]
         self.messages: List[dict] = [{"role": "system", "content": system}]
@@ -368,7 +373,7 @@ def _hint(status: int) -> str:
         return " (Check the API key in AI settings.)"
     if status in (500, 502, 503, 504):
         return (" (The AI provider is having trouble on its side, not k10y. Try again in a few minutes, "
-                "or switch to the other provider with one click on the AI page.)")
+                "or switch to another provider with one click on the AI page.)")
     return ""
 
 
@@ -511,8 +516,11 @@ def make_chat(cfg: Dict[str, str], system: str, tools: Optional[List[dict]] = No
         raise ProviderError("No API key configured. Open AI settings and add your key.")
     if not cfg.get("model"):
         raise ProviderError("No model selected. Open AI settings and choose a model.")
-    cls = GeminiChat if cfg["provider"] == "gemini" else OpenAIChat
-    return cls(cfg["api_key"], cfg["model"], cfg["base_url"], system, tools if tools is not None else TOOLS)
+    tools = tools if tools is not None else TOOLS
+    if cfg["provider"] == "gemini":
+        return GeminiChat(cfg["api_key"], cfg["model"], cfg["base_url"], system, tools)
+    extra = OPENROUTER_HEADERS if cfg["provider"] == "openrouter" else None
+    return OpenAIChat(cfg["api_key"], cfg["model"], cfg["base_url"], system, tools, extra_headers=extra)
 
 
 def list_models(cfg: Dict[str, str]) -> List[str]:
@@ -528,7 +536,11 @@ def list_models(cfg: Dict[str, str]) -> List[str]:
     r = httpx.get(f"{base}/models", headers={"Authorization": f"Bearer {cfg['api_key']}"}, timeout=30)
     if r.status_code >= 400:
         raise ProviderError(f"API {r.status_code}: {_api_error(r)}")
-    return sorted(m["id"] for m in r.json().get("data", []))
+    models = r.json().get("data", [])
+    if cfg["provider"] == "openrouter":
+        # OpenRouter lists hundreds of models; investigations need tool calling.
+        models = [m for m in models if "tools" in (m.get("supported_parameters") or [])]
+    return sorted(m["id"] for m in models)
 
 
 # --- the investigation loop ---------------------------------------------------------------

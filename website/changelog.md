@@ -6,6 +6,10 @@ title: Changelog
 
 Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached to the [GitHub release](https://github.com/zorouzumaki1111-cmd/k10y-agent/releases).
 
+## Unreleased
+
+- **OpenRouter as an AI provider:** one key for models from many vendors (Gemini, GPT, Claude, DeepSeek, Qwen…). **Load models** lists only models that support tool calling. Keys for Gemini, CodeCraft and OpenRouter are kept side by side; switch with one click when one is down.
+
 ## 2.3.0 <Badge type="tip" text="latest" />
 
 - **HAProxy dashboard redesign:** a status line that says what's wrong, key numbers with trends (requests/s, error rate, response time, sessions, servers up), problems only when there are some, each frontend drawn as its routing (proxy, or path routing to several backends) with live server health, and one traffic chart where you pick the metric, compare by frontend or backend, and show only some. **Customize** chooses the sections; saved to your account.

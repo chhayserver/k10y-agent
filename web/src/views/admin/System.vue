@@ -67,9 +67,9 @@ async function removeKey(id: string) { if (!confirm("Remove this provider's key?
         <Badge v-else level="neutral" label="No key" /></div></div>
       <div v-if="drafts[id]" class="card-body" style="display:flex;flex-direction:column;gap:12px">
         <div class="form-row"><label class="lbl">API key</label><PasswordInput v-model="drafts[id].key" autocomplete="off" mono
-          :placeholder="p.key_hint ? `Saved key ${p.key_hint}. Leave empty to keep it` : id === 'gemini' ? 'Google API key' : 'cc_… key'" />
-          <span class="hint"><template v-if="id === 'gemini'">Create a key at aistudio.google.com/apikey.</template><template v-else>Create a key at codecraftapi.com. Any OpenAI-compatible API works with its base URL.</template></span></div>
-        <div class="form-row"><label class="lbl">Model</label><div class="field"><input v-model="drafts[id].model" class="input" :list="`models-${id}`" style="font-family:var(--mono)" :placeholder="p.default_model || 'pick a model'">
+          :placeholder="p.key_hint ? `Saved key ${p.key_hint}. Leave empty to keep it` : ({ gemini: 'Google API key', openrouter: 'sk-or-… key' } as Record<string, string>)[id] || 'cc_… key'" />
+          <span class="hint"><template v-if="id === 'gemini'">Create a key at aistudio.google.com/apikey.</template><template v-else-if="id === 'openrouter'">Create a key at openrouter.ai/keys. Model names look like <code>vendor/model</code>; <b>Load models</b> lists only those that support tool calling.</template><template v-else>Create a key at codecraftapi.com. Any OpenAI-compatible API works with its base URL.</template></span></div>
+        <div class="form-row"><label class="lbl">Model</label><div class="field"><input v-model="drafts[id].model" class="input" :list="`models-${id}`" style="font-family:var(--mono)" :placeholder="p.default_model || (id === 'openrouter' ? 'e.g. google/… or openai/… (Load models)' : 'pick a model')">
           <button class="btn" type="button" :disabled="drafts[id].busy" @click="models(String(id))">Load models</button></div>
           <datalist :id="`models-${id}`"><option v-for="m in drafts[id].models" :key="m" :value="m" /></datalist>
           <span class="hint">The model must support tool (function) calling.</span></div>

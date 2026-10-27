@@ -269,7 +269,7 @@ ai_store = ai.AIConfigStore(
 
 
 class AIConfigBody(BaseModel):
-    provider: str = Field(pattern="^(gemini|openai)$")
+    provider: str = Field(pattern="^(gemini|openai|openrouter)$")
     api_key: Optional[str] = Field(None, max_length=512, description="Omit to keep the stored key.")
     model: str = Field("", max_length=200)
     base_url: str = Field("", max_length=300)
@@ -277,17 +277,17 @@ class AIConfigBody(BaseModel):
 
 
 class AIActiveBody(BaseModel):
-    provider: str = Field(pattern="^(gemini|openai)$")
+    provider: str = Field(pattern="^(gemini|openai|openrouter)$")
 
 
 class AIModelsBody(BaseModel):
-    provider: str = Field(pattern="^(gemini|openai)$")
+    provider: str = Field(pattern="^(gemini|openai|openrouter)$")
     api_key: Optional[str] = Field(None, max_length=512)
     base_url: str = Field("", max_length=300)
 
 
 class DiagnoseBody(BaseModel):
-    provider: Optional[str] = Field(None, pattern="^(gemini|openai)$", description="Default: the active provider.")
+    provider: Optional[str] = Field(None, pattern="^(gemini|openai|openrouter)$", description="Default: the active provider.")
     scope: str = Field("cluster", pattern="^(cluster|namespace|object)$")
     namespace: Optional[str] = Field(None, max_length=253)
     kind: Optional[str] = Field(None, pattern="^(Pod|Deployment|Service|Node)$")
@@ -340,7 +340,7 @@ def set_ai_active(body: AIActiveBody, request: Request) -> dict:
 
 
 @api.delete("/ai/config")
-def clear_ai_config(request: Request, provider: str = Query(..., pattern="^(gemini|openai)$")) -> dict:
+def clear_ai_config(request: Request, provider: str = Query(..., pattern="^(gemini|openai|openrouter)$")) -> dict:
     ai_store.clear(provider)
     _audit_ai(request, "ai-config", f"AI key removed for {provider}", {"provider": provider})
     return ai_config()

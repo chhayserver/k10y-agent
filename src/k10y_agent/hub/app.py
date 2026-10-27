@@ -850,7 +850,7 @@ class HubAIStore(ai.AIConfigStore):
 
 
 class AIConfigBody(BaseModel):
-    provider: str = Field(pattern="^(gemini|openai)$")
+    provider: str = Field(pattern="^(gemini|openai|openrouter)$")
     api_key: Optional[str] = Field(None, max_length=512)
     model: str = Field("", max_length=200)
     base_url: str = Field("", max_length=300)
@@ -858,13 +858,13 @@ class AIConfigBody(BaseModel):
 
 
 class AIProviderBody(BaseModel):
-    provider: str = Field(pattern="^(gemini|openai)$")
+    provider: str = Field(pattern="^(gemini|openai|openrouter)$")
     api_key: Optional[str] = Field(None, max_length=512)
     base_url: str = Field("", max_length=300)
 
 
 class DiagnoseBody(BaseModel):
-    provider: Optional[str] = Field(None, pattern="^(gemini|openai)$")
+    provider: Optional[str] = Field(None, pattern="^(gemini|openai|openrouter)$")
     scope: str = Field("cluster", pattern="^(cluster|namespace|object)$")
     namespace: Optional[str] = Field(None, max_length=253)
     kind: Optional[str] = Field(None, max_length=40)

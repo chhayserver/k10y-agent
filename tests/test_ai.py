@@ -155,3 +155,25 @@ def test_removing_active_key_falls_back_to_other_provider():
     assert store.load_all()["active"] == "gemini"
     store.clear("gemini")
     assert store._raw() == {}
+
+
+def test_openrouter_uses_openai_chat_with_app_headers():
+    chat = ai.make_chat({"provider": "openrouter", "api_key": "sk-or-test", "model": "vendor/model",
+                         "base_url": ai.PROVIDERS["openrouter"]["base_url"]}, "system")
+    assert isinstance(chat, ai.OpenAIChat)
+    assert chat.url == "https://openrouter.ai/api/v1/chat/completions"
+    assert chat.headers["Authorization"] == "Bearer sk-or-test" and chat.headers["X-Title"] == "k10y"
+    other = ai.make_chat({"provider": "openai", "api_key": "k", "model": "m", "base_url": "https://x/v1"}, "s")
+    assert "X-Title" not in other.headers
+
+
+def test_openrouter_lists_only_models_with_tool_calling(monkeypatch):
+    class R:
+        status_code = 200
+        def json(self):
+            return {"data": [{"id": "b/tools", "supported_parameters": ["tools", "temperature"]},
+                             {"id": "a/no-tools", "supported_parameters": ["temperature"]}, {"id": "c/unknown"}]}
+    monkeypatch.setattr(ai.httpx, "get", lambda *a, **k: R())
+    cfg = {"provider": "openrouter", "api_key": "k", "base_url": "https://openrouter.ai/api/v1"}
+    assert ai.list_models(cfg) == ["b/tools"]
+    assert ai.list_models({**cfg, "provider": "openai"}) == ["a/no-tools", "b/tools", "c/unknown"]

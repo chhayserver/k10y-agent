@@ -11,9 +11,10 @@ You need the `settings.manage` permission. Open **Administration → System sett
 | Provider | What to enter |
 |---|---|
 | **Google Gemini** | An API key from Google AI Studio. The default model is `gemini-3.8-flash`. |
+| **OpenRouter** | An API key from [openrouter.ai/keys](https://openrouter.ai/keys) and a model such as `vendor/model`. One key reaches models from many vendors; **Load models** lists only the ones that support tool calling. |
 | **OpenAI-compatible** | An API key, a model that supports tool calling, and the base URL. CodeCraft API (`https://codecraftapi.com/v1`) is the default; any OpenAI-compatible API works. |
 
-Click **Load models** to pick from the provider's list, then **Save & use**. You can save keys for both providers and switch with one click. Keys are stored encrypted in the hub and never sent back to browsers.
+Click **Load models** to pick from the provider's list, then **Save & use**. You can save keys for every provider and switch with one click, for example when one provider is down. Keys are stored encrypted in the hub and never sent back to browsers.
 
 ## Investigate
 
