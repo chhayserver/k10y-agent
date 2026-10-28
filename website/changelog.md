@@ -6,7 +6,7 @@ title: Changelog
 
 Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached to the [GitHub release](https://github.com/chhayserver/k10y-agent/releases).
 
-## Unreleased
+## 2.5.0 <Badge type="tip" text="latest" />
 
 - **HAProxy permissions per instance:** a role can now be assigned on **one HAProxy instance** (like one cluster), so someone can operate `lb-edge-1` without seeing or touching the others. Lists, pages, buttons, alerts and group changes all follow it.
 - **New `haproxy.manage` permission** for adding, editing and removing HAProxy instances and their Data Plane API logins (it used to be part of `clusters.manage`). Roles that had `clusters.manage` get it automatically.
@@ -15,7 +15,7 @@ Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and 
 - **Clearer permissions on the Roles page:** HAProxy permissions have their own section, and each says exactly what it allows.
 - **Fix:** the first IP block (which adds the blocklist to every frontend) now needs `haproxy.configure`, since it changes the config.
 
-## 2.4.1 <Badge type="tip" text="latest" />
+## 2.4.1
 
 - **Fix:** in a resource's details panel, a long container image no longer wraps one letter per line, and the "Image" and "Ports" headers no longer run together.
 - **Fix:** table headers without a sort button (resource panels) now line up with their values.

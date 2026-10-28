@@ -52,7 +52,7 @@ services:
     restart: unless-stopped
 
   hub:
-    image: ${K10Y_IMAGE:-docker.io/k10y/k10y-agent:2.4.1}
+    image: ${K10Y_IMAGE:-docker.io/k10y/k10y-agent:2.5.0}
     depends_on:
       postgres:
         condition: service_healthy
