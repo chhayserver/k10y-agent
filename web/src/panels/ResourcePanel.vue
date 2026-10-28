@@ -196,8 +196,8 @@ async function copyYaml() { try { await navigator.clipboard.writeText(d.value.ya
         <h3 class="section-title">Containers</h3>
         <div class="table-wrap card" style="box-shadow:none"><table class="data"><thead><tr><th>Name</th><th>Image</th><th>Ports</th><th>Requests</th><th>Limits</th><th>Probes</th>
           <th v-if="r.kind === 'Pod'">State</th><th v-if="r.kind === 'Pod'">Restarts</th></tr></thead><tbody>
-          <tr v-for="x in tmpl?.containers || sp.containers" :key="x.name"><td class="primary">{{ x.name }}</td><td class="mono" style="white-space:normal;overflow-wrap:anywhere">{{ x.image }}</td>
-            <td>{{ ports(x) }}</td><td>{{ qty(x.resources?.requests) }}</td><td>{{ qty(x.resources?.limits) }}</td><td>{{ probes(x) }}</td>
+          <tr v-for="x in tmpl?.containers || sp.containers" :key="x.name"><td class="primary">{{ x.name }}</td><td class="mono rp-image">{{ x.image }}</td>
+            <td>{{ ports(x) }}</td><td class="rp-wrap">{{ qty(x.resources?.requests) }}</td><td class="rp-wrap">{{ qty(x.resources?.limits) }}</td><td class="rp-wrap">{{ probes(x) }}</td>
             <template v-if="r.kind === 'Pod'"><td>{{ stateOf(x.name, st.containerStatuses)?.text }}</td><td class="num">{{ stateOf(x.name, st.containerStatuses)?.restarts ?? "–" }}</td></template></tr>
         </tbody></table></div>
       </div>
