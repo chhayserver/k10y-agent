@@ -6,7 +6,7 @@ Upgrade the hub and the agents to the same version.
 
 ```bash
 cd k10y
-curl -LO https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/docker-compose.yml
+curl -LO https://github.com/chhayserver/k10y-agent/releases/latest/download/docker-compose.yml
 docker compose pull
 docker compose up -d
 ```
@@ -16,7 +16,7 @@ The database schema is upgraded automatically on start. Take a [backup](./backup
 ## Agents
 
 ```bash
-kubectl apply -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install.yaml
+kubectl apply -f https://github.com/chhayserver/k10y-agent/releases/latest/download/install.yaml
 ```
 
 The API token and cluster name are kept.

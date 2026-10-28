@@ -8,7 +8,7 @@ On the machine that will run the hub (it needs Docker with Compose):
 
 ```bash
 mkdir k10y && cd k10y
-curl -LO https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/docker-compose.yml
+curl -LO https://github.com/chhayserver/k10y-agent/releases/latest/download/docker-compose.yml
 
 cat > .env <<EOT
 POSTGRES_PASSWORD=$(openssl rand -hex 24)
@@ -41,7 +41,7 @@ Open **https://&lt;server&gt;:8443**. The hub uses a self-signed certificate, so
 With `kubectl` pointing at the cluster:
 
 ```bash
-kubectl apply -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install.yaml
+kubectl apply -f https://github.com/chhayserver/k10y-agent/releases/latest/download/install.yaml
 kubectl -n k10y rollout status deploy/k10y-agent
 
 # optional: the name shown in k10y

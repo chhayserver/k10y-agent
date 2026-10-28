@@ -1,5 +1,5 @@
 # k10y-agent 2.3.1 (read-only monitoring)
-# https://github.com/zorouzumaki1111-cmd/k10y-agent
+# https://github.com/chhayserver/k10y-agent
 #
 # Install:      kubectl apply -f <this file>
 # Get token:    kubectl -n k10y get secret k10y-agent -o jsonpath='{.data.api-token}' | base64 -d; echo

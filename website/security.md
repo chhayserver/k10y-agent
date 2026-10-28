@@ -52,4 +52,4 @@ Every control attempt is stored in PostgreSQL: dry runs, refusals, failures and 
 
 ## Reporting a vulnerability
 
-Please **don't open a public issue**. Use GitHub's [private vulnerability reporting](https://github.com/zorouzumaki1111-cmd/k10y-agent/security/advisories/new) instead, with steps to reproduce. We'll confirm receipt, fix the issue, and credit you if you'd like.
+Please **don't open a public issue**. Use GitHub's [private vulnerability reporting](https://github.com/chhayserver/k10y-agent/security/advisories/new) instead, with steps to reproduce. We'll confirm receipt, fix the issue, and credit you if you'd like.

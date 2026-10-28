@@ -57,7 +57,7 @@ def build(version, control):
     docs += agent_docs(version, control)
     variant = "monitoring + control" if control else "read-only monitoring"
     header = f"""# k10y-agent {version} ({variant})
-# https://github.com/zorouzumaki1111-cmd/k10y-agent
+# https://github.com/chhayserver/k10y-agent
 #
 # Install:      kubectl apply -f <this file>
 # Get token:    kubectl -n k10y get secret k10y-agent -o jsonpath='{{.data.api-token}}' | base64 -d; echo

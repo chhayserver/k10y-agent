@@ -112,12 +112,12 @@ it.
 Requirements: Docker with Compose.
 
 ```bash
-git clone https://github.com/zorouzumaki1111-cmd/k10y-agent.git && cd k10y-agent
+git clone https://github.com/chhayserver/k10y-agent.git && cd k10y-agent
 make hub-up          # first run creates .env with a random DB password, secret key and admin password
 ```
 
 Without `make`, download
-[`docker-compose.yml`](https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/docker-compose.yml)
+[`docker-compose.yml`](https://github.com/chhayserver/k10y-agent/releases/latest/download/docker-compose.yml)
 and create `.env` next to it:
 
 ```bash
@@ -157,9 +157,9 @@ k3s, EKS, GKE and AKS). The hub must be able to reach port **30800** on a node.
 
 ```bash
 # Monitoring + control
-kubectl apply -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install.yaml
+kubectl apply -f https://github.com/chhayserver/k10y-agent/releases/latest/download/install.yaml
 # or read-only monitoring
-kubectl apply -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install-readonly.yaml
+kubectl apply -f https://github.com/chhayserver/k10y-agent/releases/latest/download/install-readonly.yaml
 
 kubectl -n k10y rollout status deploy/k10y-agent
 kubectl -n k10y create configmap k10y-settings --from-literal=cluster-name=prod   # optional display name
@@ -176,13 +176,13 @@ kubectl -n k10y get secret k10y-agent -o jsonpath='{.data.api-token}' | base64 -
 
 ```bash
 # Upgrade an agent: apply the newer install.yaml (the token is kept)
-kubectl apply -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install.yaml
+kubectl apply -f https://github.com/chhayserver/k10y-agent/releases/latest/download/install.yaml
 # Upgrade the hub: change the image tag in docker-compose.yml, then
 docker compose pull && docker compose up -d
 # Rotate an agent token (then update it in Administration → Clusters)
 kubectl -n k10y delete secret k10y-agent && kubectl -n k10y rollout restart deploy/k10y-agent
 # Uninstall an agent
-kubectl delete -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install.yaml
+kubectl delete -f https://github.com/chhayserver/k10y-agent/releases/latest/download/install.yaml
 ```
 
 ## Users, roles and permissions

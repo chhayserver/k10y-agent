@@ -11,9 +11,9 @@ Install one agent in every cluster you want to see in k10y.
 
 ```bash
 # monitoring + control
-kubectl apply -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install.yaml
+kubectl apply -f https://github.com/chhayserver/k10y-agent/releases/latest/download/install.yaml
 # or monitoring only
-kubectl apply -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install-readonly.yaml
+kubectl apply -f https://github.com/chhayserver/k10y-agent/releases/latest/download/install-readonly.yaml
 ```
 
 Both create, in namespace `k10y`:
@@ -52,5 +52,5 @@ Then [connect the cluster](./clusters) in the hub.
 ## Uninstall
 
 ```bash
-kubectl delete -f https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/install.yaml
+kubectl delete -f https://github.com/chhayserver/k10y-agent/releases/latest/download/install.yaml
 ```

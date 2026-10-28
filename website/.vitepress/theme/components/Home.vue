@@ -2,7 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { withBase } from "vitepress";
 
-const repo = "https://github.com/zorouzumaki1111-cmd/k10y-agent";
+const repo = "https://github.com/chhayserver/k10y-agent";
 
 // Hero: real screenshots of the product, switchable like n8n's workflow tabs.
 const demos = [

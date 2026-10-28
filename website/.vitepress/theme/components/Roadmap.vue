@@ -45,7 +45,7 @@ const shipped: { v: string; date: string; items: string[] }[] = [
 const areas = ["All", ...new Set(columns.flatMap((c) => c.items.map((i) => i.area)))];
 const area = ref("All");
 const visible = computed(() => columns.map((c) => ({ ...c, items: c.items.filter((i) => area.value === "All" || i.area === area.value) })));
-const repo = "https://github.com/zorouzumaki1111-cmd/k10y-agent";
+const repo = "https://github.com/chhayserver/k10y-agent";
 </script>
 
 <template>

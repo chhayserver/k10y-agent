@@ -4,7 +4,7 @@ title: Changelog
 
 # Changelog
 
-Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached to the [GitHub release](https://github.com/zorouzumaki1111-cmd/k10y-agent/releases).
+Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached to the [GitHub release](https://github.com/chhayserver/k10y-agent/releases).
 
 ## Unreleased
 

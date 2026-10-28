@@ -29,7 +29,7 @@ PLATFORMS      ?= linux/amd64,linux/arm64
 push:             ## Build multi-arch (amd64+arm64) and push :$(TAG) and :latest to REGISTRY_IMAGE
 	@test -n "$(REGISTRY_IMAGE)" || (echo "set REGISTRY_IMAGE, e.g. make push REGISTRY_IMAGE=docker.io/<user>/k10y-agent" && exit 1)
 	docker buildx build --platform $(PLATFORMS) \
-	  --label org.opencontainers.image.source=https://github.com/zorouzumaki1111-cmd/k10y-agent \
+	  --label org.opencontainers.image.source=https://github.com/chhayserver/k10y-agent \
 	  --label org.opencontainers.image.version=$(TAG) \
 	  -t $(REGISTRY_IMAGE):$(TAG) -t $(REGISTRY_IMAGE):latest --push .
 

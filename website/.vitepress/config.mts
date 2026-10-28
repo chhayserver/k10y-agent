@@ -1,6 +1,6 @@
 import { defineConfig } from "vitepress";
 
-const repo = "https://github.com/zorouzumaki1111-cmd/k10y-agent";
+const repo = "https://github.com/chhayserver/k10y-agent";
 
 export default defineConfig({
   title: "k10y-agent",

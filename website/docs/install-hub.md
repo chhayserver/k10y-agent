@@ -13,7 +13,7 @@ The hub runs with Docker Compose: the `hub` service, `postgres` (PostgreSQL 17) 
 
 ```bash
 mkdir k10y && cd k10y
-curl -LO https://github.com/zorouzumaki1111-cmd/k10y-agent/releases/latest/download/docker-compose.yml
+curl -LO https://github.com/chhayserver/k10y-agent/releases/latest/download/docker-compose.yml
 ```
 
 Create `.env` next to it:

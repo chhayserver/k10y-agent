@@ -5,7 +5,7 @@ The `k10y` command-line tool talks to agents directly, using each cluster's API 
 ## Install
 
 ```bash
-git clone https://github.com/zorouzumaki1111-cmd/k10y-agent.git && cd k10y-agent
+git clone https://github.com/chhayserver/k10y-agent.git && cd k10y-agent
 python3 -m venv .venv && .venv/bin/pip install -e .
 source .venv/bin/activate
 ```
