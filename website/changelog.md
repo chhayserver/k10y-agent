@@ -6,7 +6,12 @@ title: Changelog
 
 Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached to the [GitHub release](https://github.com/chhayserver/k10y-agent/releases).
 
-## 2.4.0 <Badge type="tip" text="latest" />
+## 2.4.1 <Badge type="tip" text="latest" />
+
+- **Fix:** in a resource's details panel, a long container image no longer wraps one letter per line, and the "Image" and "Ports" headers no longer run together.
+- **Fix:** table headers without a sort button (resource panels) now line up with their values.
+
+## 2.4.0
 
 - **New frontend, guided:** pick what you're setting up (microservice gateway by path, website, API, WebSocket, PostgreSQL, MySQL, Redis, MongoDB, other TCP) and fill in only what it needs, with realistic example values. One reviewed change creates the frontend and all its backends with their servers.
 - **Every balancing method and health check:** round robin, least connections, random, first available, client IP, URL path/parameter, header, custom hash, RDP cookie; HTTP (method, path, Host), TCP, PostgreSQL, MySQL, Redis, TLS, SMTP and LDAP checks. Plus sticky sessions, X-Forwarded-For, timeouts, and server max connections and TLS. Each option says when to use it.
