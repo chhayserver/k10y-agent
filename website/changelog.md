@@ -6,7 +6,7 @@ title: Changelog
 
 Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached to the [GitHub release](https://github.com/chhayserver/k10y-agent/releases).
 
-## Unreleased
+## 2.4.0 <Badge type="tip" text="latest" />
 
 - **New frontend, guided:** pick what you're setting up (microservice gateway by path, website, API, WebSocket, PostgreSQL, MySQL, Redis, MongoDB, other TCP) and fill in only what it needs, with realistic example values. One reviewed change creates the frontend and all its backends with their servers.
 - **Every balancing method and health check:** round robin, least connections, random, first available, client IP, URL path/parameter, header, custom hash, RDP cookie; HTTP (method, path, Host), TCP, PostgreSQL, MySQL, Redis, TLS, SMTP and LDAP checks. Plus sticky sessions, X-Forwarded-For, timeouts, and server max connections and TLS. Each option says when to use it.
@@ -20,7 +20,7 @@ Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and 
 - **Templates in the same style:** Microservices by path (HTTPS 443, `/order` → `inbound-order` on NodePorts), Web app over HTTPS (like Mattermost, TLS to the server), RabbitMQ (stick on source IP 5 min, keep-alive, 300 s timeouts), plus API, WebSocket and databases.
 - **Fix: the Data Plane API could crash** ("concurrent map iteration and map write", seen in v3.2.18) when two changes ran at the same moment, e.g. a preview while the Kubernetes sync ran. k10y now sends configuration and transaction requests to each HAProxy one at a time, retries reads while the Data Plane API restarts, and closes transactions a crash left open (and outdated ones when the limit of 20 is reached). Tested with 450 parallel previews: no crash.
 
-## 2.3.1 <Badge type="tip" text="latest" />
+## 2.3.1
 
 - **OpenRouter as an AI provider:** one key for models from many vendors (Gemini, GPT, Claude, DeepSeek, Qwen…). **Load models** lists only models that support tool calling. Keys for Gemini, CodeCraft and OpenRouter are kept side by side; switch with one click when one is down.
 
