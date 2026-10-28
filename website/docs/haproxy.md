@@ -110,6 +110,33 @@ You need the `haproxy.configure` permission.
 
 Longer paths are always checked first. **Start from a blank form instead** opens the full frontend form.
 
+### How k10y writes the config
+
+k10y follows the usual hand-written style, so its changes read like yours:
+
+```haproxy
+frontend microservices
+    bind 0.0.0.0:443 ssl crt /etc/haproxy/new-tls.pem
+    timeout client 60s
+    http-request set-header X-Forwarded-Port %[dst_port]
+    http-request redirect scheme https unless { ssl_fc }
+    use_backend inbound-order if { path /order } || { path_beg /order/ }
+
+backend inbound-order
+    mode http
+    balance roundrobin
+    option redispatch
+    retries 3
+    timeout connect 10s
+    timeout server 60s
+    server server1 172.2.2.1:32133 check inter 1s rise 3 fall 1
+```
+
+- **Routes** are written inline. **Path and under** (`/order`) becomes `{ path /order } || { path_beg /order/ }`: it matches `/order` and `/order/123` but not `/orders`. Routes that already use a named `acl` keep it, and `use_backend x` with no condition is shown as "all traffic".
+- **New servers** get the same `check inter … rise … fall …` as the backend's other servers, and names like `server1`, `s-01` or `rabbitmq-server-01`.
+- **Only what changed is written:** adding a route adds one `use_backend` line; changing a timeout changes that line. Bind lines, servers and rules you didn't touch stay exactly as written.
+- **One limit:** when a section's own settings change (timeouts, options, stick-table), the Data Plane API rewrites those lines in its format (`300s` → `5m`) and drops comments at the end of them.
+
 ### Backend settings
 
 | Setting | Choices |
@@ -119,6 +146,10 @@ Longer paths are always checked first. **Start from a blank form instead** opens
 | **Sticky sessions** | A `SERVERID` cookie keeps each user on the same server (HTTP) |
 | **Pass the client IP** | Adds `X-Forwarded-For` (HTTP) |
 | **Timeouts** | Connect, server reply and WebSocket/tunnel, in seconds. Typical: 30–60 s for APIs, 1800–3600 s for databases and WebSocket |
+| **Retry on another server** | `option redispatch` with `retries N` (3 is usual) |
+| **Check timing** | `check inter 1s rise 3 fall 1`: how often, how many OK checks to come up, how many failures to go down. Applied to every server of the backend |
+| **Keep each client IP on the same server** | `stick-table type ip size 200k expire 5m` + `stick on src`, for message queues and apps without cookies |
+| **TCP keep-alive** | `option tcpka` and `option srvtcpka` (TCP backends) |
 
 For the database checks, create a user with no rights, for example `CREATE ROLE haproxy_check LOGIN;` (PostgreSQL, allowed from HAProxy in `pg_hba.conf`) or `CREATE USER 'haproxy_check'@'10.0.0.%';` (MySQL).
 

@@ -36,7 +36,8 @@ const layout = computed(() => {
   const edges: { id: string; from: string; to: string; d: string; label: string; cls: string; ly: number; w?: number }[] = [];
   const curve = (x1: number, y1: number, x2: number, y2: number) => `M${x1},${y1} C${(x1 + x2) / 2},${y1} ${(x1 + x2) / 2},${y2} ${x2},${y2}`;
   for (const n of feNodes) {
-    const raw: [string, string][] = n.f.routes.map((r) => [r.backend, r.kind === "other" ? r.value : `${ROUTE_KIND[r.kind].toLowerCase()} ${routeText(r)}`]);
+    const raw: [string, string][] = n.f.routes.map((r) => [r.backend, r.kind === "other" ? r.value
+      : r.kind === "service" || r.kind === "always" ? routeText(r) : `${ROUTE_KIND[r.kind].toLowerCase()} ${routeText(r)}`]);
     if (n.f.default_backend) raw.push([n.f.default_backend, "default"]);
     // One line per frontend -> backend pair; several routes to the same backend share it ("2 routes").
     const byBackend = new Map<string, string[]>();

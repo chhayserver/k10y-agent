@@ -7,6 +7,7 @@ rendered config and HAProxy's own validation result; apply commits the transacti
 validates again and reloads HAProxy.
 """
 
+import copy
 import difflib
 import re
 import threading
@@ -368,26 +369,62 @@ def _stats_index(stats: List[Dict[str, Any]]) -> Dict[Tuple[str, str], Dict[str,
     return out
 
 
+def _term(crit: str, raw: str) -> Optional[Dict[str, str]]:
+    """One ACL test (criterion + value) -> a simple route kind, or None."""
+    kind = ROUTE_CRITERIA.get(crit)
+    header = HEADER_RE.match(crit) if crit and not kind else None
+    value = re.sub(r"^(-i|-m str)\s+", "", raw or "").strip()
+    if header:
+        return {"kind": "header", "value": value, "header": header.group(1)}
+    if kind:
+        return {"kind": kind, "value": ",".join(value.split()) if kind == "src" else value}
+    return None
+
+
+def _inline(cond_test: str) -> Optional[List[Tuple[str, str]]]:
+    """'{ path /order } || { path_beg /order/ }' -> [("path", "/order"), ("path_beg", "/order/")]."""
+    terms = []
+    for part in cond_test.split("||"):
+        m = re.fullmatch(r"\s*\{\s*(\S+)\s+([^{}]*?)\s*\}\s*", part)
+        if not m:
+            return None
+        terms.append((m.group(1), m.group(2)))
+    return terms
+
+
 def parse_routes(fe: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], bool]:
+    """use_backend rules -> routes. Understands named ACLs (acl is_api path_beg /api), inline conditions
+    ({ path_beg /api }), the service style ({ path /order } || { path_beg /order/ }) and rules without a
+    condition; anything else is kept as a read-only "other" route."""
     acls: Dict[str, List[Dict[str, Any]]] = {}
     for a in fe.get("acl_list") or []:
         acls.setdefault(a["acl_name"], []).append(a)
     routes, simple = [], True
     for rule in fe.get("backend_switching_rule_list") or []:
-        test, cond = (rule.get("cond_test") or "").strip(), rule.get("cond") or ""
-        defs = acls.get(test, [])
-        crit = defs[0]["criterion"] if len(defs) == 1 else ""
-        kind = ROUTE_CRITERIA.get(crit)
-        header = HEADER_RE.match(crit) if crit and not kind else None
-        if cond == "if" and (kind or header) and re.fullmatch(r"[\w.-]+", test):
-            value = re.sub(r"^(-i|-m str)\s+", "", defs[0].get("value") or "").strip()
-            if header:
-                routes.append({"kind": "header", "value": value, "header": header.group(1), "backend": rule.get("name")})
-            else:
-                routes.append({"kind": kind, "value": ",".join(value.split()) if kind == "src" else value, "backend": rule.get("name")})
+        test, cond, be = (rule.get("cond_test") or "").strip(), rule.get("cond") or "", rule.get("name")
+        route = None
+        if not cond and not test:
+            route = {"kind": "always", "value": "", "style": "always"}
+        elif cond == "if" and re.fullmatch(r"[\w.-]+", test) and len(acls.get(test, [])) == 1:
+            a = acls[test][0]
+            route = _term(a["criterion"], a.get("value") or "")
+            if route:
+                route["style"] = "acl"
+        elif cond == "if" and (terms := _inline(test)):
+            if len(terms) == 2 and {terms[0][0], terms[1][0]} == {"path", "path_beg"}:
+                exact = next(v for c, v in terms if c == "path").strip()
+                under = next(v for c, v in terms if c == "path_beg").strip()
+                if under == exact.rstrip("/") + "/":
+                    route = {"kind": "service", "value": exact, "style": "inline"}
+            elif len(terms) == 1:
+                route = _term(*terms[0])
+                if route:
+                    route["style"] = "inline"
+        if route:
+            routes.append({**route, "backend": be})
         else:
             simple = False
-            routes.append({"kind": "other", "value": f"{cond} {test}".strip(), "backend": rule.get("name")})
+            routes.append({"kind": "other", "value": f"{cond} {test}".strip(), "backend": be})
     return routes, simple
 
 
@@ -410,6 +447,11 @@ def _is_track(r: Dict[str, Any]) -> bool:
 def _is_limit(r: Dict[str, Any]) -> bool:
     return r.get("type") == "deny" and r.get("deny_status") == 429 and r.get("cond") == "if" \
         and re.fullmatch(r"\{ sc_http_req_rate\(0\) gt \d+ \}", r.get("cond_test") or "") is not None
+
+
+def _is_xfport(r: Dict[str, Any]) -> bool:
+    return r.get("type") == "set-header" and (r.get("hdr_name") or "").lower() == "x-forwarded-port" \
+        and r.get("hdr_format") == "%[dst_port]" and not r.get("cond")
 
 
 def _is_maint(r: Dict[str, Any]) -> bool:
@@ -438,7 +480,7 @@ def parse_policies(fe: Dict[str, Any]) -> Dict[str, Any]:
     m = re.search(r"http_req_rate\((\d+)s?\)", st.get("store") or "")
     if m:
         period = int(m.group(1))
-    managed = [r for r in rules if _is_allow(r) or _is_redirect(r) or (_is_track(r) and limit) or _is_limit(r) or _is_maint(r)]
+    managed = [r for r in rules if _is_allow(r) or _is_redirect(r) or (_is_track(r) and limit) or _is_limit(r) or _is_maint(r) or _is_xfport(r)]
     msg = re.search(r"<p>(.*?)</p>", (maint or {}).get("return_content") or "")
     return {
         "maintenance": {"enabled": maint is not None, "message": msg.group(1) if msg else "",
@@ -446,6 +488,7 @@ def parse_policies(fe: Dict[str, Any]) -> Dict[str, Any]:
         "blocklist": any(_is_block(r) for r in fe.get("tcp_request_rule_list") or []),
         "allow_ips": re.findall(r"[^\s{}]+", (allow or {}).get("cond_test", ""))[1:] if allow else [],
         "redirect_https": any(_is_redirect(r) for r in rules),
+        "forwarded_port": any(_is_xfport(r) for r in rules),
         "rate_limit": {"requests": int(re.search(r"gt (\d+)", limit["cond_test"]).group(1)), "period": period or 10} if limit else None,
         "custom_rules": len(rules) - len(managed),
     }
@@ -462,7 +505,7 @@ def overview(dp: DataPlane) -> Dict[str, Any]:
         for b in {fe.get("default_backend"), *[r["backend"] for r in routes]} - {None}:
             used_by.setdefault(b, []).append(fe["name"])
         binds = [{"address": b.get("address") or "*", "port": b.get("port"), "ssl": bool(b.get("ssl")), "name": n,
-                  "certificate": (b.get("ssl_certificate") or "").rsplit("/", 1)[-1]}
+                  "certificate": (b.get("ssl_certificate") or "").rsplit("/", 1)[-1], "certificate_file": b.get("ssl_certificate") or ""}
                  for n, b in (fe.get("binds") or {}).items()]
         frontends.append({"name": fe["name"], "mode": fe.get("mode") or "http", "binds": binds,
                           "default_backend": fe.get("default_backend"), "routes": routes, "simple_routes": simple,
@@ -476,6 +519,7 @@ def overview(dp: DataPlane) -> Dict[str, Any]:
         for name, s in (be.get("servers") or {}).items():
             st = idx.get(("server", f"{be['name']}/{name}"), {})
             servers.append({"name": name, "address": s.get("address"), "port": s.get("port"), "weight": s.get("weight", 1),
+                            "inter": (s.get("inter") or 0) / 1000, "rise": s.get("rise") or 0, "fall": s.get("fall") or 0,
                             "check": s.get("check") == "enabled", "backup": s.get("backup") == "enabled",
                             "maxconn": s.get("maxconn") or 0, "ssl": s.get("ssl") == "enabled",
                             "state": _server_state(st.get("status")), "stats": st})
@@ -487,6 +531,9 @@ def overview(dp: DataPlane) -> Dict[str, Any]:
                                    "host": hc.get("host") or "",
                                    "user": (be.get("mysql_check_params") or be.get("pgsql_check_params") or {}).get("username") or ""},
                          "sticky": bool(be.get("cookie")), "forwardfor": (be.get("forwardfor") or {}).get("enabled") == "enabled",
+                         "redispatch": (be.get("redispatch") or {}).get("enabled") == "enabled", "retries": be.get("retries") or 0,
+                         "keepalive": "enabled" in (be.get("tcpka"), be.get("srvtcpka")),
+                         "stick_src": _stick_src_minutes(be), "check_timing": _check_timing(be),
                          "timeouts": {k: (be.get(f) or 0) // 1000 for k, f in TIMEOUTS.items()},
                          "servers": servers, "used_by": sorted(set(used_by.get(be["name"], []))),
                          "stats": idx.get(("backend", be["name"]), {})})
@@ -540,43 +587,61 @@ def _port(v: Any) -> int:
 
 def _routes_to_config(routes: List[Dict[str, Any]], backends: set,
                       existing: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Routes -> ACLs + use_backend rules. An ACL that already matches the same thing keeps its name,
-    so editing one route doesn't rename the others."""
+    """Routes -> ACLs + use_backend rules. A route that already uses a named ACL keeps it (so editing one route
+    doesn't rename the others); every other route is written inline, e.g. if { path /order } || { path_beg /order/ }."""
     reuse = {(a["criterion"], a.get("value")): a["acl_name"] for a in existing or []}
     acls, rules, taken = [], [], set()
     for i, r in enumerate(routes, 1):
         kind, value, be = r.get("kind"), str(r.get("value") or "").strip(), r.get("backend")
-        if kind not in ("path_prefix", "path", "host", "header", "src") or not value or re.search(r"\s", value):
+        if be not in backends:
+            raise DataPlaneError(400, f"route {i}: unknown backend {be!r}")
+        if kind == "always":
+            if i != len(routes):
+                raise DataPlaneError(400, f"route {i}: a route for all traffic must be the last one")
+            rules.append({"name": be})
+            continue
+        if kind not in ("path_prefix", "path", "service", "host", "header", "src") or not value or re.search(r"\s", value):
             raise DataPlaneError(400, f"route {i}: choose a type and a value without spaces")
+        if kind in ("path_prefix", "path", "service") and not value.startswith("/"):
+            raise DataPlaneError(400, f"route {i}: a path starts with /, e.g. /order")
         if kind == "header" and not re.fullmatch(r"[A-Za-z0-9-]{1,64}", str(r.get("header") or "")):
             raise DataPlaneError(400, f"route {i}: header name must be letters, digits or dashes")
         if kind == "src" and not all(re.fullmatch(r"[0-9a-fA-F:.]+(/\d{1,3})?", x) for x in value.split(",")):
             raise DataPlaneError(400, f"route {i}: source must be IPs or networks like 10.0.0.0/8, separated by commas")
-        if be not in backends:
-            raise DataPlaneError(400, f"route {i}: unknown backend {be!r}")
+        if kind == "service":
+            base = value.rstrip("/") or "/"
+            test = "{ path_beg / }" if base == "/" else "{ path %s } || { path_beg %s/ }" % (base, base)
+            rules.append({"name": be, "cond": "if", "cond_test": test})
+            continue
         criterion = {"path_prefix": "path_beg", "path": "path", "host": "hdr(host)", "src": "src"}.get(kind) or f"hdr({r['header']})"
         acl_value = f"-i {value}" if kind == "host" else f"-m str {value}" if kind == "header" else value.replace(",", " ") if kind == "src" else value
-        name = reuse.get((criterion, acl_value))
-        if not name or name in taken:
-            name, n = f"k10y_route_{i}", i
-            while name in taken or name in reuse.values():
-                n += 1
-                name = f"k10y_route_{n}"
-        taken.add(name)
-        acls.append({"acl_name": name, "criterion": criterion, "value": acl_value})
-        rules.append({"name": be, "cond": "if", "cond_test": name})
+        name = reuse.get((criterion, acl_value)) if r.get("style") == "acl" else None
+        if name and name not in taken:
+            taken.add(name)
+            acls.append({"acl_name": name, "criterion": criterion, "value": acl_value})
+            rules.append({"name": be, "cond": "if", "cond_test": name})
+        else:
+            rules.append({"name": be, "cond": "if", "cond_test": "{ %s %s }" % (criterion, acl_value)})
     return acls, rules
 
 
+POLICY_KINDS = (("maint", _is_maint), ("allow", _is_allow), ("xfport", _is_xfport), ("redirect", _is_redirect),
+                ("track", _is_track), ("limit", _is_limit))
+
+
 def _apply_policies(fe: Dict[str, Any], pol: Dict[str, Any]) -> None:
-    """Rewrite the managed http-request rules (allow-list, HTTPS redirect, rate limit); keep all others in place."""
+    """Rewrite the managed http-request rules (maintenance page, allow-list, X-Forwarded-Port, HTTPS redirect,
+    rate limit). Other rules are kept, and a managed rule that doesn't change keeps its place and exact form
+    (e.g. a redirect written without a code stays that way)."""
     rules = fe.get("http_request_rule_list") or []
     had_limit = any(_is_limit(r) for r in rules)
-    keep_maint = "maintenance" not in pol
-    managed = [r for r in rules if _is_maint(r)] if keep_maint else []
-    rules = [r for r in rules if not (_is_allow(r) or _is_redirect(r) or _is_limit(r) or (had_limit and _is_track(r)) or _is_maint(r))]
-    maint = pol.get("maintenance") or {}
-    if not keep_maint and maint.get("enabled"):
+    want: Dict[str, Any] = {}
+    # a track-sc rule is ours only when it belongs to a rate limit (before or after this change)
+    kind_of = lambda r: next((k for k, f in POLICY_KINDS if f(r) and (k != "track" or had_limit or want.get("limit"))), None)
+    if "maintenance" not in pol:
+        want["maint"] = next((r for r in rules if _is_maint(r)), None)
+    elif (pol.get("maintenance") or {}).get("enabled"):
+        maint = pol["maintenance"]
         bypass = [x.strip() for x in maint.get("allow_ips") or [] if str(x).strip()]
         for x in bypass:
             if not IP_RE.match(x):
@@ -585,15 +650,18 @@ def _apply_policies(fe: Dict[str, Any], pol: Dict[str, Any]) -> None:
                 "return_content_format": "string", "return_content": f'"{_maint_page(maint.get("message") or "")}"'}
         if bypass:
             rule.update({"cond": "unless", "cond_test": "{ src " + " ".join(bypass) + " }"})
-        managed.append(rule)
+        want["maint"] = rule
     ips = [x.strip() for x in pol.get("allow_ips") or [] if str(x).strip()]
     for x in ips:
         if not re.fullmatch(r"[0-9a-fA-F:.]+(/\d{1,3})?", x):
             raise DataPlaneError(400, f"allowed source {x!r} is not an IP address or network")
     if ips:
-        managed.append({"type": "deny", "deny_status": 403, "cond": "unless", "cond_test": "{ src " + " ".join(ips) + " }"})
+        want["allow"] = {"type": "deny", "deny_status": 403, "cond": "unless", "cond_test": "{ src " + " ".join(ips) + " }"}
+    keep_xf = "forwarded_port" not in pol and any(_is_xfport(r) for r in rules)
+    if pol.get("forwarded_port") or keep_xf:
+        want["xfport"] = {"type": "set-header", "hdr_name": "X-Forwarded-Port", "hdr_format": "%[dst_port]"}
     if pol.get("redirect_https"):
-        managed.append({"type": "redirect", "redir_type": "scheme", "redir_value": "https", "redir_code": 301, "cond": "unless", "cond_test": "{ ssl_fc }"})
+        want["redirect"] = {"type": "redirect", "redir_type": "scheme", "redir_value": "https", "cond": "unless", "cond_test": "{ ssl_fc }"}
     limit = pol.get("rate_limit")
     if limit:
         n, period = int(limit.get("requests") or 0), int(limit.get("period") or 10)
@@ -603,11 +671,31 @@ def _apply_policies(fe: Dict[str, Any], pol: Dict[str, Any]) -> None:
         if st and "http_req_rate" not in (st.get("store") or ""):
             raise DataPlaneError(400, "this frontend already has a different stick table; set the rate limit in the raw config")
         fe["stick_table"] = {"type": "ip", "size": 100000, "expire": period * 1000, "store": f"http_req_rate({period}s)"}
-        managed += [{"type": "track-sc", "track_sc_key": "src", "track_sc_stick_counter": 0},
-                    {"type": "deny", "deny_status": 429, "cond": "if", "cond_test": "{ sc_http_req_rate(0) gt %d }" % n}]
+        want["track"] = {"type": "track-sc", "track_sc_key": "src", "track_sc_stick_counter": 0}
+        want["limit"] = {"type": "deny", "deny_status": 429, "cond": "if", "cond_test": "{ sc_http_req_rate(0) gt %d }" % n}
     elif had_limit and "http_req_rate" in ((fe.get("stick_table") or {}).get("store") or ""):
         fe.pop("stick_table", None)
-    fe["http_request_rule_list"] = managed + rules
+    out, seen = [], set()
+    for r in rules:
+        k = kind_of(r)
+        if k is None:
+            out.append(r)
+        elif k not in seen and want.get(k):
+            seen.add(k)
+            # unchanged meaning -> keep the line exactly as it was written
+            same = k in ("redirect", "xfport", "track", "maint") if k != "maint" else r == want[k]
+            out.append(r if same or r == want[k] else want[k])
+        else:
+            seen.add(k)
+    order = [k for k, _ in POLICY_KINDS]
+    for k in order:
+        if not want.get(k) or k in seen:
+            continue
+        # before the first managed rule that comes later in the natural order, else after the last managed one
+        later = next((i for i, r in enumerate(out) if (rk := kind_of(r)) and order.index(rk) > order.index(k)), None)
+        last = max((i for i, r in enumerate(out) if kind_of(r)), default=-1)
+        out.insert(later if later is not None else last + 1, want[k])
+    fe["http_request_rule_list"] = out
 
 
 def _balance(alg: Any, arg: Any) -> Dict[str, Any]:
@@ -665,8 +753,90 @@ def _set_check(be: Dict[str, Any], chk: Dict[str, Any]) -> None:
         be[f"{typ}_check_params"] = {"username": user, **({"client_version": "post-41"} if typ == "mysql" else {})}
 
 
+def _stick_src_minutes(be: Dict[str, Any]) -> int:
+    """'stick-table type ip … expire 5m' + 'stick on src' -> 5 (minutes); 0 when the backend doesn't do that."""
+    st, rules = be.get("stick_table") or {}, be.get("stick_rule_list") or []
+    on_src = any(r.get("type") == "on" and r.get("pattern") == "src" and not r.get("table") for r in rules)
+    return max(1, round((st.get("expire") or 0) / 60000)) if on_src and st.get("type") == "ip" and not st.get("store") else 0
+
+
+def _set_stick_src(be: Dict[str, Any], minutes: int) -> None:
+    if not 0 <= minutes <= 10080:
+        raise DataPlaneError(400, "keep clients on the same server for 0-10080 minutes (0 = off)")
+    st = be.get("stick_table") or {}
+    if minutes and st and (st.get("store") or st.get("type") != "ip"):
+        raise DataPlaneError(400, "this backend already has another stick table; change it in the raw config")
+    others = [r for r in be.get("stick_rule_list") or [] if not (r.get("type") == "on" and r.get("pattern") == "src" and not r.get("table"))]
+    if minutes:
+        be["stick_table"] = {"type": "ip", "size": 204800, "expire": minutes * 60000}      # size 200k
+        be["stick_rule_list"] = others + [{"type": "on", "pattern": "src"}]
+    elif _stick_src_minutes(be):
+        be.pop("stick_table", None)
+        if others:
+            be["stick_rule_list"] = others
+        else:
+            be.pop("stick_rule_list", None)
+
+
+def _timing(t: Dict[str, Any]) -> Dict[str, int]:
+    """Health check timing in seconds/counts -> server params (inter in ms)."""
+    inter, rise, fall = float(t.get("inter") or 0), int(t.get("rise") or 0), int(t.get("fall") or 0)
+    if inter and not 0.1 <= inter <= 3600:
+        raise DataPlaneError(400, "check interval must be 0.1-3600 seconds")
+    if not 0 <= rise <= 100 or not 0 <= fall <= 100:
+        raise DataPlaneError(400, "rise and fall must be 1-100 checks")
+    return {k: v for k, v in (("inter", int(round(inter * 1000))), ("rise", rise), ("fall", fall)) if v}
+
+
+def _check_timing(be: Dict[str, Any]) -> Dict[str, float]:
+    s = next((x for x in (be.get("servers") or {}).values() if x.get("inter") or x.get("rise") or x.get("fall")), {})
+    return {"inter": (s.get("inter") or 0) / 1000, "rise": s.get("rise") or 0, "fall": s.get("fall") or 0}
+
+
 def _block_rule(path: str) -> Dict[str, Any]:
     return {"type": "connection", "action": "reject", "cond": "if", "cond_test": "{ src -f %s }" % path}
+
+
+# Parts of a section the Data Plane API can replace on their own. Sending only what changed keeps every other line
+# exactly as it was written (a full-section save re-renders the whole section: "60s" becomes "1m", bind options move).
+SECTION_PARTS = {
+    "frontend": {"acl_list": "acls", "backend_switching_rule_list": "backend_switching_rules", "http_request_rule_list": "http_request_rules",
+                 "http_response_rule_list": "http_response_rules", "tcp_request_rule_list": "tcp_request_rules"},
+    "backend": {"acl_list": "acls", "http_request_rule_list": "http_request_rules", "http_response_rule_list": "http_response_rules",
+                "stick_rule_list": "stick_rules", "tcp_request_rule_list": "tcp_request_rules", "server_switching_rule_list": "server_switching_rules",
+                "http_check_list": "http_checks", "tcp_check_rule_list": "tcp_checks"},
+}
+NESTED = {"frontend": "binds", "backend": "servers"}
+
+
+def _base(section: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: v for k, v in section.items() if not (k.endswith("_list") or k in ("binds", "servers", "server_templates", "ssl_front_uses"))}
+
+
+def _save_section(dp: DataPlane, tx: str, kind: str, name: str, current: Optional[Dict[str, Any]], new: Dict[str, Any]) -> None:
+    """Create a section, or write only the parts of it that changed."""
+    coll = f"/services/haproxy/configuration/{kind}s"
+    if current is None:
+        dp.call("POST", coll, tx, json=new, params={"full_section": "true"})
+        return
+    parts, nested = SECTION_PARTS[kind], NESTED[kind]
+    other = [k for k in set(new) | set(current) if k.endswith("_list") and k not in parts and new.get(k) != current.get(k)]
+    if other:       # something k10y doesn't write part by part: save the whole section
+        dp.call("PUT", f"{coll}/{name}", tx, json=new, params={"full_section": "true"})
+        return
+    if _base(new) != _base(current):
+        dp.call("PUT", f"{coll}/{name}", tx, json=_base(new))
+    for key, endpoint in parts.items():
+        if (new.get(key) or []) != (current.get(key) or []):
+            dp.call("PUT", f"{coll}/{name}/{endpoint}", tx, json=new.get(key) or [])
+    old_items, new_items = current.get(nested) or {}, new.get(nested) or {}
+    for n in old_items.keys() - new_items.keys():
+        dp.call("DELETE", f"{coll}/{name}/{nested}/{n}", tx)
+    for n, item in new_items.items():
+        if n not in old_items:
+            dp.call("POST", f"{coll}/{name}/{nested}", tx, json=item)
+        elif item != old_items[n]:
+            dp.call("PUT", f"{coll}/{name}/{nested}/{n}", tx, json=item)
 
 
 def apply_op(dp: DataPlane, tx: str, op: Op) -> str:
@@ -684,7 +854,7 @@ def apply_op(dp: DataPlane, tx: str, op: Op) -> str:
             raise DataPlaneError(400, f"frontend {name} already exists")
         if op.op == "update" and not current:
             raise DataPlaneError(404, f"frontend {name} not found")
-        fe = dict(current or {"name": name})
+        fe = copy.deepcopy(current) if current else {"name": name}
         if "mode" in d:
             if d["mode"] not in ("http", "tcp"):
                 raise DataPlaneError(400, "mode must be http or tcp")
@@ -701,13 +871,18 @@ def apply_op(dp: DataPlane, tx: str, op: Op) -> str:
             for b in d["binds"] or []:
                 addr, port = (str(b.get("address") or "*").strip() or "*"), _port(b.get("port"))
                 bind = {"name": f"{addr}:{port}", "address": addr, "port": port}
-                if b.get("ssl"):
+                if b.get("ssl") and str(b.get("certificate") or "").startswith("/"):
+                    path = str(b["certificate"]).strip()
+                    if re.search(r"\s", path):
+                        raise DataPlaneError(400, f"listen {addr}:{port}: the certificate path can't contain spaces")
+                    bind.update({"ssl": True, "ssl_certificate": path})      # a file on the HAProxy server, e.g. /etc/haproxy/site.pem
+                elif b.get("ssl"):
                     cert = str(b.get("certificate") or "")
                     if cert_dir is None:
                         certs = {c["storage_name"]: c.get("file") for c in dp.call("GET", "/services/haproxy/storage/ssl_certificates") or []}
                         cert_dir = certs
                     if cert not in cert_dir:
-                        raise DataPlaneError(400, f"listen {addr}:{port}: choose an uploaded certificate for TLS")
+                        raise DataPlaneError(400, f"listen {addr}:{port}: choose an uploaded certificate, or the path of a certificate file on the HAProxy server")
                     bind.update({"ssl": True, "ssl_certificate": cert_dir[cert]})
                 binds[bind["name"]] = bind
             if not binds:
@@ -732,10 +907,7 @@ def apply_op(dp: DataPlane, tx: str, op: Op) -> str:
             acls, rules = _routes_to_config(d["routes"], backends, [a for a in fe.get("acl_list") or [] if a["acl_name"] in used])
             fe["acl_list"] = [a for a in fe.get("acl_list") or [] if a["acl_name"] not in used] + acls
             fe["backend_switching_rule_list"] = rules
-        if op.op == "create":
-            dp.call("POST", f"{cfg}/frontends", tx, json=fe, params={"full_section": "true"})
-        else:
-            dp.call("PUT", f"{cfg}/frontends/{name}", tx, json=fe, params={"full_section": "true"})
+        _save_section(dp, tx, "frontend", name, current, fe)
         return f"{op.op} frontend {name}"
 
     if op.kind == "backend":
@@ -752,7 +924,7 @@ def apply_op(dp: DataPlane, tx: str, op: Op) -> str:
             raise DataPlaneError(400, f"backend {name} already exists")
         if op.op == "update" and not current:
             raise DataPlaneError(404, f"backend {name} not found")
-        be = dict(current or {"name": name})
+        be = copy.deepcopy(current) if current else {"name": name}
         if "mode" in d:
             if d["mode"] not in ("http", "tcp"):
                 raise DataPlaneError(400, "mode must be http or tcp")
@@ -778,6 +950,35 @@ def apply_op(dp: DataPlane, tx: str, op: Op) -> str:
                 be["forwardfor"] = {"enabled": "enabled"}
             else:
                 be.pop("forwardfor", None)
+        if "redispatch" in d:
+            if d["redispatch"]:
+                be["redispatch"] = {"enabled": "enabled"}
+            else:
+                be.pop("redispatch", None)
+        if "retries" in d:
+            n = int(d["retries"] or 0)
+            if not 0 <= n <= 100:
+                raise DataPlaneError(400, "retries must be 0-100")
+            if n:
+                be["retries"] = n
+            else:
+                be.pop("retries", None)
+        if "keepalive" in d:
+            for k in ("tcpka", "srvtcpka"):
+                if d["keepalive"]:
+                    be[k] = "enabled"
+                else:
+                    be.pop(k, None)
+        if "stick_src" in d:
+            _set_stick_src(be, int(d["stick_src"] or 0))
+        if "check_timing" in d:
+            timing = _timing(d["check_timing"] or {})
+            for s in be["servers"].values():
+                for k in ("inter", "rise", "fall"):
+                    if timing.get(k):
+                        s[k] = timing[k]
+                    else:
+                        s.pop(k, None)
         if "timeouts" in d:
             for k, field in TIMEOUTS.items():
                 v = int((d["timeouts"] or {}).get(k) or 0)
@@ -786,10 +987,7 @@ def apply_op(dp: DataPlane, tx: str, op: Op) -> str:
                     if not 1 <= v <= 86400:
                         raise DataPlaneError(400, f"{k} timeout must be 1-86400 seconds")
                     be[field] = v * 1000
-        if op.op == "create":
-            dp.call("POST", f"{cfg}/backends", tx, json=be, params={"full_section": "true"})
-        else:
-            dp.call("PUT", f"{cfg}/backends/{name}", tx, json=be, params={"full_section": "true"})
+        _save_section(dp, tx, "backend", name, current, be)
         return f"{op.op} backend {name}"
 
     if op.kind == "server":
@@ -836,6 +1034,14 @@ def apply_op(dp: DataPlane, tx: str, op: Op) -> str:
             else:
                 srv.pop("ssl", None)
                 srv.pop("verify", None)
+        if any(k in d for k in ("inter", "rise", "fall")):
+            for k, v in _timing({k: d.get(k) for k in ("inter", "rise", "fall")}).items():
+                srv[k] = v
+        elif op.op == "create":
+            sibling = next(iter(dp.call("GET", base, tx) or []), None)
+            for k in ("inter", "rise", "fall"):
+                if sibling and sibling.get(k):
+                    srv[k] = sibling[k]
         if op.op == "create" and (dp.call("GET", f"{cfg}/backends/{backend}", tx) or {}).get("cookie"):
             srv["cookie"] = name          # sticky sessions: each server needs its own cookie value
         if op.op == "create":
@@ -1256,8 +1462,9 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
                         try:
                             for fe in dp.frontends(tx):
                                 if fe["name"] in st["missing"]:
-                                    fe["tcp_request_rule_list"] = [_block_rule(path)] + (fe.get("tcp_request_rule_list") or [])
-                                    dp.call("PUT", f"/services/haproxy/configuration/frontends/{fe['name']}", tx, json=fe, params={"full_section": "true"})
+                                    new = copy.deepcopy(fe)
+                                    new["tcp_request_rule_list"] = [_block_rule(path)] + (fe.get("tcp_request_rule_list") or [])
+                                    _save_section(dp, tx, "frontend", fe["name"], fe, new)
                             dp.validate(dp.raw(tx))
                             reload_id = dp.commit(tx)
                         except DataPlaneError:

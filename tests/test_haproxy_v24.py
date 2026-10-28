@@ -113,7 +113,7 @@ def test_maintenance_page_is_managed_and_parsed():
     plan(dp, {"op": "update", "kind": "frontend", "name": "web", "data": {"policies": {"redirect_https": True}}})
     assert hx._is_maint(dp.live["frontends"]["web"]["http_request_rule_list"][0])
     plan(dp, {"op": "update", "kind": "frontend", "name": "web", "data": {"policies": {"maintenance": {"enabled": False}}}})
-    assert not any(hx._is_maint(r) for r in dp.live["frontends"]["web"]["http_request_rule_list"])
+    assert not any(hx._is_maint(r) for r in dp.live["frontends"]["web"].get("http_request_rule_list", []))
 
 
 def test_frontend_client_timeout():

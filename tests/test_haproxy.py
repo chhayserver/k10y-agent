@@ -11,6 +11,9 @@ from k10y_agent.hub import haproxy as hx
 from test_hub import CSRF, client, login, ready_admin  # noqa: F401  (fixture)
 
 CFG = "/services/haproxy/configuration"
+PART_KEYS = {"acls": "acl_list", "backend_switching_rules": "backend_switching_rule_list", "http_request_rules": "http_request_rule_list",
+             "http_response_rules": "http_response_rule_list", "tcp_request_rules": "tcp_request_rule_list", "stick_rules": "stick_rule_list",
+             "server_switching_rules": "server_switching_rule_list", "http_checks": "http_check_list", "tcp_checks": "tcp_check_rule_list"}
 
 
 class FakeDataPlane:
@@ -107,13 +110,35 @@ class FakeDataPlane:
                 return copy.deepcopy(coll.get(parts[1]))
             if method == "POST":
                 coll[json["name"]] = json
-            elif method == "PUT":
+            elif method == "PUT" and (params or {}).get("full_section") == "true":
                 coll[parts[1]] = json
+            elif method == "PUT":         # base settings only: the parts (rules, binds, servers) stay
+                kept = {k: v for k, v in coll[parts[1]].items() if k.endswith("_list") or k in ("binds", "servers")}
+                coll[parts[1]] = {**json, **kept}
+                self.calls.append(("PUT-base", parts[1]))
             elif method == "DELETE":
                 del coll[parts[1]]
             return json
+        if parts[0] in ("frontends", "backends") and len(parts) == 3 and parts[2] in PART_KEYS and method == "PUT":
+            if json:
+                cfg[parts[0]][parts[1]][PART_KEYS[parts[2]]] = json
+            else:
+                cfg[parts[0]][parts[1]].pop(PART_KEYS[parts[2]], None)
+            self.calls.append(("PUT-part", f"{parts[1]}/{parts[2]}"))
+            return json
+        if parts[0] == "frontends" and len(parts) >= 3 and parts[2] == "binds":
+            binds = cfg["frontends"][parts[1]].setdefault("binds", {})
+            if method == "POST":
+                binds[json["name"]] = json
+            elif method == "PUT":
+                binds[parts[3]] = json
+            elif method == "DELETE":
+                del binds[parts[3]]
+            return json
         if parts[0] == "backends" and parts[2] == "servers":
             servers = cfg["backends"][parts[1]].setdefault("servers", {})
+            if method == "GET" and len(parts) == 3:
+                return copy.deepcopy(list(servers.values()))
             if method == "GET":
                 return copy.deepcopy(servers[parts[3]])
             if method == "POST":
@@ -127,15 +152,16 @@ class FakeDataPlane:
 
 
 def test_existing_acl_names_are_reused():
-    acls, rules = hx._routes_to_config([{"kind": "path_prefix", "value": "/api", "backend": "api"}, {"kind": "host", "value": "a.io", "backend": "api"}],
+    acls, rules = hx._routes_to_config([{"kind": "path_prefix", "value": "/api", "backend": "api", "style": "acl"}, {"kind": "host", "value": "a.io", "backend": "api"}],
                                        {"api"}, [{"acl_name": "is_api", "criterion": "path_beg", "value": "/api"}])
-    assert [a["acl_name"] for a in acls] == ["is_api", "k10y_route_2"] and rules[0]["cond_test"] == "is_api"
+    assert [a["acl_name"] for a in acls] == ["is_api"] and rules[0]["cond_test"] == "is_api"     # existing named ACL kept
+    assert rules[1]["cond_test"] == "{ hdr(host) -i a.io }"                                      # new routes are written inline
 
 
 def test_routes_and_states_are_parsed():
     fe = FakeDataPlane().live["frontends"]["web"]
     routes, simple = hx.parse_routes(fe)
-    assert simple and routes == [{"kind": "path_prefix", "value": "/api", "backend": "api"}]
+    assert simple and routes == [{"kind": "path_prefix", "value": "/api", "style": "acl", "backend": "api"}]
     fe["backend_switching_rule_list"].append({"name": "shop", "cond": "unless", "cond_test": "is_api"})
     assert hx.parse_routes(fe)[1] is False
     assert [hx._server_state(s) for s in ("UP", "DOWN", "MAINT", "DRAIN", "no check", "UP 1/3")] == ["up", "down", "maint", "drain", "nocheck", "up"]
@@ -180,13 +206,14 @@ def test_service_routes_replace_only_rule_acls_and_backend_in_use_is_protected()
     hx.plan_and_apply(dp, [op], apply=True)
     web = dp.live["frontends"]["web"]
     assert set(web["binds"]) == {"*:80", "*:8080"}
-    assert [a["acl_name"] for a in web["acl_list"]] == ["blocked_ip", "k10y_route_1", "k10y_route_2"]   # unrelated ACL kept
-    assert web["acl_list"][1]["value"] == "-i api.example.com"
+    assert [a["acl_name"] for a in web["acl_list"]] == ["blocked_ip"]          # unrelated ACL kept, routes written inline
+    assert [r["cond_test"] for r in web["backend_switching_rule_list"]] == ["{ hdr(host) -i api.example.com }", "{ path_beg /shop }"]
     # adding a route keeps the existing ACL names, so the diff only shows the new route
     hx.plan_and_apply(dp, [hx.Op(op="update", kind="frontend", name="web", data={"routes": [
         {"kind": "host", "value": "api.example.com", "backend": "api"}, {"kind": "path_prefix", "value": "/shop", "backend": "shop"},
         {"kind": "path", "value": "/health", "backend": "shop"}]})], apply=True)
-    assert [a["acl_name"] for a in dp.live["frontends"]["web"]["acl_list"]] == ["blocked_ip", "k10y_route_1", "k10y_route_2", "k10y_route_3"]
+    assert [a["acl_name"] for a in dp.live["frontends"]["web"]["acl_list"]] == ["blocked_ip"]
+    assert dp.live["frontends"]["web"]["backend_switching_rule_list"][2] == {"name": "shop", "cond": "if", "cond_test": "{ path /health }"}
     with pytest.raises(hx.DataPlaneError, match="still used by: web"):
         hx.plan_and_apply(dp, [hx.Op(op="delete", kind="backend", name="api")], apply=True)
     with pytest.raises(hx.DataPlaneError, match="unknown backend"):

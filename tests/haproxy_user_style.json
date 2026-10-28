@@ -1,0 +1,242 @@
+{
+ "backends": {
+  "inbound-order": {
+   "balance": {
+    "algorithm": "roundrobin"
+   },
+   "connect_timeout": 10000,
+   "mode": "http",
+   "name": "inbound-order",
+   "redispatch": {
+    "enabled": "enabled"
+   },
+   "retries": 3,
+   "server_timeout": 60000,
+   "servers": {
+    "server1": {
+     "address": "api1",
+     "check": "enabled",
+     "fall": 1,
+     "inter": 1000,
+     "name": "server1",
+     "port": 80,
+     "rise": 3
+    },
+    "server2": {
+     "address": "api2",
+     "check": "enabled",
+     "fall": 1,
+     "inter": 1000,
+     "name": "server2",
+     "port": 80,
+     "rise": 3
+    },
+    "server3": {
+     "address": "shop1",
+     "check": "enabled",
+     "fall": 1,
+     "inter": 1000,
+     "name": "server3",
+     "port": 80,
+     "rise": 3
+    }
+   }
+  },
+  "inbound-payment": {
+   "balance": {
+    "algorithm": "roundrobin"
+   },
+   "connect_timeout": 10000,
+   "mode": "http",
+   "name": "inbound-payment",
+   "redispatch": {
+    "enabled": "enabled"
+   },
+   "retries": 3,
+   "server_timeout": 60000,
+   "servers": {
+    "server1": {
+     "address": "shop1",
+     "check": "enabled",
+     "fall": 1,
+     "inter": 1000,
+     "name": "server1",
+     "port": 80,
+     "rise": 3
+    },
+    "server2": {
+     "address": "shop2",
+     "check": "enabled",
+     "fall": 1,
+     "inter": 1000,
+     "name": "server2",
+     "port": 80,
+     "rise": 3
+    },
+    "server3": {
+     "address": "shop3",
+     "check": "enabled",
+     "fall": 1,
+     "inter": 1000,
+     "name": "server3",
+     "port": 80,
+     "rise": 3
+    }
+   }
+  },
+  "mattermost": {
+   "balance": {
+    "algorithm": "roundrobin"
+   },
+   "connect_timeout": 10000,
+   "mode": "http",
+   "name": "mattermost",
+   "retries": 3,
+   "server_timeout": 60000,
+   "servers": {
+    "s-01": {
+     "address": "api1",
+     "check": "enabled",
+     "fall": 2,
+     "inter": 2000,
+     "name": "s-01",
+     "port": 80,
+     "rise": 3,
+     "ssl": "enabled",
+     "verify": "none"
+    }
+   }
+  },
+  "outbound-rabbitmq-dev": {
+   "balance": {
+    "algorithm": "roundrobin"
+   },
+   "connect_timeout": 10000,
+   "mode": "tcp",
+   "name": "outbound-rabbitmq-dev",
+   "redispatch": {
+    "enabled": "enabled"
+   },
+   "server_timeout": 300000,
+   "servers": {
+    "rabbitmq-server-01": {
+     "address": "shop1",
+     "check": "enabled",
+     "fall": 2,
+     "inter": 2000,
+     "name": "rabbitmq-server-01",
+     "port": 80,
+     "rise": 3
+    },
+    "rabbitmq-server-02": {
+     "address": "shop2",
+     "check": "enabled",
+     "fall": 2,
+     "inter": 2000,
+     "name": "rabbitmq-server-02",
+     "port": 80,
+     "rise": 3
+    }
+   },
+   "srvtcpka": "enabled",
+   "stick_rule_list": [
+    {
+     "pattern": "src",
+     "type": "on"
+    }
+   ],
+   "stick_table": {
+    "expire": 300000,
+    "size": 204800,
+    "type": "ip"
+   },
+   "tcpka": "enabled"
+  }
+ },
+ "frontends": {
+  "mattermost": {
+   "backend_switching_rule_list": [
+    {
+     "name": "mattermost"
+    }
+   ],
+   "binds": {
+    "0.0.0.0:8066": {
+     "address": "0.0.0.0",
+     "name": "0.0.0.0:8066",
+     "port": 8066,
+     "ssl": true,
+     "ssl_certificate": "/usr/local/etc/haproxy/certs/shop_lab_local.pem"
+    }
+   },
+   "client_timeout": 60000,
+   "http_request_rule_list": [
+    {
+     "hdr_format": "%[dst_port]",
+     "hdr_name": "X-Forwarded-Port",
+     "type": "set-header"
+    },
+    {
+     "cond": "unless",
+     "cond_test": "{ ssl_fc }",
+     "redir_type": "scheme",
+     "redir_value": "https",
+     "type": "redirect"
+    }
+   ],
+   "name": "mattermost"
+  },
+  "microservices": {
+   "backend_switching_rule_list": [
+    {
+     "cond": "if",
+     "cond_test": "{ path /order } || { path_beg /order/ }",
+     "name": "inbound-order"
+    },
+    {
+     "cond": "if",
+     "cond_test": "{ path /payment } || { path_beg /payment/ }",
+     "name": "inbound-payment"
+    }
+   ],
+   "binds": {
+    "0.0.0.0:443": {
+     "address": "0.0.0.0",
+     "name": "0.0.0.0:443",
+     "port": 443,
+     "ssl": true,
+     "ssl_certificate": "/usr/local/etc/haproxy/certs/shop_lab_local.pem"
+    }
+   },
+   "client_timeout": 60000,
+   "http_request_rule_list": [
+    {
+     "hdr_format": "%[dst_port]",
+     "hdr_name": "X-Forwarded-Port",
+     "type": "set-header"
+    },
+    {
+     "cond": "unless",
+     "cond_test": "{ ssl_fc }",
+     "redir_type": "scheme",
+     "redir_value": "https",
+     "type": "redirect"
+    }
+   ],
+   "name": "microservices"
+  },
+  "outbound-rabbitmq-dev": {
+   "binds": {
+    "0.0.0.0:5672": {
+     "address": "0.0.0.0",
+     "name": "0.0.0.0:5672",
+     "port": 5672
+    }
+   },
+   "client_timeout": 300000,
+   "default_backend": "outbound-rabbitmq-dev",
+   "mode": "tcp",
+   "name": "outbound-rabbitmq-dev"
+  }
+ }
+}

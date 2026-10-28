@@ -41,7 +41,7 @@ def test_policies_round_trip_and_keep_custom_rules():
     assert fe["stick_table"]["store"] == "http_req_rate(10s)"
     pol = hx.parse_policies(fe)
     assert pol == {"allow_ips": ["10.0.0.0/8", "192.168.1.5"], "redirect_https": True, "rate_limit": {"requests": 50, "period": 10}, "custom_rules": 1,
-                   "maintenance": {"enabled": False, "message": "", "allow_ips": []}, "blocklist": False}
+                   "maintenance": {"enabled": False, "message": "", "allow_ips": []}, "blocklist": False, "forwarded_port": False}
     apply(dp, hx.Op(op="update", kind="frontend", name="web", data={"policies": {"allow_ips": [], "redirect_https": False, "rate_limit": None}}))
     fe = dp.live["frontends"]["web"]
     assert fe["http_request_rule_list"] == [{"type": "set-header", "hdr_name": "X-Team", "hdr_format": "shop"}] and "stick_table" not in fe
@@ -56,8 +56,8 @@ def test_header_and_source_routes_and_tls_binds():
         "binds": [{"address": "*", "port": 80}, {"address": "*", "port": 443, "ssl": True, "certificate": "shop_lab_local.pem"}]}))
     fe = dp.live["frontends"]["web"]
     routes, simple = hx.parse_routes(fe)
-    assert simple and routes == [{"kind": "header", "value": "yes", "header": "X-Canary", "backend": "api"},
-                                 {"kind": "src", "value": "10.1.0.0/16,10.2.0.0/16", "backend": "api"}]
+    assert simple and routes == [{"kind": "header", "value": "yes", "header": "X-Canary", "style": "inline", "backend": "api"},
+                                 {"kind": "src", "value": "10.1.0.0/16,10.2.0.0/16", "style": "inline", "backend": "api"}]
     assert fe["binds"]["*:443"]["ssl_certificate"] == "/etc/haproxy/certs/shop_lab_local.pem"
     with pytest.raises(hx.DataPlaneError, match="uploaded certificate"):
         apply(dp, hx.Op(op="update", kind="frontend", name="web", data={"binds": [{"address": "*", "port": 443, "ssl": True, "certificate": "nope.pem"}]}))

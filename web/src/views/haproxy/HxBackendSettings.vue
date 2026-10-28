@@ -56,6 +56,22 @@ function setCheck(t: string) {
         <span class="hint">{{ chk.user }}</span></div>
     </div>
 
+    <div v-if="s.check.type !== 'none'" class="form-row"><label class="lbl">Check timing</label>
+      <div class="hxs-timing">
+        <span>every</span><input v-model.number="s.timing.inter" class="input" type="number" min="0" step="0.5" placeholder="2" aria-label="Check interval in seconds"><span>s,</span>
+        <span>up after</span><input v-model.number="s.timing.rise" class="input" type="number" min="0" placeholder="2" aria-label="Rise"><span>OK,</span>
+        <span>down after</span><input v-model.number="s.timing.fall" class="input" type="number" min="0" placeholder="3" aria-label="Fall"><span>failed</span></div>
+      <span class="hint">Written on each server as <code>check inter {{ s.timing.inter || 2 }}s rise {{ s.timing.rise || 2 }} fall {{ s.timing.fall || 3 }}</code>. Faster checks notice a dead server sooner. Empty = HAProxy's default (2 s, 2, 3).</span></div>
+
+    <div class="hxs-checks">
+      <label class="pill"><input v-model="s.redispatch" type="checkbox"> Retry on another server if one fails (redispatch)</label>
+      <label v-if="s.redispatch || s.retries" class="pill hxs-num">Retries <input v-model.number="s.retries" class="input" type="number" min="0" max="100" placeholder="3" aria-label="Retries"></label>
+      <label v-if="!http" class="pill"><input v-model="s.keepalive" type="checkbox"> TCP keep-alive (both sides)</label></div>
+    <div class="hxs-checks">
+      <label class="pill"><input :checked="s.stick_src > 0" type="checkbox" @change="s.stick_src = ($event.target as HTMLInputElement).checked ? 5 : 0"> Keep each client IP on the same server</label>
+      <label v-if="s.stick_src > 0" class="pill hxs-num">for <input v-model.number="s.stick_src" class="input" type="number" min="1" max="10080" aria-label="Minutes"> min</label>
+      <span v-if="s.stick_src > 0" class="hint">Written as <code>stick-table type ip size 200k expire {{ s.stick_src }}m</code> + <code>stick on src</code>. Good for message queues and apps without cookies.</span></div>
+
     <details v-if="!compact" class="hxs-adv" :open="s.sticky || s.forwardfor || !!(s.timeouts.connect || s.timeouts.server || s.timeouts.tunnel)">
       <summary>Sessions, headers and timeouts</summary>
       <div v-if="http" class="hxs-checks">
@@ -80,7 +96,10 @@ function setCheck(t: string) {
 .hxs-adv { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
 .hxs-adv summary { cursor: pointer; font-weight: 550; font-size: 13.5px; }
 .hxs-adv[open] summary { margin-bottom: 10px; }
-.hxs-checks { display: flex; gap: 8px; flex-wrap: wrap; }
+.hxs-checks { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.hxs-num { gap: 6px; } .hxs-num .input { width: 72px; height: 26px; padding: 0 6px; }
+.hxs-timing { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 13.5px; color: var(--text-2); }
+.hxs-timing .input { width: 70px; }
 .hxs-times { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 10px 0 6px; }
 .hxs-times .input { max-width: 110px; }
 </style>

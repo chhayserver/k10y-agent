@@ -5,13 +5,13 @@ import { ref, watch } from "vue";
 import Icon from "@/components/Icon.vue";
 import Modal from "@/components/Modal.vue";
 import type { HxBackend, HxOp } from "@/lib/haproxy";
-import { USE_CASES, backendChanges, backendData, settingsOf, splitHostPort, useCase, type Settings } from "@/lib/haproxyCatalog";
+import { USE_CASES, backendChanges, backendData, serverName, settingsOf, splitHostPort, timingData, useCase, type Settings } from "@/lib/haproxyCatalog";
 import HxBackendSettings from "./HxBackendSettings.vue";
 
 const props = defineProps<{ open: boolean; backend: HxBackend | null }>();
 const emit = defineEmits<{ close: []; review: [ops: HxOp[], title: string] }>();
-const name = ref(""), err = ref(""), preset = ref("webapp");
-const settings = ref<Settings>(backendData(USE_CASES[1]));
+const name = ref(""), err = ref(""), preset = ref("api");
+const settings = ref<Settings>(backendData(useCase("api")!));
 const servers = ref<{ address: string; backup: boolean }[]>([]);
 
 function start(id: string) {
@@ -21,6 +21,7 @@ function start(id: string) {
   servers.value = u.backends[u.backends.length - 1].servers.map((x) => ({ address: "", backup: !!x.backup }));
   if (!name.value || USE_CASES.some((c) => c.backends.some((b) => b.name === name.value))) name.value = u.backends[u.backends.length - 1].name;
 }
+const srvName = (i: number) => serverName(useCase(preset.value)?.serverName, (name.value || "backend").trim(), i);
 const example = (i: number) => useCase(preset.value)?.backends.at(-1)?.servers[i]?.address || (settings.value.mode === "http" ? "10.0.1.10:8080" : "10.0.3.10:5432");
 
 watch(() => props.open, (o) => {
@@ -28,7 +29,7 @@ watch(() => props.open, (o) => {
   err.value = "";
   const b = props.backend;
   if (b) { name.value = b.name; settings.value = settingsOf(b); servers.value = []; }
-  else { name.value = ""; start("webapp"); }
+  else { name.value = ""; start("api"); }
 });
 
 function submit() {
@@ -44,7 +45,7 @@ function submit() {
   for (const [i, row] of rows.entries()) {
     const hp = splitHostPort(row.address);
     if (!hp) { err.value = `Server ${i + 1}: write it as address:port, e.g. ${example(i)}`; return; }
-    ops.push({ op: "create", kind: "server", backend: n, name: `${n}-${i + 1}`, data: { ...hp, check: true, backup: row.backup } });
+    ops.push({ op: "create", kind: "server", backend: n, name: srvName(i), data: { ...hp, check: true, backup: row.backup, ...timingData(s) } });
   }
   emit("review", ops, props.backend ? `Edit backend ${n}` : `New backend ${n}`);
 }
@@ -67,7 +68,7 @@ function submit() {
 
     <div v-if="!backend" class="form-row"><label class="lbl">Servers</label>
       <div v-for="(row, i) in servers" :key="i" class="assign-row">
-        <span class="hint mono" style="min-width:80px">{{ (name || "backend").trim() }}-{{ i + 1 }}</span>
+        <span class="hint mono" style="min-width:110px">{{ srvName(i) }}</span>
         <input v-model="row.address" class="input" :placeholder="example(i)" style="font-family:var(--mono)" :aria-label="`Server ${i + 1} address and port`">
         <label class="pill"><input v-model="row.backup" type="checkbox"> Backup</label>
         <button class="btn icon-only ghost" type="button" aria-label="Remove server" @click="servers.splice(i, 1)"><Icon name="x" /></button></div>

@@ -83,7 +83,14 @@ const kpis = computed<Kpi[]>(() => {
 });
 function setSort(key: string) { if (sort.key === key) sort.dir = -sort.dir; else { sort.key = key; sort.dir = key === "name" || key === "health" ? 1 : -1; } }
 const share = (r: { weightTotal: number }, sv: HxServer) => (sv.backup || !(sv.state === "up" || sv.state === "nocheck") || !r.weightTotal ? null : Math.round((100 * (sv.weight || 0)) / r.weightTotal));
-const checkText = (b: HxBackend) => (b.check.type === "http" ? `GET ${b.check.uri}` : b.check.type === "tcp" ? "TCP" : "connect");
+const CHECK_WORD: Record<string, string> = { http: "HTTP", connect: "TCP", tcp: "TCP rules", pgsql: "PostgreSQL", mysql: "MySQL", redis: "Redis", ssl: "TLS", smtp: "SMTP", ldap: "LDAP" };
+function checkText(b: HxBackend) {
+  const c = b.check.type === "http" ? `${b.check.method || "GET"} ${b.check.uri}` : CHECK_WORD[b.check.type] || b.check.type;
+  const t = b.check_timing;
+  return t?.inter ? `${c} every ${t.inter}s · ${t.rise || 2} up / ${t.fall || 3} down` : c;
+}
+const extras = (b: HxBackend) => [b.redispatch && `redispatch${b.retries ? ` · ${b.retries} retries` : ""}`, b.stick_src && `same server ${b.stick_src}m`,
+  b.keepalive && "keep-alive", b.sticky && "cookie", b.servers.some((s) => s.ssl) && "TLS to servers"].filter(Boolean).join(" · ");
 const COLS: [string, string, boolean][] = [["name", "Backend", false], ["health", "Health", false], ["", "Settings", false], ["sessions", "Sessions", true], ["rate", "New/s", true], ["e5", "5xx", true], ["rtime", "Resp. time", true]];
 </script>
 
@@ -125,7 +132,8 @@ const COLS: [string, string, boolean][] = [["name", "Backend", false], ["health"
           <td><div class="hxb-health"><Badge :level="r.h.level" :label="r.h.label" />
             <span v-if="r.b.servers.length" class="hxb-bar" :title="`${r.counts.up} up · ${r.counts.out} out of rotation · ${r.counts.down} down`">
               <i class="up" :style="{ flexGrow: r.counts.up }" /><i class="out" :style="{ flexGrow: r.counts.out }" /><i class="down" :style="{ flexGrow: r.counts.down }" /></span></div></td>
-          <td class="sub-cell">{{ r.b.balance }} · {{ r.b.mode.toUpperCase() }}<div class="sub">check {{ checkText(r.b) }}</div></td>
+          <td class="sub-cell">{{ r.b.balance }} · {{ r.b.mode.toUpperCase() }}<div class="sub">check {{ checkText(r.b) }}</div>
+            <div v-if="extras(r.b)" class="sub">{{ extras(r.b) }}</div></td>
           <td class="num">{{ num(r.sessions) }}</td><td class="num">{{ num(r.rate) }}</td>
           <td class="num"><b v-if="r.e5" style="color:var(--critical)">{{ num(r.e5) }}</b><span v-else class="dim">0</span></td>
           <td class="num">{{ r.rtime ? `${r.rtime} ms` : "–" }}</td>

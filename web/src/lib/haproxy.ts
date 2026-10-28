@@ -3,16 +3,17 @@ import { hub } from "@/api/client";
 import type { Level } from "./format";
 
 export interface HxStats { [k: string]: any }
-export interface HxBind { address: string; port: number; ssl: boolean; name: string; certificate?: string }
-export interface HxRoute { kind: "path_prefix" | "path" | "host" | "header" | "src" | "other"; value: string; backend: string; header?: string }
+export interface HxBind { address: string; port: number; ssl: boolean; name: string; certificate?: string; certificate_file?: string }
+export interface HxRoute { kind: "service" | "path_prefix" | "path" | "host" | "header" | "src" | "always" | "other"; value: string; backend: string; header?: string; style?: string }
 export interface HxMaintenance { enabled: boolean; message: string; allow_ips: string[] }
-export interface HxPolicies { allow_ips: string[]; redirect_https: boolean; rate_limit: { requests: number; period: number } | null; custom_rules: number; maintenance?: HxMaintenance; blocklist?: boolean }
+export interface HxPolicies { allow_ips: string[]; redirect_https: boolean; rate_limit: { requests: number; period: number } | null; custom_rules: number; maintenance?: HxMaintenance; blocklist?: boolean; forwarded_port?: boolean }
 export interface HxFrontend { name: string; mode: string; binds: HxBind[]; default_backend: string | null; routes: HxRoute[]; simple_routes: boolean; stats_page: boolean; stats: HxStats; policies: HxPolicies; timeouts?: { client: number } }
 export interface HxSync { id: number; backend: string; cluster_id: number; namespace: string; service: string; port: string; mode: string; enabled: boolean; last_result: string; last_error: string; last_sync_at: string | null }
-export interface HxServer { name: string; address: string; port: number; weight: number; check: boolean; backup: boolean; maxconn?: number; ssl?: boolean; state: string; stats: HxStats }
+export interface HxServer { name: string; address: string; port: number; weight: number; check: boolean; backup: boolean; maxconn?: number; ssl?: boolean; inter?: number; rise?: number; fall?: number; state: string; stats: HxStats }
 export interface HxCheck { type: string; uri: string; method?: string; host?: string; user?: string }
 export interface HxBackend { name: string; mode: string; balance: string; balance_arg?: string; check: HxCheck; sticky?: boolean; forwardfor?: boolean;
-  timeouts?: { connect: number; server: number; tunnel: number }; servers: HxServer[]; used_by: string[]; stats: HxStats; k8s_sync: HxSync | null }
+  timeouts?: { connect: number; server: number; tunnel: number }; redispatch?: boolean; retries?: number; keepalive?: boolean; stick_src?: number;
+  check_timing?: { inter: number; rise: number; fall: number }; servers: HxServer[]; used_by: string[]; stats: HxStats; k8s_sync: HxSync | null }
 export interface HxOverview { instance: any; group: any[]; frontends: HxFrontend[]; backends: HxBackend[]; config_version: number; keeps_server_state: boolean }
 export type HxPoint = [number, { f: Record<string, { req: number; sess: number; slim: number; e5: number; e5_pct: number; in: number; out: number }>; b: Record<string, { req: number; rq?: number; sess: number; rtime: number; queue: number; e5: number; e5_pct?: number }> }];
 export interface HxOp { op: "create" | "update" | "delete" | "raw"; kind: "frontend" | "backend" | "server" | "config"; name?: string; backend?: string; data?: Record<string, any> }
@@ -21,10 +22,13 @@ export const STATE: Record<string, { level: Level; label: string }> = {
   up: { level: "good", label: "Up" }, down: { level: "critical", label: "Down" }, drain: { level: "warning", label: "Draining" },
   maint: { level: "neutral", label: "Maintenance" }, nocheck: { level: "neutral", label: "No check" }, unknown: { level: "neutral", label: "Unknown" },
 };
-export const ROUTE_KIND: Record<string, string> = { path_prefix: "Path starts with", path: "Path is", host: "Host is", header: "Header", src: "Client IP in", other: "Rule" };
+export const ROUTE_KIND: Record<string, string> = { service: "Path", path_prefix: "Path starts with", path: "Path is exactly", host: "Host is", header: "Header", src: "Client IP in", always: "All traffic", other: "Rule" };
 
 export const bindText = (b: HxBind) => `${b.address === "*" ? "*" : b.address}:${b.port}${b.ssl ? " (TLS)" : ""}`;
-export function routeText(r: HxRoute) { return r.kind === "header" ? `${r.header}: ${r.value}` : r.value; }
+/** How a route reads: "/order (+ /order/…)" for the service style ({ path /order } || { path_beg /order/ }). */
+export function routeText(r: HxRoute) {
+  return r.kind === "header" ? `${r.header}: ${r.value}` : r.kind === "service" ? `${r.value} and ${r.value.replace(/\/$/, "")}/…` : r.kind === "always" ? "all traffic" : r.value;
+}
 export function backendHealth(b: HxBackend): { level: Level; label: string; up: number; total: number } {
   const active = b.servers.filter((s) => !s.backup), up = active.filter((s) => s.state === "up" || s.state === "nocheck").length, total = active.length;
   if (!total) return { level: "neutral", label: "No servers", up, total };
@@ -72,11 +76,12 @@ export type FrontendKind = "proxy" | "paths" | "rules" | "none" | "stats";
 export const FRONTEND_KIND: Record<FrontendKind, string> = { proxy: "Proxy", paths: "Path routing", rules: "Rules", none: "No backend", stats: "Stats page" };
 /** How a frontend sends traffic: one backend (proxy), by path to several backends, or other rules. */
 export function frontendShape(f: HxFrontend, backends: Map<string, HxBackend>) {
-  const lanes: Lane[] = f.routes.map((r) => ({ match: routeText(r), kind: ROUTE_KIND[r.kind] || "Rule", backend: r.backend }));
-  if (f.default_backend) lanes.push({ match: f.routes.length ? "everything else" : "all traffic", kind: "", backend: f.default_backend });
+  const lanes: Lane[] = f.routes.map((r) => ({ match: routeText(r), kind: r.kind === "always" || r.kind === "service" ? "" : ROUTE_KIND[r.kind] || "Rule", backend: r.backend }));
+  const real = f.routes.filter((r) => r.kind !== "always");      // "use_backend x" with no condition is the same as a default
+  if (f.default_backend) lanes.push({ match: real.length ? "everything else" : "all traffic", kind: "", backend: f.default_backend });
   const names = [...new Set(lanes.map((l) => l.backend))];
-  const kind: FrontendKind = f.stats_page ? "stats" : !lanes.length ? "none" : !f.routes.length ? "proxy"
-    : f.routes.every((r) => r.kind === "path_prefix" || r.kind === "path") ? "paths" : "rules";
+  const kind: FrontendKind = f.stats_page ? "stats" : !lanes.length ? "none" : !real.length ? "proxy"
+    : real.every((r) => r.kind === "path_prefix" || r.kind === "path" || r.kind === "service") ? "paths" : "rules";
   const servers = names.reduce((a, n) => a + (backends.get(n)?.servers.length || 0), 0);
   const label = kind === "proxy" ? (servers > 1 ? "Proxy · load balanced" : "Proxy") : kind === "paths" || kind === "rules" ? `${FRONTEND_KIND[kind]} · ${names.length} backend${names.length === 1 ? "" : "s"}` : FRONTEND_KIND[kind];
   const health = names.map((n) => backends.get(n)).map((b) => (b ? backendHealth(b).level : "critical"));
