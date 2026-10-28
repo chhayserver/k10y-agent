@@ -38,7 +38,7 @@ export const useSession = defineStore("session", {
      *  HAProxy pages); use canHx for one instance and canAll for "on every instance". */
     canGlobal(): (perm: string) => boolean {
       return (perm: string) => Boolean(this.me && (this.me.global_permissions.includes(perm)
-        || (perm.startsWith("haproxy.") && (this.me.haproxy || []).some((h) => h.permissions.includes(perm)))));
+        || ((perm.startsWith("haproxy.") || perm === "ai.use") && (this.me.haproxy || []).some((h) => h.permissions.includes(perm)))));
     },
     canAll(): (perm: string) => boolean {
       return (perm: string) => Boolean(this.me && this.me.global_permissions.includes(perm));

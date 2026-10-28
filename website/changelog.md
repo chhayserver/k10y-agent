@@ -10,6 +10,8 @@ Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and 
 
 - **HAProxy permissions per instance:** a role can now be assigned on **one HAProxy instance** (like one cluster), so someone can operate `lb-edge-1` without seeing or touching the others. Lists, pages, buttons, alerts and group changes all follow it.
 - **New `haproxy.manage` permission** for adding, editing and removing HAProxy instances and their Data Plane API logins (it used to be part of `clusters.manage`). Roles that had `clusters.manage` get it automatically.
+- **Roles per system:** built-in **Kubernetes viewer / operator / admin** and **HAProxy viewer / operator / admin**, plus Admin. The old Operator and Viewer become the Kubernetes ones, and their users automatically get the matching HAProxy role, so nobody loses access. HAProxy operator and admin can use the HAProxy AI assistant on their instance.
+- **Built-in roles pick up new permissions on upgrade** (once; a permission you removed stays removed).
 - **Clearer permissions on the Roles page:** HAProxy permissions have their own section, and each says exactly what it allows.
 - **Fix:** the first IP block (which adds the blocklist to every frontend) now needs `haproxy.configure`, since it changes the config.
 

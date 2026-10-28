@@ -19,11 +19,8 @@ def setup(client, monkeypatch):
     ready_admin(client)
     a = client.post("/api/hub/haproxy", json={"name": "lb-a", "url": "http://a:5555", "username": "u", "password": "p", "group_name": "pair"}, headers=CSRF).json()["id"]
     b = client.post("/api/hub/haproxy", json={"name": "lb-b", "url": "http://b:5555", "username": "u", "password": "p", "group_name": "pair"}, headers=CSRF).json()["id"]
-    roles = {}
-    for name, perms in (("HAProxy operator", ["haproxy.view", "haproxy.operate"]),
-                        ("HAProxy admin", ["haproxy.view", "haproxy.operate", "haproxy.configure", "haproxy.manage"]),
-                        ("Cluster viewer", ["cluster.view"])):
-        roles[name] = client.post("/api/hub/roles", json={"name": name, "permissions": perms}, headers=CSRF).json()["id"]
+    roles = {r["name"]: r["id"] for r in client.get("/api/hub/roles").json()}      # built-in HAProxy viewer/operator/admin
+    roles["Cluster viewer"] = client.post("/api/hub/roles", json={"name": "Cluster viewer", "permissions": ["cluster.view"]}, headers=CSRF).json()["id"]
     return a, b, roles, fakes
 
 
@@ -41,7 +38,7 @@ def test_role_on_one_haproxy_only_reaches_that_haproxy(client, monkeypatch):
     ola = user(client, "ola", [{"role_id": roles["HAProxy operator"], "haproxy_id": a}])
     assert [i["name"] for i in ola.get("/api/hub/haproxy").json()] == ["lb-a"]
     me = ola.get("/api/hub/auth/me").json()
-    assert me["haproxy"] == [{"id": a, "name": "lb-a", "permissions": ["haproxy.operate", "haproxy.view"]}]
+    assert me["haproxy"] == [{"id": a, "name": "lb-a", "permissions": ["ai.use", "haproxy.operate", "haproxy.view"]}]
     assert me["global_permissions"] == [] and me["clusters"] == []
     assert ola.get(f"/api/hub/haproxy/{a}/overview").status_code == 200
     assert ola.get(f"/api/hub/haproxy/{b}/overview").status_code == 403
@@ -104,3 +101,52 @@ def test_permission_catalog_has_an_haproxy_section(client):
     assert "haproxy.view" not in cat["global"] and "clusters.manage" in cat["global"]
     admin = next(r for r in client.get("/api/hub/roles").json() if r["name"] == "Admin")
     assert "haproxy.manage" in admin["permissions"]
+
+
+def test_upgrade_splits_old_mixed_roles_per_system(client, tmp_path):
+    """An installation with the old built-in Operator/Viewer (Kubernetes + HAProxy in one role): they become
+    "Kubernetes operator/viewer" with only Kubernetes permissions, users keep their HAProxy access through the
+    HAProxy role, and later a permission an admin removes from a built-in role isn't added back."""
+    from sqlalchemy import select
+    from k10y_agent.hub.db import Role, RoleAssignment, Setting, User
+    ready_admin(client)
+    db = hub.state["db"]
+    with db.session() as s:                            # make it look like 2.4
+        for r in s.execute(select(Role)).scalars():
+            if r.name == "Kubernetes operator":
+                r.name, r.permissions = "Operator", sorted({*r.permissions, "haproxy.view", "haproxy.operate"})
+            elif r.name == "Kubernetes viewer":
+                r.name, r.permissions = "Viewer", sorted({*r.permissions, "haproxy.view"})
+            elif r.name.startswith("HAProxy ") or r.name == "Kubernetes admin":
+                s.delete(r)
+        for key in ("migration.split_roles", "builtin_roles_seen"):
+            s.delete(s.get(Setting, key))
+        s.commit()
+    client.post("/api/hub/users", json={"username": "olga", "password": "Pass-word-12", "must_change_password": False,
+                                        "assignments": [{"role_id": next(r["id"] for r in client.get("/api/hub/roles").json() if r["name"] == "Operator")}]}, headers=CSRF)
+    restart = lambda: hub.init(f"sqlite:///{tmp_path / 'hub.db'}", secret="test-secret", data_dir=str(tmp_path))
+    restart()
+    with db.session() as s:
+        roles = {r.name: set(r.permissions) for r in s.execute(select(Role)).scalars()}
+        olga = s.execute(select(User).where(User.username == "olga")).scalar_one()
+        has = sorted(a.role.name for a in s.execute(select(RoleAssignment).where(RoleAssignment.user_id == olga.id)).scalars())
+    assert "Operator" not in roles and "Viewer" not in roles
+    assert not any(p.startswith("haproxy.") for p in roles["Kubernetes operator"] | roles["Kubernetes viewer"])
+    assert {"Kubernetes admin", "HAProxy viewer", "HAProxy operator", "HAProxy admin"} <= set(roles)
+    assert has == ["HAProxy operator", "Kubernetes operator"]           # same access as before, now per system
+    with db.session() as s:                            # an admin takes ai.use away from HAProxy operator
+        r = s.execute(select(Role).where(Role.name == "HAProxy operator")).scalar_one()
+        r.permissions = [p for p in r.permissions if p != "ai.use"]
+        s.commit()
+    restart()
+    with db.session() as s:
+        assert "ai.use" not in s.execute(select(Role).where(Role.name == "HAProxy operator")).scalar_one().permissions
+
+
+def test_ai_on_one_haproxy(client, monkeypatch):
+    a, b, roles, _ = setup(client, monkeypatch)
+    ola = user(client, "ola", [{"role_id": roles["HAProxy operator"], "haproxy_id": a}])
+    me = ola.get("/api/hub/auth/me").json()
+    assert "ai.use" in me["haproxy"][0]["permissions"] and "ai.use" not in me["global_permissions"]
+    r = ola.post(f"/api/hub/haproxy/{b}/ai/diagnose", json={"scope": "instance"}, headers=CSRF)
+    assert r.status_code == 403

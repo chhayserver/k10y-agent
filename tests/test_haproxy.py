@@ -257,8 +257,8 @@ def test_api_permissions_encryption_state_and_audit(client, monkeypatch):
     assert ("haproxy-drain", False, True) in actions and ("haproxy-config", True, True) in actions
 
     # a viewer can look but not touch
-    viewer = next(x for x in client.get("/api/hub/roles").json() if x["name"] == "Viewer")
-    client.patch(f"/api/hub/roles/{viewer['id']}", json={"name": "Viewer", "permissions": ["cluster.view", "haproxy.view"]}, headers=CSRF)
+    viewer = next(x for x in client.get("/api/hub/roles").json() if x["name"] == "Kubernetes viewer")
+    client.patch(f"/api/hub/roles/{viewer['id']}", json={"name": "Kubernetes viewer", "permissions": ["cluster.view", "haproxy.view"]}, headers=CSRF)
     client.post("/api/hub/users", json={"username": "vic", "password": "Vic-pass-12", "must_change_password": False,
                                         "assignments": [{"role_id": viewer["id"], "cluster_id": None}]}, headers=CSRF)
     v = TestClient(hub.app)

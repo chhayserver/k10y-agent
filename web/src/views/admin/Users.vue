@@ -35,7 +35,7 @@ const scopeName = (a: Assign) => (a.haproxy_id ? `HAProxy ${haproxies.value.find
 const rows = computed(() => { const q = state.q.trim().toLowerCase(); return (users.value || []).filter((u) => !q || `${u.username} ${u.display_name}`.toLowerCase().includes(q)); });
 
 const edit = reactive({ open: false, id: 0, username: "", display_name: "", password: "", is_active: true, must_change_password: true, assignments: [] as Assign[], err: "", busy: false });
-function openNew() { Object.assign(edit, { open: true, id: 0, username: "", display_name: "", password: "", is_active: true, must_change_password: true, assignments: [{ role_id: roles.value.find((r) => r.name === "Viewer")?.id || roles.value[0]?.id, cluster_id: null }], err: "" }); }
+function openNew() { Object.assign(edit, { open: true, id: 0, username: "", display_name: "", password: "", is_active: true, must_change_password: true, assignments: [{ role_id: roles.value.find((r) => r.name === "Kubernetes viewer")?.id || roles.value[0]?.id, cluster_id: null }], err: "" }); }
 const userSessions = ref<any[] | null>(null);
 async function loadUserSessions(id: number) { userSessions.value = null; try { userSessions.value = await hub.get(`/users/${id}/sessions`); } catch { userSessions.value = []; } }
 async function signOutEverywhere(u: { id: number; username: string }) {

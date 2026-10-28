@@ -24,16 +24,24 @@ async function remove(r: any) {
   if (!confirm(`Delete role ${r.name}? Users lose the permissions it gave them.`)) return;
   try { await hub.del(`/roles/${r.id}`); toast(true, `Deleted role ${r.name}`); load(); } catch (e: any) { toast(false, e.message); }
 }
-const columns = [{ key: "name", label: "Role", cls: "primary" }, { key: "description", label: "Description", cls: "wrap" },
+// Which system a role is for, from its permissions (Kubernetes, HAProxy, both, or the hub).
+function systemOf(r: any): string {
+  // ai.use is shared (the AI assistant of either system), so it doesn't decide the system
+  const k8s = r.permissions.some((p: string) => p !== "ai.use" && catalog.value?.cluster[p]), hx = r.permissions.some((p: string) => p.startsWith("haproxy."));
+  const hubP = r.permissions.some((p: string) => catalog.value?.global[p]);
+  return hubP && k8s && hx ? "Everything" : k8s && hx ? "Kubernetes + HAProxy" : hx ? "HAProxy" : k8s ? "Kubernetes" : hubP ? "Hub" : "–";
+}
+const columns = [{ key: "name", label: "Role", cls: "primary" }, { key: "system", label: "Applies to", sort: (r: any) => systemOf(r) }, { key: "description", label: "Description", cls: "wrap" },
   { key: "permissions", label: "Permissions", num: true, sort: (r: any) => r.permissions.length }, { key: "assignments", label: "Assigned", num: true }, { key: "_a", label: "Actions", nosort: true, cls: "actions" }];
 </script>
 <template>
-  <div class="toolbar"><span class="hint">Roles are sets of permissions. Assign them to users on all clusters or on one cluster (Users page).</span><span class="grow" />
+  <div class="toolbar"><span class="hint">Roles are sets of permissions, one set per system. Assign them on the Users page: on everything, on one cluster (Kubernetes roles) or on one HAProxy (HAProxy roles).</span><span class="grow" />
     <button class="btn primary" @click="openNew"><Icon name="upload" /><span>New role</span></button></div>
   <section class="card flush"><div class="card-body table-wrap">
     <Skeleton v-if="!roles" :rows="3" />
     <DataTable v-else v-model:sort="state.sort" :rows="roles" :columns="columns" :row-key="(r) => String(r.id)" clickable @row="openEdit">
       <template #name="{ row }">{{ row.name }} <span v-if="row.builtin" class="pill-tag">built-in</span> <span v-if="row.locked" class="chip"><Icon name="lock" /> locked</span></template>
+      <template #system="{ row }"><span class="chip">{{ systemOf(row) }}</span></template>
       <template #permissions="{ row }">{{ row.permissions.length }}</template>
       <template #_a="{ row }"><button v-if="!row.locked" class="btn ghost sm" style="color:var(--critical)" @click="remove(row)">Delete</button></template>
     </DataTable>

@@ -39,7 +39,7 @@ def test_sessions_list_and_sign_out_elsewhere(client):
 
 def test_admin_signs_out_and_disables_a_user(client):
     ready_admin(client)
-    viewer = next(r for r in client.get("/api/hub/roles").json() if r["name"] == "Viewer")
+    viewer = next(r for r in client.get("/api/hub/roles").json() if r["name"] == "Kubernetes viewer")
     u = client.post("/api/hub/users", json={"username": "bob", "password": "Bob-pass-12", "must_change_password": False,
                                             "assignments": [{"role_id": viewer["id"], "cluster_id": None}]}, headers=CSRF).json()
     bob = TestClient(hub.app)

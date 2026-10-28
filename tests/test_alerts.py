@@ -92,7 +92,7 @@ def test_unreachable_cluster_and_flapping_pending_is_silent(client, monkeypatch)
 
 def test_alert_permissions(client):
     ready_admin(client)
-    viewer = next(r for r in client.get("/api/hub/roles").json() if r["name"] == "Viewer")
+    viewer = next(r for r in client.get("/api/hub/roles").json() if r["name"] == "Kubernetes viewer")
     u = client.post("/api/hub/users", json={"username": "viewer1", "password": "View-pass-1", "must_change_password": False,
                                         "assignments": [{"role_id": viewer["id"], "cluster_id": None}]}, headers=CSRF)
     v = TestClient(hub.app)

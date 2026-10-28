@@ -1662,7 +1662,7 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
                     s: Session = Depends(db_session)) -> dict:
         from .. import ai
         from . import haproxy_ai
-        if not p.can("ai.use"):
+        if not (p.can("ai.use") or "ai.use" in p.haproxy_perms(iid)):
             raise HTTPException(status_code=403, detail="missing permission: ai.use")
         inst = get(s, iid)
         if body.scope != "instance":

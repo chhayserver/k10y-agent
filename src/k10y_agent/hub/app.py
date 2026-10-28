@@ -28,7 +28,7 @@ from . import alerts, haproxy, haproxy_monitor
 from ..config import Settings
 from .db import (AuditEntry, Cluster, Database, Role, RoleAssignment, SessionRow, Setting, User, UserPreference, get_setting,
                  utcnow)
-from .permissions import (ALL_PERMISSIONS, BUILTIN_ROLES, CLUSTER_PERMISSIONS, GLOBAL_PERMISSIONS, HAPROXY_PERMISSIONS, HUB_PERMISSIONS,
+from .permissions import (ALL_PERMISSIONS, BUILTIN_BASELINE, BUILTIN_ROLES, CLUSTER_PERMISSIONS, SPLIT_ROLES, GLOBAL_PERMISSIONS, HAPROXY_PERMISSIONS, HUB_PERMISSIONS,
                           required_permission)
 from .security import (Crypto, LoginLimiter, check_password_policy, hash_password, new_session_token, token_digest,
                        verify_password)
@@ -57,12 +57,49 @@ def init(database_url: Optional[str] = None, secret: Optional[str] = None, data_
     state["db"] = db
     state["crypto"] = Crypto(secret if secret is not None else settings.secret_key, data_dir or settings.data_dir)
     with db.session() as s:
+        # 2.5: the mixed built-in roles Operator and Viewer become "Kubernetes operator/viewer". Their HAProxy
+        # permissions move to the HAProxy roles: users who had them on everything get that HAProxy role too.
+        if s.get(Setting, "migration.split_roles") is None:
+            for old, (new, hx_role) in SPLIT_ROLES.items():
+                role = s.execute(select(Role).where(Role.name == old, Role.builtin.is_(True))).scalar_one_or_none()
+                if role is None or s.execute(select(Role).where(Role.name == new)).scalar_one_or_none():
+                    continue
+                hx_perms = [p for p in role.permissions or [] if p in HAPROXY_PERMISSIONS]
+                role.name, role.description = new, next(d for n, d, _ in BUILTIN_ROLES if n == new)
+                role.permissions = sorted(p for p in role.permissions or [] if p not in HAPROXY_PERMISSIONS)
+                if hx_perms:
+                    target = s.execute(select(Role).where(Role.name == hx_role)).scalar_one_or_none()
+                    if target is None:
+                        target = Role(name=hx_role, description=next(d for n, d, _ in BUILTIN_ROLES if n == hx_role),
+                                      permissions=next(p for n, _, p in BUILTIN_ROLES if n == hx_role), builtin=True)
+                        s.add(target)
+                        s.flush()
+                    for a in s.execute(select(RoleAssignment).where(RoleAssignment.role_id == role.id,
+                                                                    RoleAssignment.cluster_id.is_(None),
+                                                                    RoleAssignment.haproxy_id.is_(None))).scalars().all():
+                        s.add(RoleAssignment(user_id=a.user_id, role_id=target.id))
+            s.add(Setting(key="migration.split_roles", value={"done": True}))
+            s.commit()
+        # Built-in roles: create missing ones; give existing ones the permissions a newer version added to their
+        # definition, once (what each role has "seen" is remembered, so a permission an admin removed stays removed).
+        seen_row = s.get(Setting, "builtin_roles_seen")
+        seen = dict(seen_row.value) if seen_row else {}
         for name, desc, perms in BUILTIN_ROLES:
             role = s.execute(select(Role).where(Role.name == name)).scalar_one_or_none()
             if role is None:
                 s.add(Role(name=name, description=desc, permissions=perms, builtin=True))
             elif name == "Admin":
                 role.permissions = sorted(ALL_PERMISSIONS)  # Admin always has every permission
+                role.description = desc
+            else:
+                new = [p for p in perms if p not in seen.get(name, BUILTIN_BASELINE.get(name, []))]
+                if new:
+                    role.permissions = sorted({*(role.permissions or []), *new})
+            seen[name] = sorted(perms)
+        if seen_row:
+            seen_row.value = seen
+        else:
+            s.add(Setting(key="builtin_roles_seen", value=seen))
         s.commit()
         # 2.4.2: managing HAProxy instances moved from clusters.manage to its own haproxy.manage. Roles that could
         # do it before keep that right (once, so an admin can remove it later).
@@ -138,7 +175,8 @@ class Principal:
 
     def haproxy_perms(self, haproxy_id: int) -> Set[str]:
         """HAProxy permissions on one instance: from roles on everything, plus roles on that instance."""
-        return {p for p in self.grants.get(None, set()) | self.grants.get(f"hx:{haproxy_id}", set()) if p in HAPROXY_PERMISSIONS}
+        return {p for p in self.grants.get(None, set()) | self.grants.get(f"hx:{haproxy_id}", set())
+                if p in HAPROXY_PERMISSIONS or p == "ai.use"}     # ai.use: the HAProxy AI assistant on that instance
 
     def can_any_haproxy(self, perm: str) -> bool:
         return any(perm in perms for key, perms in self.grants.items() if key is None or (isinstance(key, str) and key.startswith("hx:")))

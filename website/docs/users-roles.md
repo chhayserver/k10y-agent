@@ -64,13 +64,21 @@ Notes:
 
 ## Built-in roles
 
-| Role | Permissions |
-|---|---|
-| **Admin** | Everything. It can't be edited or deleted. |
-| **Operator** | View, logs, Secrets, scale, restart, update image, roll back, delete pods, edit YAML (new installs), apply YAML, AI, audit. **Not** the shell. |
-| **Viewer** | View, logs and audit. |
+One set of roles per system, plus Admin. Give Kubernetes roles on everything or one cluster, and HAProxy roles on everything or one HAProxy.
 
-Operator and Viewer are starting points: edit them or create your own.
+| Role | Assign on | Permissions |
+|---|---|---|
+| **Admin** | everything | Everything, including users, settings, clusters and HAProxy instances. It can't be edited or deleted. |
+| **Kubernetes viewer** | everything or one cluster | View, logs and activity. |
+| **Kubernetes operator** | everything or one cluster | View, logs, Secrets, scale, restart, update image, roll back, delete pods, edit YAML, apply YAML, AI, activity. **Not** the shell. |
+| **Kubernetes admin** | everything or one cluster | Every cluster permission, including deletes, the pod shell and draining nodes. |
+| **HAProxy viewer** | everything or one HAProxy | See frontends, backends, servers, live numbers, logs and history. |
+| **HAProxy operator** | everything or one HAProxy | Viewer, plus drain and maintenance, rolling deploys, blocking IPs and the AI assistant. No config changes. |
+| **HAProxy admin** | everything or one HAProxy | Everything on HAProxy: config changes, the raw config, the connection, and the AI assistant. |
+
+For someone who works on both, give two roles, e.g. *Kubernetes operator* on staging and *HAProxy operator* on `lb-edge-1`. The Roles page shows which system each role applies to. Edit the built-in roles or create your own.
+
+Upgrading from 2.4 or older: the old **Operator** and **Viewer** roles are renamed **Kubernetes operator** and **Kubernetes viewer**. Their HAProxy permissions move to **HAProxy operator** and **HAProxy viewer**, which their users get automatically, so nobody loses access.
 
 ## Add a user
 

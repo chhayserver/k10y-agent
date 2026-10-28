@@ -119,7 +119,7 @@ function serverMenu(b: HxBackend, sv: HxServer): MenuItem[] {
   }
   return items.length ? items : [{ note: "You can view only" }];
 }
-const canAi = computed(() => s.canGlobal("ai.use"));
+const canAi = computed(() => s.canAll("ai.use") || s.canHx("ai.use", h.currentId));
 function askAi(scope: "instance" | "frontend" | "backend", target = "") {
   router.push({ path: to("haproxy-ai"), query: { scope, target, run: "1" } });
 }
