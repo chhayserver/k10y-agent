@@ -1250,10 +1250,14 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
     # --- instances -----------------------------------------------------------------
     @r.get("")
     def list_instances(p=Depends(require("haproxy.view")), s: Session = Depends(db_session)) -> list:
-        return [view(i) for i in s.execute(select(HAProxyInstance).order_by(HAProxyInstance.name)).scalars()]
+        return [view(i) for i in s.execute(select(HAProxyInstance).order_by(HAProxyInstance.name)).scalars()
+                if p.can("haproxy.view", haproxy_id=i.id)]           # only the instances this user has a role on
 
     @r.post("/test")
-    def test_instance(body: TestBody, p=Depends(require("clusters.manage")), s: Session = Depends(db_session)) -> dict:
+    def test_instance(body: TestBody, p=Depends(require("haproxy.manage")), s: Session = Depends(db_session)) -> dict:
+        # testing a new instance needs haproxy.manage on all of HAProxy; an existing one, on that instance
+        if not p.can("haproxy.manage", haproxy_id=body.instance_id) if body.instance_id else not p.can("haproxy.manage"):
+            raise HTTPException(status_code=403, detail="missing permission: haproxy.manage")
         pw = body.password
         if not pw and body.instance_id:
             pw = crypto().decrypt(get(s, body.instance_id).password_encrypted)
@@ -1270,8 +1274,10 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
                 "servers": sum(len(b["servers"]) for b in data["backends"])}
 
     @r.post("")
-    def create_instance(body: InstanceBody, request: Request, p=Depends(require("clusters.manage")),
+    def create_instance(body: InstanceBody, request: Request, p=Depends(require("haproxy.manage")),
                         s: Session = Depends(db_session)) -> dict:
+        if not p.can("haproxy.manage"):   # adding an instance is for roles on all of HAProxy
+            raise HTTPException(status_code=403, detail="missing permission: haproxy.manage (on all HAProxy instances)")
         if not body.password:
             raise HTTPException(status_code=400, detail="password is required")
         if s.execute(select(HAProxyInstance).where(HAProxyInstance.name == body.name)).scalar_one_or_none():
@@ -1285,7 +1291,7 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
         return view(inst)
 
     @r.patch("/{iid}")
-    def update_instance(iid: int, body: InstanceBody, request: Request, p=Depends(require("clusters.manage")),
+    def update_instance(iid: int, body: InstanceBody, request: Request, p=Depends(require("haproxy.manage")),
                         s: Session = Depends(db_session)) -> dict:
         inst = get(s, iid)
         inst.name, inst.url, inst.username, inst.verify_tls = body.name, check_url(body.url), body.username, body.verify_tls
@@ -1297,11 +1303,14 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
         return view(inst)
 
     @r.delete("/{iid}")
-    def delete_instance(iid: int, request: Request, p=Depends(require("clusters.manage")), s: Session = Depends(db_session)) -> dict:
+    def delete_instance(iid: int, request: Request, p=Depends(require("haproxy.manage")), s: Session = Depends(db_session)) -> dict:
         inst = get(s, iid)
         for model in (HAProxyConfigVersion, HAProxyK8sSync):
             for row in s.execute(select(model).where(model.instance_id == iid)).scalars():
                 s.delete(row)
+        from .db import RoleAssignment          # roles given on this instance go with it
+        for row in s.execute(select(RoleAssignment).where(RoleAssignment.haproxy_id == iid)).scalars():
+            s.delete(row)
         s.delete(inst)
         s.commit()
         audit(s, request, p, "haproxy-remove", inst.name)
@@ -1320,7 +1329,8 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
         for b in data["backends"]:
             b["k8s_sync"] = syncs.get(b["name"])
         group = [view(i) for i in s.execute(select(HAProxyInstance).where(HAProxyInstance.group_name == inst.group_name,
-                                                                           HAProxyInstance.id != iid)).scalars()] if inst.group_name else []
+                                                                           HAProxyInstance.id != iid)).scalars()
+                 if p.can("haproxy.view", haproxy_id=i.id)] if inst.group_name else []
         return {"instance": view(inst), "group": group, **data}
 
     @r.get("/{iid}/history")
@@ -1452,6 +1462,11 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
                     reloaded = False
                 else:
                     # First use: create the list file and add one "reject" rule to every frontend (one reload).
+                    # That is a config change, so it needs haproxy.configure; later blocks only haproxy.operate.
+                    if not p.can("haproxy.configure", haproxy_id=iid):
+                        raise HTTPException(status_code=403, detail="The first block on an HAProxy adds the blocklist to every "
+                                                                    "frontend (a config change), so it needs haproxy.configure. "
+                                                                    "After that, haproxy.operate is enough.")
                     path = st["path"] or dp.put_general_file(BLOCKLIST, f"{ip}\n", create=True).get("file")
                     if st["path"]:
                         save_blocklist(dp, ips + [ip])
@@ -1512,6 +1527,8 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
         others = []
         for o in s.execute(select(HAProxyInstance).where(HAProxyInstance.group_name == inst.group_name, HAProxyInstance.id != iid)
                            .order_by(HAProxyInstance.name)).scalars():
+            if not p.can("haproxy.configure", haproxy_id=o.id):
+                continue                     # its config isn't yours to read
             try:
                 with dp_for(o) as dp:
                     theirs = strip_header(dp.raw())
@@ -1550,6 +1567,10 @@ def build_router(db_session, require, audit, crypto, monitor: Callable[[], Any] 
                       s: Session = Depends(db_session)) -> dict:
         """Preview the same change on several instances, or apply it one by one (stopping at the first failure)."""
         results = []
+        denied = [iid for iid in body.instance_ids if not p.can("haproxy.configure", haproxy_id=iid)]
+        if denied:
+            names = [get(s, i).name for i in denied]
+            raise HTTPException(status_code=403, detail=f"missing permission: haproxy.configure on {', '.join(names)}")
         for iid in body.instance_ids:
             inst = get(s, iid)
             try:

@@ -11,7 +11,7 @@ import { prefs, resetHxDash } from "@/stores/prefs";
 import HxKpis, { type Kpi } from "./HxKpis.vue";
 import HxTopology from "./HxTopology.vue";
 
-const props = defineProps<{ data: HxOverview; points: HxPoint[]; canAi: boolean; canManage: boolean }>();
+const props = defineProps<{ data: HxOverview; points: HxPoint[]; canAi: boolean; canManage: boolean; canAdd?: boolean; canConfigure?: boolean }>();
 const emit = defineEmits<{ pick: [kind: string, name: string]; ai: []; go: [page: string]; connection: []; addHaproxy: []; drift: [] }>();
 const d = computed(() => prefs.hxDash);
 const on = (k: string) => d.value.sections[k] !== false;
@@ -122,7 +122,7 @@ const customizing = ref(false);
     <span class="hxd-status-ic"><Icon :name="status.icon" /></span>
     <div class="hxd-status-text"><b>{{ status.text }}</b>
       <span class="hint">{{ data.instance.name }} · {{ data.instance.url }} · config version {{ data.config_version }}<template v-if="data.instance.group_name"> · group {{ data.instance.group_name }} ({{ data.group.length + 1 }} HAProxy)
-        <button class="link" @click="emit('drift')">compare configs</button></template></span></div>
+        <button v-if="canConfigure" class="link" @click="emit('drift')">compare configs</button></template></span></div>
     <span class="grow" />
     <button v-if="canAi" class="btn" @click="emit('ai')"><Icon name="ai" /><span>{{ problems.length ? "Ask AI why" : "Ask AI" }}</span></button>
     <button class="btn" :aria-pressed="customizing" @click="customizing = !customizing"><Icon name="gear" /><span>Customize</span></button>
@@ -136,7 +136,7 @@ const customizing = ref(false);
     <div class="hxd-custom-grid">
       <label v-for="[k, label, hint] in SECTIONS" :key="k" class="hxd-check"><input v-model="d.sections[k]" type="checkbox">
         <span><b>{{ label }}</b><span class="hint">{{ hint }}</span></span></label></div>
-    <div v-if="canManage" class="hxd-custom-foot"><button class="link" @click="emit('addHaproxy')">+ Add another HAProxy</button></div>
+    <div v-if="canAdd" class="hxd-custom-foot"><button class="link" @click="emit('addHaproxy')">+ Add another HAProxy</button></div>
   </div></section>
 
   <!-- key numbers -->

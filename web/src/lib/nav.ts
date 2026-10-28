@@ -56,7 +56,7 @@ export const NAV: NavItem[] = [
   { id: "haproxy-overview", label: "Overview", icon: "overview", section: "Load balancer", system: H, slug: "overview", tab: "overview", global: "haproxy.view" },
   { id: "haproxy-frontends", label: "Frontends", icon: "globe", section: "Load balancer", system: H, slug: "frontends", tab: "frontends", global: "haproxy.view" },
   { id: "haproxy-backends", label: "Backends", icon: "nodes", section: "Load balancer", system: H, slug: "backends", tab: "backends", global: "haproxy.view" },
-  { id: "haproxy-ai", label: "AI Assistant", icon: "ai", section: "Load balancer", system: H, slug: "ai", tab: "ai", global: "haproxy.view" },
+  { id: "haproxy-ai", label: "AI Assistant", icon: "ai", section: "Load balancer", system: H, slug: "ai", tab: "ai", global: "ai.use" },
   { id: "haproxy-topology", label: "Topology", icon: "map", section: "Load balancer", system: H, slug: "topology", tab: "topology", global: "haproxy.view" },
   { id: "haproxy-certificates", label: "Certificates", icon: "lock", section: "Traffic & security", system: H, slug: "certificates", tab: "certificates", global: "haproxy.view" },
   { id: "haproxy-sticktables", label: "Rate limits & blocks", icon: "ban", section: "Traffic & security", system: H, slug: "stick-tables", tab: "sticktables", global: "haproxy.view" },
@@ -69,7 +69,7 @@ export const NAV: NavItem[] = [
   { id: "users", label: "Users", icon: "key", section: "Administration", slug: "admin/users", global: "users.manage" },
   { id: "roles", label: "Roles", icon: "lock", section: "Administration", slug: "admin/roles", global: "users.manage" },
   { id: "manage-clusters", label: "Clusters", icon: "logo", section: "Administration", slug: "admin/clusters", global: "clusters.manage" },
-  { id: "manage-haproxy", label: "HAProxy instances", icon: "lb", section: "Administration", slug: "admin/haproxy", global: "clusters.manage" },
+  { id: "manage-haproxy", label: "HAProxy instances", icon: "lb", section: "Administration", slug: "admin/haproxy", global: "haproxy.manage" },
   { id: "system", label: "System settings", icon: "gear", section: "Administration", slug: "admin/system", global: "settings.manage" },
   { id: "settings", label: "My settings", icon: "gear", section: "You", locked: true },
 ];

@@ -37,9 +37,11 @@ import HxTopology from "./HxTopology.vue";
 type Tab = "overview" | "frontends" | "backends" | "topology" | "ai" | "certificates" | "sticktables" | "logs" | "history" | "config";
 const props = defineProps<{ tab: Tab }>();
 const s = useSession(), h = useHaproxy(), router = useRouter();
-const canOperate = computed(() => s.canGlobal("haproxy.operate"));
-const canConfigure = computed(() => s.canGlobal("haproxy.configure"));
-const canManage = computed(() => s.canGlobal("clusters.manage"));
+// permissions on the HAProxy that is open (roles can be given per instance)
+const canOperate = computed(() => s.canHx("haproxy.operate", h.currentId));
+const canConfigure = computed(() => s.canHx("haproxy.configure", h.currentId));
+const canManage = computed(() => s.canHx("haproxy.manage", h.currentId));
+const canAdd = computed(() => s.canAll("haproxy.manage"));
 
 const instances = computed(() => h.instances), current = computed(() => h.currentId);
 const data = computed(() => h.data), error = computed(() => h.error);
@@ -167,19 +169,19 @@ watch(() => router.currentRoute.value.query.focus, (f) => {
   <template v-if="instances && !instances.length">
     <section class="card"><div class="card-body">
       <EmptyState title="No HAProxy connected yet" icon="lb"
-        :sub="canManage ? 'Connect an HAProxy through its Data Plane API to monitor and manage it here.' : 'Ask an administrator to connect an HAProxy.'" />
-      <div v-if="canManage" style="display:flex;justify-content:center;margin-top:8px"><button class="btn primary" @click="Object.assign(instDialog, { open: true, instance: null })"><Icon name="lb" /><span>Add HAProxy</span></button></div>
+        :sub="canAdd ? 'Connect an HAProxy through its Data Plane API to monitor and manage it here.' : 'Ask an administrator to connect an HAProxy.'" />
+      <div v-if="canAdd" style="display:flex;justify-content:center;margin-top:8px"><button class="btn primary" @click="Object.assign(instDialog, { open: true, instance: null })"><Icon name="lb" /><span>Add HAProxy</span></button></div>
     </div></section>
   </template>
   <template v-else>
     <div v-if="error" class="banner show"><Icon name="crit" /><span class="msg">{{ error }}</span><button class="btn" @click="refresh">Retry</button></div>
-    <div v-if="tab === 'overview' && !data && error && canManage" class="toolbar"><span class="grow" />
+    <div v-if="tab === 'overview' && !data && error && canAdd" class="toolbar"><span class="grow" />
       <button class="btn" @click="Object.assign(instDialog, { open: true, instance: null })"><Icon name="lb" /><span>Add HAProxy</span></button></div>
 
     <Skeleton v-if="!data && !error && ['overview', 'frontends', 'backends', 'topology'].includes(tab)" :rows="6" />
 
     <!-- OVERVIEW -->
-    <HxDashboard v-if="data && tab === 'overview'" :data="data" :points="h.points" :can-ai="canAi" :can-manage="canManage"
+    <HxDashboard v-if="data && tab === 'overview'" :data="data" :points="h.points" :can-ai="canAi" :can-manage="canManage" :can-add="canAdd" :can-configure="canConfigure"
       @pick="pick" @ai="askAi('instance')" @go="(id) => router.push(to(id))"
       @connection="Object.assign(instDialog, { open: true, instance: data.instance })" @add-haproxy="Object.assign(instDialog, { open: true, instance: null })"
       @drift="drift.open = true" />
@@ -206,7 +208,7 @@ watch(() => router.currentRoute.value.query.focus, (f) => {
     <HxAi v-if="current && tab === 'ai'" :key="`a${current}`" :instance-id="current" :data="data" :can-operate="canOperate" :can-configure="canConfigure"
       @review="(ops, title) => review(ops, title)" @state="aiStateChange" />
     <HxCertificates v-if="current && tab === 'certificates'" :key="`c${current}`" :instance-id="current" :can-edit="canConfigure" />
-    <HxStickTables v-if="current && tab === 'sticktables'" :key="`s${current}`" :instance-id="current" :can-operate="canOperate" />
+    <HxStickTables v-if="current && tab === 'sticktables'" :key="`s${current}`" :instance-id="current" :can-operate="canOperate" :can-configure="canConfigure" />
     <HxLogs v-if="current && tab === 'logs'" :key="`l${current}`" :instance-id="current" :can-edit="canConfigure" :can-operate="canOperate" @review="(ops, title) => review(ops, title)" />
     <HxHistory v-if="current && tab === 'history'" ref="historyRef" :key="`h${current}`" :instance-id="current" :can-edit="canConfigure"
       @review="(ops, title, note) => review(ops, title, false, note)" />

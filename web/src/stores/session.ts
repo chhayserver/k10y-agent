@@ -3,10 +3,12 @@ import { hub } from "@/api/client";
 import { loadAccountPrefs, stopAccountSync } from "./prefs";
 
 export interface ClusterRef { id: number; name: string; permissions: string[] }
+export interface HaproxyRef { id: number; name: string; permissions: string[] }
 export interface Me {
   user: { id: number; username: string; display_name: string; must_change_password: boolean };
   global_permissions: string[];
   clusters: ClusterRef[];
+  haproxy?: HaproxyRef[];        // HAProxy instances this user has a role on, with the permissions there
   version: string;
 }
 
@@ -32,8 +34,19 @@ export const useSession = defineStore("session", {
         return Boolean(c && c.permissions.includes(perm));
       };
     },
+    /** A global permission. HAProxy permissions also count when given on at least one instance (to show the
+     *  HAProxy pages); use canHx for one instance and canAll for "on every instance". */
     canGlobal(): (perm: string) => boolean {
+      return (perm: string) => Boolean(this.me && (this.me.global_permissions.includes(perm)
+        || (perm.startsWith("haproxy.") && (this.me.haproxy || []).some((h) => h.permissions.includes(perm)))));
+    },
+    canAll(): (perm: string) => boolean {
       return (perm: string) => Boolean(this.me && this.me.global_permissions.includes(perm));
+    },
+    /** An HAProxy permission on one instance (a role on all of HAProxy, or on that instance). */
+    canHx(): (perm: string, haproxyId: number | null | undefined) => boolean {
+      return (perm: string, haproxyId: number | null | undefined) => Boolean(this.me && (this.me.global_permissions.includes(perm)
+        || (haproxyId != null && (this.me.haproxy || []).find((h) => h.id === haproxyId)?.permissions.includes(perm))));
     },
   },
   actions: {

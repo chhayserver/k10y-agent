@@ -50,13 +50,14 @@ class Cluster(Base):
 
 
 class RoleAssignment(Base):
-    """A role for a user, either on every cluster (cluster_id NULL) or on one cluster."""
+    """A role for a user: on everything (cluster_id and haproxy_id NULL), on one cluster, or on one HAProxy instance."""
     __tablename__ = "role_assignments"
     __table_args__ = (UniqueConstraint("user_id", "role_id", "cluster_id"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"))
     cluster_id: Mapped[Optional[int]] = mapped_column(ForeignKey("clusters.id", ondelete="CASCADE"), nullable=True)
+    haproxy_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)   # haproxy_instances.id
     user: Mapped[User] = relationship(back_populates="assignments")
     role: Mapped[Role] = relationship()
 
@@ -130,7 +131,8 @@ class Database:
     ADDED_COLUMNS = [("sessions", "last_seen_at", "TIMESTAMP WITH TIME ZONE"),
                      ("alert_events", "haproxy_id", "INTEGER"),
                      ("haproxy_instances", "log_tag", "VARCHAR(64) DEFAULT ''"),
-                     ("haproxy_instances", "group_name", "VARCHAR(64) DEFAULT ''")]
+                     ("haproxy_instances", "group_name", "VARCHAR(64) DEFAULT ''"),
+                     ("role_assignments", "haproxy_id", "INTEGER")]
 
     def _add_missing_columns(self) -> None:
         insp = inspect(self.engine)

@@ -8,11 +8,12 @@ import Skeleton from "@/components/Skeleton.vue";
 import { fmt } from "@/lib/format";
 import { to } from "@/lib/nav";
 import { useHaproxy } from "@/stores/haproxy";
+import { useSession } from "@/stores/session";
 import { page } from "@/stores/prefs";
 import { toast } from "@/stores/ui";
 import HxInstanceDialog from "@/views/haproxy/HxInstanceDialog.vue";
 
-const h = useHaproxy(), router = useRouter(), state = page("manage-haproxy", { key: "name", dir: 1 });
+const h = useHaproxy(), s = useSession(), router = useRouter(), state = page("manage-haproxy", { key: "name", dir: 1 });
 const list = ref<any[] | null>(null);
 async function load() { list.value = await hub.get("/haproxy"); }
 onMounted(load);
@@ -28,15 +29,15 @@ const columns = [{ key: "name", label: "Name", cls: "primary" }, { key: "url", l
 </script>
 <template>
   <div class="toolbar"><span class="hint">HAProxy load balancers k10y manages through the HAProxy Data Plane API. Passwords are stored encrypted.</span><span class="grow" />
-    <button class="btn primary" @click="Object.assign(dlg, { open: true, instance: null })"><Icon name="lb" /><span>Add HAProxy</span></button></div>
+    <button v-if="s.canAll('haproxy.manage')" class="btn primary" @click="Object.assign(dlg, { open: true, instance: null })"><Icon name="lb" /><span>Add HAProxy</span></button></div>
   <section class="card flush"><div class="card-body table-wrap">
     <Skeleton v-if="!list" :rows="3" />
     <DataTable v-else v-model:sort="state.sort" :rows="list" :columns="columns" :row-key="(i) => String(i.id)" clickable empty-title="No HAProxy yet" empty-icon="lb"
-      @row="(i) => Object.assign(dlg, { open: true, instance: i })">
+      @row="(i) => s.canHx('haproxy.manage', i.id) && Object.assign(dlg, { open: true, instance: i })">
       <template #group_name="{ row }"><span v-if="row.group_name" class="chip">{{ row.group_name }}</span><span v-else class="dim">–</span></template>
       <template #created_at="{ row }">{{ fmt.dateTime(row.created_at) }}</template>
       <template #_a="{ row }"><button class="btn ghost sm" @click="open(row)">Open</button>
-        <button class="btn ghost sm" style="color:var(--critical)" @click="remove(row)">Remove</button></template>
+        <button v-if="s.canHx('haproxy.manage', row.id)" class="btn ghost sm" style="color:var(--critical)" @click="remove(row)">Remove</button></template>
     </DataTable>
   </div></section>
   <HxInstanceDialog :open="dlg.open" :instance="dlg.instance" @close="dlg.open = false" @saved="saved" />

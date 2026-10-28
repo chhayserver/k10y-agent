@@ -9,7 +9,7 @@ import { hx } from "@/lib/haproxy";
 import { openAction } from "@/stores/ui";
 import HxBlocklist from "./HxBlocklist.vue";
 
-const props = defineProps<{ instanceId: number; canOperate: boolean }>();
+const props = defineProps<{ instanceId: number; canOperate: boolean; canConfigure?: boolean }>();
 const tables = ref<any[] | null>(null), table = ref(""), entries = ref<any[] | null>(null), error = ref(""), q = ref("");
 async function loadTables() {
   try { tables.value = await hx.stickTables(props.instanceId); error.value = ""; if (!table.value && tables.value.length) table.value = tables.value[0].name; }
@@ -36,7 +36,7 @@ const rows = computed(() => (entries.value || []).filter((e) => !q.value || Stri
   .sort((a, b) => (b.http_req_rate ?? b.conn_cur ?? 0) - (a.http_req_rate ?? a.conn_cur ?? 0)));
 </script>
 <template>
-  <HxBlocklist :instance-id="instanceId" :can-operate="canOperate" />
+  <HxBlocklist :instance-id="instanceId" :can-operate="canOperate" :can-configure="canConfigure" />
   <div class="toolbar">
     <select v-if="tables?.length" v-model="table" class="select" aria-label="Stick table"><option v-for="t in tables" :key="t.name" :value="t.name">{{ t.name }}</option></select>
     <span v-if="current" class="hint">{{ current.type }} · {{ num(current.used) }} of {{ num(current.size) }} entries used · refreshes every 5 s</span>

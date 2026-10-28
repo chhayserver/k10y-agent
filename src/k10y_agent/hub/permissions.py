@@ -24,15 +24,24 @@ CLUSTER_PERMISSIONS: Dict[str, str] = {
     "audit.view": "See the activity log",
 }
 # Global permissions only count when granted on all clusters.
-GLOBAL_PERMISSIONS: Dict[str, str] = {
-    "clusters.manage": "Add, edit and remove clusters and HAProxy instances",
+HUB_PERMISSIONS: Dict[str, str] = {
+    "clusters.manage": "Add, edit and remove clusters (their agent URLs and tokens)",
     "users.manage": "Manage users, roles and role assignments",
     "settings.manage": "Manage system settings (AI providers, alert channels)",
     "alerts.manage": "Create and edit alert rules",
-    "haproxy.view": "See HAProxy services, backends, servers, live stats and topology",
-    "haproxy.operate": "Drain, put in maintenance or re-enable HAProxy servers (instant, no reload)",
-    "haproxy.configure": "Add, edit and remove HAProxy services, backends and servers, and edit the raw config",
 }
+# HAProxy permissions are global too: they count only when the role is assigned on all clusters.
+HAPROXY_PERMISSIONS: Dict[str, str] = {
+    "haproxy.view": "See HAProxy: frontends, backends, servers, live numbers, charts, topology, logs, certificates, "
+                    "stick tables, the IP blocklist and config history (not the raw config)",
+    "haproxy.operate": "Run HAProxy without changing its config: drain, maintenance and re-enable servers, rolling "
+                       "deploys, block and unblock IPs, let rate-limited clients in again (instant, no reload)",
+    "haproxy.configure": "Change HAProxy's config: frontends, routes, backends, servers, maintenance pages, "
+                         "certificates, Kubernetes sync, copy and group sync, restore old versions; read and edit "
+                         "the raw config (it can contain passwords)",
+    "haproxy.manage": "Add, edit and remove HAProxy instances and their Data Plane API logins",
+}
+GLOBAL_PERMISSIONS: Dict[str, str] = {**HUB_PERMISSIONS, **HAPROXY_PERMISSIONS}
 ALL_PERMISSIONS = {**CLUSTER_PERMISSIONS, **GLOBAL_PERMISSIONS}
 
 BUILTIN_ROLES: List[Tuple[str, str, List[str]]] = [

@@ -8,7 +8,7 @@ import Skeleton from "@/components/Skeleton.vue";
 import { page } from "@/stores/prefs";
 import { toast } from "@/stores/ui";
 const state = page("roles", { key: "name", dir: 1 });
-const roles = ref<any[] | null>(null), catalog = ref<{ cluster: Record<string, string>; global: Record<string, string> } | null>(null);
+const roles = ref<any[] | null>(null), catalog = ref<{ cluster: Record<string, string>; global: Record<string, string>; haproxy?: Record<string, string> } | null>(null);
 async function load() { [roles.value, catalog.value] = await Promise.all([hub.get("/roles"), hub.get("/permissions")]); }
 onMounted(load);
 const edit = reactive({ open: false, id: 0, name: "", description: "", perms: [] as string[], locked: false, err: "", busy: false });
@@ -46,7 +46,9 @@ const columns = [{ key: "name", label: "Role", cls: "primary" }, { key: "descrip
     <template v-if="catalog">
       <div class="form-row"><span class="lbl">Cluster permissions <span class="hint">(apply on the clusters the role is assigned to)</span></span>
         <div class="perm-grid"><label v-for="(desc, p) in catalog.cluster" :key="p"><input v-model="edit.perms" type="checkbox" :value="p" :disabled="edit.locked"><span><b style="font-family:var(--mono);font-size:12px">{{ p }}</b><small>{{ desc }}</small></span></label></div></div>
-      <div class="form-row"><span class="lbl">Global permissions <span class="hint">(only when the role is assigned on all clusters)</span></span>
+      <div v-if="catalog.haproxy" class="form-row"><span class="lbl">HAProxy permissions <span class="hint">(apply on the HAProxy instance the role is assigned to, or on every HAProxy)</span></span>
+        <div class="perm-grid"><label v-for="(desc, p) in catalog.haproxy" :key="p"><input v-model="edit.perms" type="checkbox" :value="p" :disabled="edit.locked"><span><b style="font-family:var(--mono);font-size:12px">{{ p }}</b><small>{{ desc }}</small></span></label></div></div>
+      <div class="form-row"><span class="lbl">Hub permissions <span class="hint">(only when the role is assigned on everything)</span></span>
         <div class="perm-grid"><label v-for="(desc, p) in catalog.global" :key="p"><input v-model="edit.perms" type="checkbox" :value="p" :disabled="edit.locked"><span><b style="font-family:var(--mono);font-size:12px">{{ p }}</b><small>{{ desc }}</small></span></label></div></div>
     </template>
     <div v-if="edit.err" class="act-result show err">{{ edit.err }}</div>

@@ -6,7 +6,7 @@ import Icon from "@/components/Icon.vue";
 import { hx } from "@/lib/haproxy";
 import { openAction, toast } from "@/stores/ui";
 
-const props = defineProps<{ instanceId: number; canOperate: boolean }>();
+const props = defineProps<{ instanceId: number; canOperate: boolean; canConfigure?: boolean }>();
 const list = ref<Awaited<ReturnType<typeof hx.blocklist>> | null>(null), error = ref(""), ip = ref(""), reason = ref("");
 async function load() { try { list.value = await hx.blocklist(props.instanceId); error.value = ""; } catch (e: any) { error.value = e.message; } }
 onMounted(load);
@@ -32,7 +32,8 @@ function remove(v: string) {
     <div class="card-head"><h2>Blocked IPs</h2><span class="hint">Refused on every frontend. Changes apply instantly, without a reload.</span></div>
     <div class="card-body">
       <div v-if="error" class="test-result show err"><Icon name="crit" /><span>{{ error }}</span></div>
-      <form v-if="canOperate" class="hxbl-add" @submit.prevent="add">
+      <p v-if="canOperate && list && !list.ready && !canConfigure" class="hint" style="margin:0">The first block on this HAProxy adds the blocklist to every frontend (a config change), so someone with <b>haproxy.configure</b> has to do it once. After that you can block and unblock here.</p>
+      <form v-if="canOperate && (list?.ready || canConfigure)" class="hxbl-add" @submit.prevent="add">
         <input v-model="ip" class="input mono" placeholder="203.0.113.7 or 203.0.113.0/24" aria-label="IP or network to block">
         <input v-model="reason" class="input" placeholder="Reason (optional), e.g. scraping /api/login" aria-label="Reason">
         <button class="btn" type="submit"><Icon name="ban" /><span>Block</span></button></form>

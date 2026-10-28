@@ -147,7 +147,7 @@ function instanceMenu(e: MouseEvent) {
   const items: MenuItem[] = [{ note: "Switch HAProxy" }, ...(h.instances || []).map((i) => ({ label: i.name, icon: i.id === h.currentId ? "ok" : "lb",
     run: () => { h.select(i.id); if (!onHaproxy.value) router.push(to("haproxy-overview")); } }))];
   if (!h.instances?.length) items.push({ note: "No HAProxy connected yet" });
-  if (s.canGlobal("clusters.manage")) items.push({ sep: true }, { label: "Add HAProxy…", icon: "gear", run: () => router.push(to("haproxy-overview")) });
+  if (s.canAll("haproxy.manage")) items.push({ sep: true }, { label: "Add HAProxy…", icon: "gear", run: () => router.push(to("haproxy-overview")) });
   openMenu(el, items);
 }
 const instanceLevel = computed(() => (health.value && onHaproxy.value ? health.value.level : h.data ? "good" : ""));

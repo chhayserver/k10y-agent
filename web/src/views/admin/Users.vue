@@ -14,17 +14,27 @@ import { useSession } from "@/stores/session";
 import { toast } from "@/stores/ui";
 
 const s = useSession(), state = page("users", { key: "username", dir: 1 });
-const users = ref<any[] | null>(null), roles = ref<any[]>([]), clusters = ref<any[]>([]), error = ref("");
+const users = ref<any[] | null>(null), roles = ref<any[]>([]), clusters = ref<any[]>([]), haproxies = ref<any[]>([]), error = ref("");
 async function load() {
-  try { [users.value, roles.value, clusters.value] = await Promise.all([hub.get("/users"), hub.get("/roles"), hub.get("/clusters")]); }
+  try { [users.value, roles.value, clusters.value] = await Promise.all([hub.get("/users"), hub.get("/roles"), hub.get("/clusters")]);
+    haproxies.value = await hub.get<any[]>("/haproxy").catch(() => []); }
   catch (e: any) { error.value = e.message; }
 }
 onMounted(load);
 const roleName = (id: number) => roles.value.find((r) => r.id === id)?.name || "?";
 const clusterName = (id: number | null) => (id == null ? "all clusters" : clusters.value.find((c) => c.id === id)?.name || "?");
+// Where a role applies: everything, one cluster, or one HAProxy instance ("all" | "c:3" | "h:2").
+type Assign = { role_id: number; cluster_id: number | null; haproxy_id?: number | null };
+const scopeOf = (a: Assign) => (a.haproxy_id ? `h:${a.haproxy_id}` : a.cluster_id ? `c:${a.cluster_id}` : "all");
+function setScope(a: Assign, v: string) {
+  a.cluster_id = v.startsWith("c:") ? Number(v.slice(2)) : null;
+  a.haproxy_id = v.startsWith("h:") ? Number(v.slice(2)) : null;
+}
+const scopeName = (a: Assign) => (a.haproxy_id ? `HAProxy ${haproxies.value.find((x) => x.id === a.haproxy_id)?.name || "?"}`
+  : a.cluster_id ? clusterName(a.cluster_id) : "everything");
 const rows = computed(() => { const q = state.q.trim().toLowerCase(); return (users.value || []).filter((u) => !q || `${u.username} ${u.display_name}`.toLowerCase().includes(q)); });
 
-const edit = reactive({ open: false, id: 0, username: "", display_name: "", password: "", is_active: true, must_change_password: true, assignments: [] as { role_id: number; cluster_id: number | null }[], err: "", busy: false });
+const edit = reactive({ open: false, id: 0, username: "", display_name: "", password: "", is_active: true, must_change_password: true, assignments: [] as Assign[], err: "", busy: false });
 function openNew() { Object.assign(edit, { open: true, id: 0, username: "", display_name: "", password: "", is_active: true, must_change_password: true, assignments: [{ role_id: roles.value.find((r) => r.name === "Viewer")?.id || roles.value[0]?.id, cluster_id: null }], err: "" }); }
 const userSessions = ref<any[] | null>(null);
 async function loadUserSessions(id: number) { userSessions.value = null; try { userSessions.value = await hub.get(`/users/${id}/sessions`); } catch { userSessions.value = []; } }
@@ -38,7 +48,7 @@ async function setActive(u: any, active: boolean) {
   try { await hub.patch(`/users/${u.id}`, { is_active: active }); toast(true, `${u.username} ${active ? "enabled" : "disabled"}`); load(); }
   catch (e: any) { toast(false, e.message); }
 }
-function openEdit(u: any) { loadUserSessions(u.id); Object.assign(edit, { open: true, id: u.id, username: u.username, display_name: u.display_name, password: "", is_active: u.is_active, must_change_password: u.must_change_password, assignments: u.assignments.map((a: any) => ({ role_id: a.role_id, cluster_id: a.cluster_id })), err: "" }); }
+function openEdit(u: any) { loadUserSessions(u.id); Object.assign(edit, { open: true, id: u.id, username: u.username, display_name: u.display_name, password: "", is_active: u.is_active, must_change_password: u.must_change_password, assignments: u.assignments.map((a: any) => ({ role_id: a.role_id, cluster_id: a.cluster_id, haproxy_id: a.haproxy_id || null })), err: "" }); }
 async function save() {
   edit.err = ""; edit.busy = true;
   const body: any = { display_name: edit.display_name, is_active: edit.is_active, assignments: edit.assignments.filter((a) => a.role_id) };
@@ -65,7 +75,7 @@ const columns = [{ key: "username", label: "Username", cls: "primary" }, { key: 
     <Skeleton v-if="!users && !error" :rows="4" />
     <DataTable v-else-if="users" v-model:sort="state.sort" :rows="rows" :columns="columns" :row-key="(u) => String(u.id)" clickable empty-title="No users" @row="openEdit">
       <template #is_active="{ row }"><Badge :level="row.is_active ? 'good' : 'neutral'" :label="row.is_active ? 'Active' : 'Disabled'" /> <span v-if="row.must_change_password" class="pill-tag">must change password</span></template>
-      <template #assignments="{ row }"><span v-for="(a, i) in row.assignments" :key="i" class="chip">{{ a.role }} · {{ clusterName(a.cluster_id) }}</span><span v-if="!row.assignments.length" class="dim">no access</span></template>
+      <template #assignments="{ row }"><span v-for="(a, i) in row.assignments" :key="i" class="chip">{{ a.role }} · {{ scopeName(a) }}</span><span v-if="!row.assignments.length" class="dim">no access</span></template>
       <template #last_seen_at="{ row }"><span v-if="row.last_seen_at">{{ fmt.ago(row.last_seen_at) }}</span>
         <span v-else class="dim">{{ row.last_login_at ? `last login ${fmt.ago(row.last_login_at)}` : "never signed in" }}</span></template>
       <template #sessions="{ row }"><span :class="{ dim: !row.sessions }">{{ row.sessions || 0 }}</span></template>
@@ -85,14 +95,17 @@ const columns = [{ key: "username", label: "Username", cls: "primary" }, { key: 
         <label class="pill"><input v-model="edit.is_active" type="checkbox"> Account active</label></div>
     </div>
     <div class="form-row"><span class="lbl">Roles</span>
-      <p class="hint" style="margin:0">A role on <b>all clusters</b> also grants its global permissions (users, clusters, settings, alerts). A role on one cluster applies only there.</p>
+      <p class="hint" style="margin:0">A role on <b>everything</b> applies to every cluster and every HAProxy, and also grants its hub permissions (users, clusters, settings, alerts). On <b>one cluster</b>, only its cluster permissions count there; on <b>one HAProxy</b>, only its HAProxy permissions count there.</p>
       <div v-for="(a, i) in edit.assignments" :key="i" class="assign-row">
         <select v-model="a.role_id" class="select"><option v-for="r in roles" :key="r.id" :value="r.id">{{ r.name }}</option></select>
         <span class="hint">on</span>
-        <select v-model="a.cluster_id" class="select"><option :value="null">All clusters</option><option v-for="c in clusters" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+        <select :value="scopeOf(a)" class="select" aria-label="Where the role applies" @change="setScope(a, ($event.target as HTMLSelectElement).value)">
+          <option value="all">Everything</option>
+          <optgroup v-if="clusters.length" label="One cluster"><option v-for="c in clusters" :key="c.id" :value="`c:${c.id}`">{{ c.name }}</option></optgroup>
+          <optgroup v-if="haproxies.length" label="One HAProxy"><option v-for="x in haproxies" :key="x.id" :value="`h:${x.id}`">{{ x.name }}</option></optgroup></select>
         <button class="btn icon-only ghost" aria-label="Remove role" @click="edit.assignments.splice(i, 1)"><Icon name="x" /></button>
       </div>
-      <button class="btn sm" style="align-self:flex-start" @click="edit.assignments.push({ role_id: roles[0]?.id, cluster_id: null })">Add role</button>
+      <button class="btn sm" style="align-self:flex-start" @click="edit.assignments.push({ role_id: roles[0]?.id, cluster_id: null, haproxy_id: null })">Add role</button>
     </div>
     <div v-if="edit.id" class="form-row"><div style="display:flex;align-items:center;gap:8px"><span class="lbl" style="flex:1">Signed-in devices</span>
       <button v-if="userSessions?.length" class="btn sm" type="button" @click="signOutEverywhere({ id: edit.id, username: edit.username })">Sign out everywhere</button></div>

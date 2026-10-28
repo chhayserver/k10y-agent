@@ -26,9 +26,10 @@ from sqlalchemy.orm import Session
 from .. import __version__, ai
 from . import alerts, haproxy, haproxy_monitor
 from ..config import Settings
-from .db import (AuditEntry, Cluster, Database, Role, RoleAssignment, SessionRow, User, UserPreference, get_setting,
+from .db import (AuditEntry, Cluster, Database, Role, RoleAssignment, SessionRow, Setting, User, UserPreference, get_setting,
                  utcnow)
-from .permissions import ALL_PERMISSIONS, BUILTIN_ROLES, CLUSTER_PERMISSIONS, GLOBAL_PERMISSIONS, required_permission
+from .permissions import (ALL_PERMISSIONS, BUILTIN_ROLES, CLUSTER_PERMISSIONS, GLOBAL_PERMISSIONS, HAPROXY_PERMISSIONS, HUB_PERMISSIONS,
+                          required_permission)
 from .security import (Crypto, LoginLimiter, check_password_policy, hash_password, new_session_token, token_digest,
                        verify_password)
 
@@ -63,6 +64,14 @@ def init(database_url: Optional[str] = None, secret: Optional[str] = None, data_
             elif name == "Admin":
                 role.permissions = sorted(ALL_PERMISSIONS)  # Admin always has every permission
         s.commit()
+        # 2.4.2: managing HAProxy instances moved from clusters.manage to its own haproxy.manage. Roles that could
+        # do it before keep that right (once, so an admin can remove it later).
+        if s.get(Setting, "migration.haproxy_manage") is None:
+            for role in s.execute(select(Role)).scalars():
+                if "clusters.manage" in (role.permissions or []) and "haproxy.manage" not in role.permissions:
+                    role.permissions = sorted({*role.permissions, "haproxy.manage"})
+            s.add(Setting(key="migration.haproxy_manage", value={"done": True}))
+            s.commit()
         if not s.execute(select(func.count(User.id))).scalar():
             password = settings.admin_password or pysecrets.token_urlsafe(12)
             admin_role = s.execute(select(Role).where(Role.name == "Admin")).scalar_one()
@@ -118,7 +127,7 @@ def crypto() -> Crypto:
 class Principal:
     def __init__(self, user: User, grants: Dict[Optional[int], Set[str]], session_id: Optional[int] = None):
         self.user = user
-        self.grants = grants  # cluster_id (None = all clusters) -> permissions
+        self.grants = grants  # None = everything, cluster id = one cluster, "hx:<id>" = one HAProxy -> permissions
         self.session_id = session_id
 
     def global_perms(self) -> Set[str]:
@@ -127,7 +136,16 @@ class Principal:
     def cluster_perms(self, cluster_id: int) -> Set[str]:
         return {p for p in self.grants.get(None, set()) | self.grants.get(cluster_id, set()) if p in CLUSTER_PERMISSIONS}
 
-    def can(self, perm: str, cluster_id: Optional[int] = None) -> bool:
+    def haproxy_perms(self, haproxy_id: int) -> Set[str]:
+        """HAProxy permissions on one instance: from roles on everything, plus roles on that instance."""
+        return {p for p in self.grants.get(None, set()) | self.grants.get(f"hx:{haproxy_id}", set()) if p in HAPROXY_PERMISSIONS}
+
+    def can_any_haproxy(self, perm: str) -> bool:
+        return any(perm in perms for key, perms in self.grants.items() if key is None or (isinstance(key, str) and key.startswith("hx:")))
+
+    def can(self, perm: str, cluster_id: Optional[int] = None, haproxy_id: Optional[int] = None) -> bool:
+        if perm in HAPROXY_PERMISSIONS and haproxy_id is not None:
+            return perm in self.haproxy_perms(haproxy_id)
         if perm in GLOBAL_PERMISSIONS or cluster_id is None:
             return perm in self.global_perms()
         return perm in self.cluster_perms(cluster_id)
@@ -139,7 +157,7 @@ class Principal:
 def load_grants(s: Session, user: User) -> Dict[Optional[int], Set[str]]:
     grants: Dict[Optional[int], Set[str]] = {}
     for a in s.execute(select(RoleAssignment).where(RoleAssignment.user_id == user.id)).scalars():
-        grants.setdefault(a.cluster_id, set()).update(a.role.permissions or [])
+        grants.setdefault(f"hx:{a.haproxy_id}" if a.haproxy_id else a.cluster_id, set()).update(a.role.permissions or [])
     return grants
 
 
@@ -179,8 +197,15 @@ def _aware(dt):
 
 
 def require(perm: str):
-    def dep(p: Principal = Depends(current)) -> Principal:
-        if not p.can(perm):
+    """HAProxy permissions are checked on the instance in the URL (/haproxy/{iid}/…); without one, a role on any
+    instance is enough and the endpoint narrows things down itself (e.g. the list of instances)."""
+    def dep(request: Request, p: Principal = Depends(current)) -> Principal:
+        iid = request.path_params.get("iid")
+        if perm in HAPROXY_PERMISSIONS:
+            ok = p.can(perm, haproxy_id=int(iid)) if iid is not None and str(iid).isdigit() else p.can_any_haproxy(perm)
+        else:
+            ok = p.can(perm)
+        if not ok:
             raise HTTPException(status_code=403, detail=f"missing permission: {perm}")
         return p
     return dep
@@ -214,6 +239,9 @@ def me_payload(s: Session, p: Principal) -> dict:
         "global_permissions": sorted(p.global_perms()),
         "clusters": [{"id": c.id, "name": c.name, "permissions": sorted(p.cluster_perms(c.id))}
                      for c in clusters if "cluster.view" in p.cluster_perms(c.id)],
+        "haproxy": [{"id": i.id, "name": i.name, "permissions": sorted(p.haproxy_perms(i.id))}
+                    for i in s.execute(select(haproxy.HAProxyInstance).order_by(haproxy.HAProxyInstance.name)).scalars()
+                    if "haproxy.view" in p.haproxy_perms(i.id)],
         "version": __version__,
     }
 
@@ -350,6 +378,7 @@ def end_other_sessions(request: Request, p: Principal = Depends(current), s: Ses
 class AssignmentBody(BaseModel):
     role_id: int
     cluster_id: Optional[int] = None
+    haproxy_id: Optional[int] = None      # a role on one HAProxy instance (only its HAProxy permissions count)
 
 
 class UserBody(BaseModel):
@@ -373,7 +402,7 @@ def user_view(u: User) -> dict:
             "created_at": u.created_at.isoformat() if u.created_at else None,
             "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
             "sessions": getattr(u, "live_sessions", None), "last_seen_at": getattr(u, "last_seen_at", None),
-            "assignments": [{"role_id": a.role_id, "role": a.role.name, "cluster_id": a.cluster_id} for a in u.assignments]}
+            "assignments": [{"role_id": a.role_id, "role": a.role.name, "cluster_id": a.cluster_id, "haproxy_id": a.haproxy_id} for a in u.assignments]}
 
 
 def _admins_left(s: Session, excluding_user: Optional[int] = None) -> int:
@@ -391,15 +420,19 @@ def _set_assignments(s: Session, user: User, items: List[AssignmentBody]) -> Non
     s.flush()
     seen = set()
     for a in items:
-        if (a.role_id, a.cluster_id) in seen:
+        if (a.role_id, a.cluster_id, a.haproxy_id) in seen:
             continue
-        seen.add((a.role_id, a.cluster_id))
+        seen.add((a.role_id, a.cluster_id, a.haproxy_id))
+        if a.cluster_id is not None and a.haproxy_id is not None:
+            raise HTTPException(status_code=400, detail="an assignment is for one cluster or one HAProxy, not both")
+        if a.haproxy_id is not None and s.get(haproxy.HAProxyInstance, a.haproxy_id) is None:
+            raise HTTPException(status_code=400, detail=f"unknown HAProxy instance {a.haproxy_id}")
         role = s.get(Role, a.role_id)
         if role is None:
             raise HTTPException(status_code=400, detail=f"unknown role {a.role_id}")
         if a.cluster_id is not None and s.get(Cluster, a.cluster_id) is None:
             raise HTTPException(status_code=400, detail=f"unknown cluster {a.cluster_id}")
-        user.assignments.append(RoleAssignment(role=role, cluster_id=a.cluster_id))
+        user.assignments.append(RoleAssignment(role=role, cluster_id=a.cluster_id, haproxy_id=a.haproxy_id))
 
 
 @api.get("/users")
@@ -518,7 +551,7 @@ def delete_user(user_id: int, request: Request, p: Principal = Depends(require("
 
 @api.get("/permissions")
 def permission_catalog(p: Principal = Depends(current)) -> dict:
-    return {"cluster": CLUSTER_PERMISSIONS, "global": GLOBAL_PERMISSIONS}
+    return {"cluster": CLUSTER_PERMISSIONS, "global": HUB_PERMISSIONS, "haproxy": HAPROXY_PERMISSIONS}
 
 
 def role_view(r: Role, s: Session) -> dict:

@@ -562,7 +562,9 @@ def build_router(db_session, current, require, audit, crypto, engine_ref: Dict[s
         if state:
             q = q.where(AlertEvent.state.in_(state.split(",")))
         visible = [c.id for c in s.execute(select(Cluster)).scalars() if p.can("cluster.view", c.id)]
-        q = q.where(or_(AlertEvent.cluster_id.in_(visible), AlertEvent.haproxy_id.isnot(None) if p.can("haproxy.view") else false()))
+        from .haproxy import HAProxyInstance      # local import: haproxy imports nothing from alerts
+        hx_visible = [i.id for i in s.execute(select(HAProxyInstance)).scalars() if p.can("haproxy.view", haproxy_id=i.id)]
+        q = q.where(or_(AlertEvent.cluster_id.in_(visible), AlertEvent.haproxy_id.in_(hx_visible)))
         events = [event_view(e) for e in s.execute(q).scalars()]
         eng = engine_ref.get("engine")
         return {"events": events, "engine": {"last_run": eng.last_run.isoformat() if eng and eng.last_run else None,
