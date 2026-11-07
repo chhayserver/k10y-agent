@@ -5,26 +5,21 @@ import { computed, ref } from "vue";
 interface Item { t: string; d: string; area: string; v?: string }
 const columns: { id: string; title: string; hint: string; items: Item[] }[] = [
   { id: "next", title: "Next up", hint: "Being designed or built now", items: [
-    { t: "Two-factor login (TOTP)", d: "Authenticator-app codes for sign-in, with an option to require them for admins.", area: "Security" },
-    { t: "More alert channels", d: "Slack, email and generic webhooks next to Telegram.", area: "Alerts" },
-    { t: "Silence and acknowledge alerts", d: "Mute a firing alert for a while, and show who acknowledged it.", area: "Alerts" },
-    { t: "Full volume alerts", d: "Warn when a PersistentVolume is nearly full, next to the certificate and PVC alerts that shipped in 2.6.", area: "Alerts" },
-    { t: "Helm rollback and upgrade from the hub", d: "Roll back or upgrade a Helm release with review and audit, instead of copying the helm command.", area: "Control" },
+    { t: "Helm upgrade from the hub", d: "Change a release's values and upgrade it with review and audit (rollback shipped in 2.7).", area: "Control" },
+    { t: "Port-forward for TCP", d: "Reach databases and other non-HTTP ports through the hub (HTTP Services open in the browser since 2.7).", area: "Control" },
   ] },
   { id: "planned", title: "Planned", hint: "Agreed, not started", items: [
     { t: "More systems in the hub", d: "Nginx first, then databases (PostgreSQL, MySQL) and Redis, each with its own pages but the same login, roles, audit and alerts.", area: "Systems" },
     { t: "Single sign-on (OIDC)", d: "Sign in with Google, Microsoft Entra ID, Keycloak or any OIDC provider, mapping groups to roles.", area: "Security" },
     { t: "Longer metrics history", d: "Keep more than 7 days of Kubernetes and HAProxy charts, or read them from Prometheus.", area: "Monitoring" },
-    { t: "Live traffic on the HAProxy topology", d: "Requests and errors per server drawn on the topology lines.", area: "HAProxy" },
     { t: "Helm chart", d: "Install the agent with Helm, and run the hub inside Kubernetes.", area: "Install" },
     { t: "Audit log export", d: "Ship audit entries to a SIEM or object storage, with retention settings.", area: "Security" },
-    { t: "CI on every change", d: "Automated tests, type checks and image builds for every pull request.", area: "Project" },
+    { t: "CI on every change", d: "Automated tests, type checks and image builds for every pull request (workflow ready, being switched on).", area: "Project" },
   ] },
   { id: "exploring", title: "Exploring", hint: "Ideas we're researching. Tell us if you need them", items: [
     { t: "CI/CD pipelines", d: "See and re-run GitLab and Jenkins pipelines next to the clusters they deploy to.", area: "Systems" },
     { t: "Docker hosts and cloud accounts", d: "Plain Docker hosts, and AWS, GCP and Azure resources, in the same control room.", area: "Systems" },
     { t: "Prometheus & Grafana", d: "Link dashboards and alerts from your existing monitoring.", area: "Systems" },
-    { t: "Port-forward from the browser", d: "Reach a Service or Pod port through the hub without kubectl.", area: "Control" },
     { t: "Cost view", d: "Turn right-sizing into money: what each namespace and workload costs, and what it would after right-sizing.", area: "Monitoring" },
     { t: "GitOps awareness", d: "Show when an object is managed by Argo CD or Flux, and warn before editing it.", area: "Control" },
     { t: "Scheduled reports", d: "A daily or weekly cluster health summary to Telegram or email.", area: "Alerts" },
@@ -33,6 +28,7 @@ const columns: { id: string; title: string; hint: string; items: Item[] }[] = [
 ];
 
 const shipped: { v: string; date: string; items: string[] }[] = [
+  { v: "2.7", date: "Nov 2026", items: ["Two-factor login with recovery codes, required for admins or everyone", "Slack, email and signed webhook alerts", "Acknowledge and silence alerts", "Full-volume alerts and volume usage", "Helm rollback from the hub (opt-in)", "Open a Service in the browser, sandboxed", "Live traffic per server on the HAProxy topology", "Config errors shown by line", "Browser tests in the repo"] },
   { v: "2.6", date: "Nov 2026", items: ["Search everything (Ctrl/⌘ K) across clusters and HAProxy", "Rollout history with diff, who changed it, roll back to any revision", "Helm releases: history, values, manifest, compare", "Workload logs: pick a pod, time range, errors only", "Alerts for OOMKilled, stuck rollouts, CronJobs, PVCs, expiring TLS", "Certificates page, CronJob runs, namespace quotas", "Right-sizing and 7-day Kubernetes history", "Service → HAProxy link", "Protected namespaces set in the hub", "Add cluster with just node:port"] },
   { v: "2.5", date: "Oct 2026", items: ["Roles per system: Kubernetes and HAProxy viewer, operator, admin", "HAProxy permissions per instance"] },
   { v: "2.4", date: "Oct 2026", items: ["Guided frontends by use case (microservices, web, API, databases, TCP)", "Every balancing method and health check", "Live IP blocklist, maintenance page, per-route numbers", "Copy frontends and backends between HAProxies", "HAProxy charts up to 7 days", "Follows your own HAProxy config style"] },

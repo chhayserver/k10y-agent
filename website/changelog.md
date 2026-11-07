@@ -4,9 +4,9 @@ title: Changelog
 
 # Changelog
 
-Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached to the [GitHub release](https://github.com/chhayserver/k10y-agent/releases).
+Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached (plus the optional `rbac-helm.yaml` from 2.7) to the [GitHub release](https://github.com/chhayserver/k10y-agent/releases).
 
-## Unreleased
+## 2.7.0 <Badge type="tip" text="latest" />
 
 - **Two-factor login:** a code from an authenticator app at every sign-in, with 10 single-use recovery codes. Set it up in **My settings**; require it for admins or everyone in **System settings → Sign-in security**; admins can reset it for a lost phone.
 - **More alert channels:** Slack, email (SMTP) and webhooks (JSON, optionally signed with HMAC-SHA256), next to Telegram.
@@ -20,7 +20,7 @@ Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and 
 - Browser tests in the repo (`make e2e`), and the hub's startup moved to FastAPI's lifespan.
 - **Agent RBAC:** `nodes/stats` (read) and `services/proxy` (control). Re-apply `install.yaml` when upgrading.
 
-## 2.6.0 <Badge type="tip" text="latest" />
+## 2.6.0
 
 - **Protected namespaces in the hub:** choose each cluster's protected namespaces in **System settings → Protected namespaces**, with the new `namespaces.protect` permission (Admin and Kubernetes admin have it; it can be given per cluster). The agent keeps the list in its own Secret, so it survives restarts and upgrades, and every change is in the activity log.
 - **Add cluster: just type the address.** Enter `192.168.64.2:30800` without a scheme; k10y finds how the agent answers. The agent serves HTTPS itself, also through a NodePort, so `https://` is added for you, and an `http://` address is switched to `https://` when the agent speaks TLS (before, it failed with "Server disconnected").
