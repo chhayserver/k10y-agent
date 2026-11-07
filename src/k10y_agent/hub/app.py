@@ -27,7 +27,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .. import __version__, ai
-from . import alerts, haproxy, haproxy_monitor, k8s_insights
+from . import alerts, haproxy, haproxy_monitor, k8s_insights, sso
 from ..config import Settings
 from .db import (ApiToken, AuditEntry, Cluster, Database, Role, RoleAssignment, SessionRow, Setting, User, UserPreference, get_setting,
                  utcnow)
@@ -293,7 +293,7 @@ def require_2fa_policy(s: Session) -> str:
 
 
 def must_setup_2fa(s: Session, p: "Principal") -> bool:
-    if p.user.totp_enabled:
+    if p.user.totp_enabled or p.user.sso_subject:   # single sign-on users: their provider does the second factor
         return False
     policy = require_2fa_policy(s)
     return policy == "everyone" or (policy == "admins" and bool(ADMIN_PERMS & p.global_perms()))
@@ -394,18 +394,24 @@ def login(body: LoginBody, request: Request, response: Response, s: Session = De
             audit(s, request, Principal(user, {}), "totp-recovery-used", user.username,
                   message=f"signed in with a recovery code ({len(user.recovery_codes or [])} left)")
     limiter.reset(body.username, ip)
+    start_session(s, request, response, user)
+    p = Principal(user, load_grants(s, user))
+    audit(s, request, p, "login", user.username, message="logged in")
+    return me_payload(s, p)
+
+
+def start_session(s: Session, request: Request, response: Response, user: User) -> None:
+    """New session for `user`, as the session cookie on `response`. Shared by password and single sign-on."""
     token = new_session_token()
     s.add(SessionRow(token_hash=token_digest(token), user_id=user.id,
                      expires_at=utcnow() + timedelta(hours=settings.session_hours),
-                     ip=ip, user_agent=(request.headers.get("user-agent") or "")[:255], last_seen_at=utcnow()))
+                     ip=request.client.host if request.client else "", user_agent=(request.headers.get("user-agent") or "")[:255],
+                     last_seen_at=utcnow()))
     user.last_login_at = utcnow()
     s.execute(delete(SessionRow).where(SessionRow.expires_at < utcnow()))
     s.commit()
     response.set_cookie(COOKIE, token, httponly=True, secure=request.url.scheme == "https", samesite="strict",
                         max_age=settings.session_hours * 3600, path="/")
-    p = Principal(user, load_grants(s, user))
-    audit(s, request, p, "login", user.username, message="logged in")
-    return me_payload(s, p)
 
 
 def _second_factor(user: User, code: str) -> Optional[str]:
@@ -691,11 +697,12 @@ class RoleBody(BaseModel):
 
 def user_view(u: User) -> dict:
     return {"id": u.id, "username": u.username, "display_name": u.display_name, "is_active": u.is_active,
-            "must_change_password": u.must_change_password, "totp_enabled": bool(u.totp_enabled),
+            "must_change_password": u.must_change_password, "totp_enabled": bool(u.totp_enabled), "sso_provider": u.sso_provider,
             "created_at": u.created_at.isoformat() if u.created_at else None,
             "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
             "sessions": getattr(u, "live_sessions", None), "last_seen_at": getattr(u, "last_seen_at", None),
-            "assignments": [{"role_id": a.role_id, "role": a.role.name, "cluster_id": a.cluster_id, "haproxy_id": a.haproxy_id} for a in u.assignments]}
+            "assignments": [{"role_id": a.role_id, "role": a.role.name, "cluster_id": a.cluster_id, "haproxy_id": a.haproxy_id,
+                             "source": a.source or ""} for a in u.assignments]}
 
 
 def _admins_left(s: Session, excluding_user: Optional[int] = None) -> int:
@@ -709,9 +716,12 @@ def _admins_left(s: Session, excluding_user: Optional[int] = None) -> int:
 
 
 def _set_assignments(s: Session, user: User, items: List[AssignmentBody]) -> None:
-    user.assignments.clear()
+    """Replace the roles given by hand. Roles from single sign-on groups stay (they follow the groups)."""
+    for a in list(user.assignments):
+        if a.source != "sso":
+            user.assignments.remove(a)
     s.flush()
-    seen = set()
+    seen = {(a.role_id, a.cluster_id, a.haproxy_id) for a in user.assignments}
     for a in items:
         if (a.role_id, a.cluster_id, a.haproxy_id) in seen:
             continue
@@ -1821,6 +1831,8 @@ class _EngineRef(dict):
 
 
 app.include_router(alerts.build_router(db_session, current, require, audit, crypto, _EngineRef()))
+app.include_router(sso.build_router(db_session, require, audit, crypto, lambda *a: start_session(*a),
+                                    lambda: settings.public_url))
 app.include_router(k8s_insights.build_router(db_session, current, _agent_get, _service_haproxy, _haproxy_search))
 app.include_router(haproxy.build_router(db_session, require, audit, crypto, monitor=lambda: state.get("haproxy_monitor") or (haproxy_mon() if "db" in state else None),
                                         syslog=lambda: state.get("syslog"), can_cluster=lambda p, perm, cid: p.can(perm, cid),

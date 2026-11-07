@@ -30,6 +30,9 @@ class User(Base):
     totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     totp_last_step: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     recovery_codes: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    # Single sign-on: which provider this user signs in with, and their stable ID there ("<issuer>|<sub>").
+    sso_provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    sso_subject: Mapped[Optional[str]] = mapped_column(String(400), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     assignments: Mapped[List["RoleAssignment"]] = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -64,6 +67,7 @@ class RoleAssignment(Base):
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"))
     cluster_id: Mapped[Optional[int]] = mapped_column(ForeignKey("clusters.id", ondelete="CASCADE"), nullable=True)
     haproxy_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)   # haproxy_instances.id
+    source: Mapped[str] = mapped_column(String(16), default="")   # "sso": from the user's groups, replaced at each sign-in
     user: Mapped[User] = relationship(back_populates="assignments")
     role: Mapped[Role] = relationship()
 
@@ -160,7 +164,10 @@ class Database:
                      ("users", "totp_last_step", "INTEGER"),
                      ("users", "recovery_codes", "JSON"),
                      ("alert_events", "acked_by", "VARCHAR(64)"),
-                     ("alert_events", "acked_at", "TIMESTAMP WITH TIME ZONE")]
+                     ("alert_events", "acked_at", "TIMESTAMP WITH TIME ZONE"),
+                     ("users", "sso_provider", "VARCHAR(64)"),
+                     ("users", "sso_subject", "VARCHAR(400)"),
+                     ("role_assignments", "source", "VARCHAR(16) DEFAULT ''")]
 
     def _add_missing_columns(self) -> None:
         insp = inspect(self.engine)

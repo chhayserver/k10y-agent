@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Icon from "@/components/Icon.vue";
 import PasswordInput from "@/components/PasswordInput.vue";
+import { hub } from "@/api/client";
 import { useSession } from "@/stores/session";
 import AuthLayout from "./AuthLayout.vue";
 const s = useSession(), router = useRouter(), route = useRoute();
@@ -24,6 +25,9 @@ async function submit() {
     if (step.value === "code") code.value = ""; else password.value = "";
   } finally { busy.value = false; }
 }
+// Single sign-on buttons (public list; empty when none is set up).
+const ssoProviders = ref<{ id: string; name: string }[]>([]);
+hub.get<{ id: string; name: string }[]>("/auth/sso").then((x) => (ssoProviders.value = x)).catch(() => {});
 function back() { step.value = "password"; code.value = ""; password.value = ""; error.value = ""; }
 </script>
 <template>
@@ -48,11 +52,18 @@ function back() { step.value = "password"; code.value = ""; password.value = "";
       <div v-if="error" class="auth-error" role="alert"><Icon name="crit" /><span>{{ error }}</span></div>
       <button class="btn primary auth-submit" type="submit" :disabled="busy || !username || !password">
         <span v-if="busy" class="spinner" aria-hidden="true" />{{ busy ? "Signing in…" : "Sign in" }}</button>
+      <template v-if="ssoProviders.length">
+        <div class="auth-or"><span>or</span></div>
+        <a v-for="p in ssoProviders" :key="p.id" class="btn auth-sso" :href="`/api/hub/auth/sso/${p.id}/start`"><Icon name="key" /><span>Sign in with {{ p.name }}</span></a>
+      </template>
       <p class="auth-note">Forgot your password? Ask an administrator to reset it in <b>Administration → Users</b>.</p>
     </form>
   </AuthLayout>
 </template>
 
 <style scoped>
+.auth-or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.auth-or::before, .auth-or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.auth-sso { justify-content: center; text-decoration: none; }
 .totp-input { font-family: var(--mono); letter-spacing: .2em; font-size: 18px; }
 </style>

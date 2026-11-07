@@ -8,6 +8,7 @@ import { toast } from "@/stores/ui";
 import Modal from "@/components/Modal.vue";
 import { useSession } from "@/stores/session";
 import ProtectedNamespaces from "./ProtectedNamespaces.vue";
+import SsoSettings from "./SsoSettings.vue";
 const session = useSession();
 // AI providers and alert channels need settings.manage; protected namespaces need namespaces.protect on a cluster.
 const manage = session.canAll("settings.manage"), protect = session.canGlobal("namespaces.protect");
@@ -105,6 +106,7 @@ async function removeKey(id: string) { if (!confirm("Remove this provider's key?
     <div v-if="security.require_2fa !== security.saved" style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" type="button" @click="security.require_2fa = security.saved">Undo</button>
       <button class="btn primary" type="button" :disabled="security.busy" @click="saveSecurity">Save</button></div>
   </div></section>
+  <SsoSettings />
   <div class="section-bar"><h2>AI providers</h2><span class="hint">Keys are stored encrypted in the hub's PostgreSQL database and are never sent back to the browser. Every cluster uses the active provider.</span></div>
   <div v-if="ai" class="two-col">
     <section v-for="(p, id) in ai.providers" :key="id" class="card">
