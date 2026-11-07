@@ -32,9 +32,30 @@ onMounted(() => manage && load());
 const channels = ref<any[] | null>(null);
 async function loadChannels() { channels.value = await hub.get("/alerts/channels"); }
 onMounted(() => manage && loadChannels());
-const ch = reactive({ open: false, id: 0, name: "", chat_id: "", bot_token: "", enabled: true, token_set: false, chats: [] as any[], busy: false, msg: "", ok: true });
-function newChannel() { Object.assign(ch, { open: true, id: 0, name: "Telegram", chat_id: "", bot_token: "", enabled: true, token_set: false, chats: [], msg: "" }); }
-function editChannel(c: any) { Object.assign(ch, { open: true, id: c.id, name: c.name, chat_id: c.chat_id, bot_token: "", enabled: c.enabled, token_set: c.token_set, chats: [], msg: "" }); }
+type ChType = "telegram" | "slack" | "email" | "webhook";
+const CH_TYPES: { id: ChType; label: string; hint: string }[] = [
+  { id: "telegram", label: "Telegram", hint: "A bot posts to a chat or group." },
+  { id: "slack", label: "Slack", hint: "An incoming webhook posts to a channel." },
+  { id: "email", label: "Email", hint: "Sent through your SMTP server." },
+  { id: "webhook", label: "Webhook", hint: "JSON POSTed to your URL (PagerDuty, Teams, your own service…)." },
+];
+const CH_LABEL = Object.fromEntries(CH_TYPES.map((t) => [t.id, t.label])) as Record<string, string>;
+const blank = { id: 0, type: "telegram" as ChType, name: "Telegram", chat_id: "", bot_token: "", secret: "", url: "", host: "", port: 587, security: "starttls",
+  username: "", sender: "", recipients: "", enabled: true, token_set: false, savedType: "" };
+const ch = reactive({ open: false, ...blank, chats: [] as any[], busy: false, msg: "", ok: true });
+function newChannel() { Object.assign(ch, { open: true, ...blank, chats: [], msg: "" }); }
+function editChannel(c: any) {
+  Object.assign(ch, { open: true, ...blank, id: c.id, type: c.type, savedType: c.type, name: c.name, chat_id: c.chat_id || "", url: c.url || "", host: c.host || "",
+    port: c.port || 587, security: c.security || "starttls", username: c.username || "", sender: c.sender || "", recipients: (c.recipients || []).join(", "),
+    enabled: c.enabled, token_set: c.token_set, chats: [], msg: "" });
+}
+function pickType(t: ChType) { if (!ch.id && (!ch.name || CH_TYPES.some((x) => x.label === ch.name))) ch.name = CH_LABEL[t]; ch.type = t; ch.msg = ""; }
+// A stored secret only counts while the type stays the same.
+const hasSecret = () => ch.token_set && ch.savedType === ch.type;
+const canSave = () => !!ch.name && (ch.type === "telegram" ? !!ch.chat_id && (!!ch.bot_token || hasSecret())
+  : ch.type === "slack" ? !!ch.secret || hasSecret() : ch.type === "webhook" ? /^https?:\/\//.test(ch.url)
+  : !!ch.host && !!ch.sender && !!ch.recipients.trim());
+const describeChannel = (c: any) => c.type === "telegram" ? c.chat_id : c.type === "email" ? (c.recipients || []).join(", ") : c.type === "webhook" ? c.url : "incoming webhook";
 async function findChats() {
   ch.busy = true; ch.msg = "";
   try {
@@ -45,10 +66,12 @@ async function findChats() {
 }
 async function saveChannel() {
   ch.busy = true; ch.msg = "";
-  const body = { name: ch.name, type: "telegram", chat_id: ch.chat_id, bot_token: ch.bot_token || null, enabled: ch.enabled };
+  const body = { name: ch.name, type: ch.type, enabled: ch.enabled, chat_id: ch.chat_id, bot_token: ch.bot_token || null, secret: ch.secret || null,
+    url: ch.url, host: ch.host, port: Number(ch.port) || 587, security: ch.security, username: ch.username, sender: ch.sender,
+    recipients: ch.recipients.split(/[\s,;]+/).filter(Boolean) };
   try {
     const saved = ch.id ? await hub.patch(`/alerts/channels/${ch.id}`, body) : await hub.post("/alerts/channels", body);
-    Object.assign(ch, { id: saved.id, bot_token: "", token_set: true });
+    Object.assign(ch, { id: saved.id, bot_token: "", secret: "", token_set: saved.secret_set, savedType: saved.type });
     await hub.post(`/alerts/channels/${saved.id}/test`, {});
     ch.open = false; toast(true, `Saved ${saved.name}. A test message was sent.`); await loadChannels();
   } catch (e: any) { ch.ok = false; ch.msg = e.message; await loadChannels(); } finally { ch.busy = false; }
@@ -108,32 +131,59 @@ async function removeKey(id: string) { if (!confirm("Remove this provider's key?
     </section>
   </div>
 
-  <div class="section-bar" style="margin-top:28px"><h2>Alert channels</h2><span class="hint">Where alert rules send messages. Bot tokens are stored encrypted in PostgreSQL.</span>
-    <span class="grow" /><button class="btn primary" @click="newChannel"><Icon name="bell" /><span>Add Telegram bot</span></button></div>
+  <div class="section-bar" style="margin-top:28px"><h2>Alert channels</h2><span class="hint">Where alert rules send messages: Telegram, Slack, email or a webhook. Tokens, webhook URLs and passwords are stored encrypted in PostgreSQL.</span>
+    <span class="grow" /><button class="btn primary" @click="newChannel"><Icon name="bell" /><span>Add channel</span></button></div>
   <section class="card flush"><div class="card-body">
     <div v-if="channels && !channels.length" class="empty"><Icon name="bell" /><div class="title">No channels yet</div>
-      <div class="s">Create a bot with <b>@BotFather</b> in Telegram, then add its token here.</div></div>
-    <table v-else-if="channels" class="data"><thead><tr><th>Name</th><th>Type</th><th>Chat ID</th><th>Status</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+      <div class="s">Add a Telegram bot, a Slack incoming webhook, an email address or your own webhook.</div></div>
+    <table v-else-if="channels" class="data"><thead><tr><th>Name</th><th>Type</th><th>Sends to</th><th>Status</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody><tr v-for="c in channels" :key="c.id" class="clickable" @click="(e) => !(e.target as HTMLElement).closest('button') && editChannel(c)">
-        <td class="primary">{{ c.name }}</td><td>Telegram</td><td class="mono">{{ c.chat_id }}</td>
+        <td class="primary">{{ c.name }}</td><td>{{ CH_LABEL[c.type] || c.type }}</td><td class="mono" style="max-width:320px;overflow:hidden;text-overflow:ellipsis">{{ describeChannel(c) }}</td>
         <td><Badge :level="c.enabled ? 'good' : 'neutral'" :label="c.enabled ? 'Enabled' : 'Off'" /></td>
         <td class="actions"><button class="btn ghost sm" @click="testChannel(c)">Send test</button><button class="btn ghost sm" style="color:var(--critical)" @click="removeChannel(c)">Delete</button></td></tr></tbody></table>
   </div></section>
   </template>
 
-  <Modal :open="ch.open" :title="ch.id ? `Edit ${ch.name}` : 'Add Telegram bot'" @close="ch.open = false">
-    <ol class="hint" style="margin:0;padding-left:18px;line-height:1.6"><li>In Telegram, message <b>@BotFather</b>, send <code>/newbot</code> and copy the token.</li>
-      <li>Send any message to your new bot, or add it to a group and post there.</li><li>Paste the token and press <b>Find chats</b>.</li></ol>
+  <Modal :open="ch.open" :title="ch.id ? `Edit ${ch.name}` : 'Add notification channel'" @close="ch.open = false">
+    <div class="form-row"><span class="lbl">Type</span><div class="segmented" role="group">
+      <button v-for="t in CH_TYPES" :key="t.id" type="button" :aria-pressed="ch.type === t.id" @click="pickType(t.id)">{{ t.label }}</button></div>
+      <span class="hint">{{ CH_TYPES.find((t) => t.id === ch.type)?.hint }}</span></div>
     <div class="form-row"><label class="lbl">Name</label><input v-model="ch.name" class="input" placeholder="e.g. Ops group"></div>
-    <div class="form-row"><label class="lbl">Bot token</label><PasswordInput v-model="ch.bot_token" autocomplete="off" mono
-      :placeholder="ch.token_set ? 'Saved. Leave empty to keep it' : '123456789:AA…'" /></div>
-    <div class="form-row"><label class="lbl">Chat ID</label><div class="field"><input v-model="ch.chat_id" class="input" style="font-family:var(--mono)" placeholder="e.g. 123456789 or -100…">
-      <button class="btn" type="button" :disabled="ch.busy || (!ch.bot_token && !ch.token_set)" @click="findChats">Find chats</button></div>
-      <div v-if="ch.chats.length" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
-        <button v-for="c in ch.chats" :key="c.id" type="button" class="pill" :aria-pressed="ch.chat_id === c.id" @click="ch.chat_id = c.id">{{ c.title || c.id }} <span class="dim">{{ c.type }}</span></button></div></div>
+    <template v-if="ch.type === 'telegram'">
+      <ol class="hint" style="margin:0;padding-left:18px;line-height:1.6"><li>In Telegram, message <b>@BotFather</b>, send <code>/newbot</code> and copy the token.</li>
+        <li>Send any message to your new bot, or add it to a group and post there.</li><li>Paste the token and press <b>Find chats</b>.</li></ol>
+      <div class="form-row"><label class="lbl">Bot token</label><PasswordInput v-model="ch.bot_token" autocomplete="off" mono
+        :placeholder="hasSecret() ? 'Saved. Leave empty to keep it' : '123456789:AA…'" /></div>
+      <div class="form-row"><label class="lbl">Chat ID</label><div class="field"><input v-model="ch.chat_id" class="input" style="font-family:var(--mono)" placeholder="e.g. 123456789 or -100…">
+        <button class="btn" type="button" :disabled="ch.busy || (!ch.bot_token && !hasSecret())" @click="findChats">Find chats</button></div>
+        <div v-if="ch.chats.length" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+          <button v-for="c in ch.chats" :key="c.id" type="button" class="pill" :aria-pressed="ch.chat_id === c.id" @click="ch.chat_id = c.id">{{ c.title || c.id }} <span class="dim">{{ c.type }}</span></button></div></div>
+    </template>
+    <template v-else-if="ch.type === 'slack'">
+      <p class="hint" style="margin:0">In Slack: <b>Apps → Incoming Webhooks → Add to Slack</b>, pick a channel and copy the webhook URL.</p>
+      <div class="form-row"><label class="lbl">Webhook URL</label><PasswordInput v-model="ch.secret" autocomplete="off" mono
+        :placeholder="hasSecret() ? 'Saved. Leave empty to keep it' : 'https://hooks.slack.com/services/…'" /></div>
+    </template>
+    <template v-else-if="ch.type === 'webhook'">
+      <div class="form-row"><label class="lbl">URL</label><input v-model="ch.url" class="input" style="font-family:var(--mono)" placeholder="https://ops.example.com/k10y-alerts"></div>
+      <div class="form-row"><label class="lbl">Signing secret (optional)</label><PasswordInput v-model="ch.secret" autocomplete="off" mono
+        :placeholder="hasSecret() ? 'Saved. Leave empty to keep it' : 'any long random string'" />
+        <span class="hint">With a secret, each request has <code>X-K10y-Signature: sha256=…</code>, the HMAC-SHA256 of the body, so your service can check it came from k10y. The body is JSON: status (firing, resolved, reminder, acknowledged, test), rule, severity, title, cluster, resource and text.</span></div>
+    </template>
+    <template v-else>
+      <div class="form-row"><label class="lbl">SMTP server</label><div class="field"><input v-model="ch.host" class="input" placeholder="smtp.example.com" style="flex:2">
+        <input v-model.number="ch.port" class="input" type="number" min="1" max="65535" aria-label="Port" style="max-width:100px">
+        <select v-model="ch.security" class="select" aria-label="Encryption" style="max-width:150px" @change="ch.port = ch.security === 'ssl' ? 465 : ch.security === 'none' ? 25 : 587">
+          <option value="starttls">STARTTLS</option><option value="ssl">SSL/TLS</option><option value="none">None</option></select></div></div>
+      <div class="form-row"><label class="lbl">Username (optional)</label><input v-model="ch.username" class="input" autocomplete="off" placeholder="often the From address"></div>
+      <div class="form-row"><label class="lbl">Password</label><PasswordInput v-model="ch.secret" autocomplete="new-password"
+        :placeholder="hasSecret() ? 'Saved. Leave empty to keep it' : 'SMTP password or app password'" /></div>
+      <div class="form-row"><label class="lbl">From</label><input v-model="ch.sender" class="input" placeholder="k10y@example.com"></div>
+      <div class="form-row"><label class="lbl">To</label><input v-model="ch.recipients" class="input" placeholder="ops@example.com, oncall@example.com"></div>
+    </template>
     <label class="pill" style="align-self:flex-start"><input v-model="ch.enabled" type="checkbox"> Enabled</label>
     <div v-if="ch.msg" class="test-result show" :class="ch.ok ? 'ok' : 'err'"><Icon :name="ch.ok ? 'ok' : 'crit'" /><span>{{ ch.msg }}</span></div>
     <template #actions><button class="btn ghost" type="button" @click="ch.open = false">Cancel</button><span style="flex:1" />
-      <button class="btn primary" :disabled="ch.busy || !ch.name || !ch.chat_id || (!ch.bot_token && !ch.token_set)" @click="saveChannel">Save &amp; send test</button></template>
+      <button class="btn primary" :disabled="ch.busy || !canSave()" @click="saveChannel">Save &amp; send test</button></template>
   </Modal>
 </template>

@@ -17,18 +17,36 @@ const s = useSession(), state = page("alerts", { key: "id", dir: -1 }, "open"), 
 const canManage = computed(() => s.canGlobal("alerts.manage"));
 const events = ref<any[] | null>(null), engine = ref<any>(null), rules = ref<any[] | null>(null), channels = ref<any[]>([]), error = ref("");
 const tab = ref<"events" | "rules">("events");
+const silences = ref<any[]>([]);
 
 async function loadHx() { if (canHx.value) try { hxInstances.value = await hub.get("/haproxy"); } catch { /* no access */ } }
 onMounted(loadHx);
 async function load() {
   try {
-    const [ev, ru, ch] = await Promise.all([hub.get("/alerts/events", { limit: 500 }), hub.get("/alerts/rules"), hub.get("/alerts/channels/names")]);
-    events.value = ev.events; engine.value = ev.engine; rules.value = ru; channels.value = ch; error.value = "";
+    const [ev, ru, ch, si] = await Promise.all([hub.get("/alerts/events", { limit: 500 }), hub.get("/alerts/rules"), hub.get("/alerts/channels/names"),
+      hub.get<any[]>("/alerts/silences").catch(() => [])]);
+    events.value = ev.events; engine.value = ev.engine; rules.value = ru; channels.value = ch; silences.value = si; error.value = "";
+    if (detail.value) detail.value = ev.events.find((e: any) => e.id === detail.value.id) || detail.value;
   } catch (e: any) { error.value = e.message; }
 }
 let timer = 0;
 onMounted(() => { load(); timer = window.setInterval(load, 30000); });
 onUnmounted(() => clearInterval(timer));
+
+// Acknowledge ("I'm on it": no more reminders) and silence (mute this alert, or its whole rule, for a while).
+async function ack(e: any) {
+  try { detail.value = { ...e, ...(await hub.post(`/alerts/events/${e.id}/ack`, {})) }; toast(true, "Acknowledged. Reminders stop and the channels are told."); await load(); }
+  catch (err: any) { toast(false, err.message); }
+}
+const sil = reactive({ open: false, event: null as any, scope: "event", minutes: 60, reason: "", busy: false });
+function openSilence(e: any) { Object.assign(sil, { open: true, event: e, scope: "event", minutes: 60, reason: "", busy: false }); }
+async function silence() {
+  sil.busy = true;
+  try { await hub.post("/alerts/silences", { event_id: sil.event.id, scope: sil.scope, minutes: sil.minutes, reason: sil.reason }); sil.open = false; toast(true, "Silenced"); await load(); }
+  catch (err: any) { toast(false, err.message); } finally { sil.busy = false; }
+}
+async function unsilence(x: any) { try { await hub.del(`/alerts/silences/${x.id}`); await load(); } catch (err: any) { toast(false, err.message); } }
+const DURATIONS: [number, string][] = [[30, "30 min"], [60, "1 hour"], [240, "4 hours"], [1440, "1 day"], [10080, "1 week"]];
 
 const SEV: Record<string, Level> = { critical: "critical", warning: "warning", info: "neutral" };
 const stateLevel = (e: any): [Level, string] => e.state === "firing" ? [SEV[e.severity] || "warning", "Firing"] : e.state === "pending" ? ["pending", "Pending"] : ["good", "Resolved"];
@@ -133,7 +151,7 @@ function addPreset(kind: "problems" | "memory" | "unreachable") {
     <button v-if="canManage" class="btn primary" @click="openNew(); tab = 'rules'"><Icon name="bell" /><span>New rule</span></button>
   </div>
   <div v-if="error" class="banner show">{{ error }}</div>
-  <div v-if="canManage && channels.length === 0 && rules" class="banner show info">No notification channel yet. Alerts are still recorded here; add a Telegram bot in <RouterLink :to="to('system')">System settings</RouterLink> to get messages.</div>
+  <div v-if="canManage && channels.length === 0 && rules" class="banner show info">No notification channel yet. Alerts are still recorded here; add Telegram, Slack, email or a webhook in <RouterLink :to="to('system')">System settings</RouterLink> to get messages.</div>
 
   <template v-if="tab === 'events'">
     <Toolbar :state="state" placeholder="Search alert, rule or cluster" :filters="[['open', 'Open'], ['firing', 'Firing'], ['resolved', 'Resolved'], ['all', 'All']]" :count="events ? `${rows.length} of ${events.length}` : ''" />
@@ -142,7 +160,9 @@ function addPreset(kind: "problems" | "memory" | "unreachable") {
       <DataTable v-else-if="events" v-model:sort="state.sort" :rows="rows" :columns="evColumns" :row-key="(e) => String(e.id)" clickable
         :empty-title="state.filter === 'open' ? 'No open alerts' : 'No alerts'" :empty-sub="rules?.length ? 'Everything your rules watch looks fine.' : 'Create a rule to start watching your clusters.'" empty-icon="bell" :empty-good="state.filter === 'open'" @row="(e) => (detail = e)">
         <template #id="{ row }">{{ fmt.dateTime(row.first_seen) }}</template>
-        <template #state="{ row }"><Badge :level="stateLevel(row)[0]" :label="stateLevel(row)[1]" /></template>
+        <template #state="{ row }"><Badge :level="stateLevel(row)[0]" :label="stateLevel(row)[1]" />
+          <span v-if="row.silenced_until" class="pill-tag" :title="`Silenced until ${fmt.dateTime(row.silenced_until)}`">silenced</span>
+          <span v-else-if="row.acked_by && row.state !== 'resolved'" class="pill-tag" :title="`Acknowledged ${fmt.ago(row.acked_at)}`">{{ row.acked_by }} is on it</span></template>
         <template #title="{ row }"><span>{{ row.title }}</span></template>
         <template #cluster="{ row }"><span class="ns">{{ row.cluster }}</span></template>
         <template #last_seen="{ row }">{{ duration(row) }}</template>
@@ -150,7 +170,12 @@ function addPreset(kind: "problems" | "memory" | "unreachable") {
           <span v-else-if="row.notified_at" class="dim">{{ fmt.ago(row.notified_at) }}</span><span v-else class="dim">–</span></template>
       </DataTable>
     </div></section>
-    <p class="hint" style="margin-top:12px">Pending alerts wait for the rule's hold time before a message is sent, so short blips stay quiet. History is kept in PostgreSQL.</p>
+    <section v-if="silences.length" class="card" style="margin-top:16px"><div class="card-head"><h2>Silences</h2><span class="hint">Matching alerts are still recorded, but nothing is sent.</span></div>
+      <div class="card-body table-wrap"><table class="data"><thead><tr><th>Mutes</th><th>Until</th><th>Reason</th><th>By</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+        <tbody><tr v-for="x in silences" :key="x.id"><td>{{ x.title }}</td><td>{{ fmt.dateTime(x.until) }} <span class="dim">({{ fmt.ago(x.until) }})</span></td>
+          <td>{{ x.reason || "–" }}</td><td class="dim">{{ x.created_by }}</td>
+          <td class="actions"><button v-if="canManage" class="btn ghost sm" @click="unsilence(x)">End now</button></td></tr></tbody></table></div></section>
+    <p class="hint" style="margin-top:12px">Pending alerts wait for the rule's hold time before a message is sent, so short blips stay quiet. <b>Acknowledge</b> stops reminders and tells the channels who's on it; <b>Silence</b> mutes an alert (also when it comes back) or its whole rule for a while. History is kept in PostgreSQL.</p>
   </template>
 
   <template v-else>
@@ -188,11 +213,31 @@ function addPreset(kind: "problems" | "memory" | "unreachable") {
         <div><span>Notified</span><b>{{ fmt.dateTime(detail.notified_at) }}</b></div>
         <div v-if="detail.resource"><span>Object</span><b><code>{{ detail.resource.replace(/\/\//, "/") }}</code></b></div>
       </div>
+      <p v-if="detail.acked_by" class="hint"><Icon name="ok" /> Acknowledged by <b>{{ detail.acked_by }}</b> {{ fmt.ago(detail.acked_at) }}. No more reminders.</p>
+      <p v-if="detail.silenced_until" class="hint"><Icon name="pause" /> Silenced until {{ fmt.dateTime(detail.silenced_until) }}.</p>
       <div v-if="detail.notify_error" class="test-result show err"><Icon name="crit" /><span>{{ detail.notify_error }}</span></div>
       <p v-if="detail.message && detail.message !== detail.title" class="hint" style="white-space:pre-wrap">{{ detail.message }}</p>
       <div v-if="detail.ai_summary" class="card" style="padding:12px"><div class="lbl"><Icon name="ai" /> AI diagnosis</div><p style="white-space:pre-wrap;margin:6px 0 0">{{ detail.ai_summary }}</p></div>
     </template>
-    <template #actions><span style="flex:1" /><button class="btn" type="button" @click="detail = null">Close</button></template>
+    <template #actions>
+      <template v-if="detail && detail.state !== 'resolved'">
+        <button v-if="!detail.acked_by" class="btn" type="button" @click="ack(detail)"><Icon name="ok" /><span>Acknowledge</span></button>
+        <button v-if="canManage" class="btn" type="button" @click="openSilence(detail)"><Icon name="pause" /><span>Silence…</span></button></template>
+      <span style="flex:1" /><button class="btn" type="button" @click="detail = null">Close</button></template>
+  </Modal>
+
+  <Modal :open="sil.open" title="Silence alerts" @close="sil.open = false">
+    <template v-if="sil.event">
+      <div class="form-row"><span class="lbl">What</span>
+        <label class="pill"><input v-model="sil.scope" type="radio" value="event"> This alert: {{ sil.event.title }} ({{ sil.event.cluster }}), also if it comes back</label>
+        <label class="pill"><input v-model="sil.scope" type="radio" value="rule"> Every alert of rule {{ sil.event.rule }}</label></div>
+      <div class="form-row"><span class="lbl">For</span><div class="segmented" role="group">
+        <button v-for="[m, l] in DURATIONS" :key="m" type="button" :aria-pressed="sil.minutes === m" @click="sil.minutes = m">{{ l }}</button></div></div>
+      <div class="form-row"><label class="lbl" for="sil-r">Reason (optional)</label><input id="sil-r" v-model="sil.reason" class="input" maxlength="300" placeholder="e.g. planned maintenance"></div>
+      <p class="hint" style="margin:0">Alerts are still recorded while silenced; only messages stop. You can end a silence early under Silences.</p>
+    </template>
+    <template #actions><button class="btn ghost" type="button" @click="sil.open = false">Cancel</button><span style="flex:1" />
+      <button class="btn primary" type="button" :disabled="sil.busy" @click="silence">Silence</button></template>
   </Modal>
 
   <Modal :open="edit.open" :title="edit.id ? `Edit rule ${edit.name}` : 'New alert rule'" wide @close="edit.open = false">

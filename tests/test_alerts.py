@@ -102,3 +102,85 @@ def test_alert_permissions(client):
     assert v.get("/api/hub/alerts/events").status_code == 200
     assert v.get("/api/hub/alerts/channels").status_code == 403
     assert v.post("/api/hub/alerts/rules", json={"name": "x", "type": "problems"}, headers=CSRF).status_code == 403
+
+
+def test_ack_stops_reminders_and_silence_mutes(client, monkeypatch):
+    sent = []
+    monkeypatch.setattr(alerts, "telegram_send", lambda token, chat, text, timeout=15.0: sent.append(text))
+    ready_admin(client)
+    client.post("/api/hub/clusters", json={"name": "lab", "url": "https://x:1", "token": "t"}, headers=CSRF)
+    ch = client.post("/api/hub/alerts/channels", json={"name": "ops", "chat_id": "-100", "bot_token": "123:ABC"}, headers=CSRF).json()
+    rule = client.post("/api/hub/alerts/rules", json={"name": "Broken pods", "type": "problems", "for_minutes": 0, "repeat_minutes": 10,
+                                                       "params": {"exclude_namespaces": ["kube-system"]}, "channel_ids": [ch["id"]]},
+                       headers=CSRF).json()
+    engine = hub.alert_engine()
+    engine.agent_get = lambda c, path: SUMMARY_BAD if path == "summary" else []
+    t0 = utcnow()
+    engine.run_once(t0)
+    assert len(sent) == 1
+    ev = client.get("/api/hub/alerts/events").json()["events"][0]
+    acked = client.post(f"/api/hub/alerts/events/{ev['id']}/ack", headers=CSRF)
+    assert acked.status_code == 200 and acked.json()["acked_by"] == "admin"
+    assert len(sent) == 2 and "Acknowledged" in sent[1]
+    engine.run_once(t0 + timedelta(minutes=20))                     # a reminder would be due
+    assert len(sent) == 2
+
+    # Silence the rule: when the alert comes back, nothing is sent; lifting the silence lets the next one through.
+    sil = client.post("/api/hub/alerts/silences", json={"rule_id": rule["id"], "minutes": 120, "reason": "maintenance"}, headers=CSRF)
+    assert sil.status_code == 200 and sil.json()["title"] == "Every alert of rule Broken pods"
+    engine.agent_get = lambda c, path: SUMMARY_OK if path == "summary" else []
+    engine.run_once(t0 + timedelta(minutes=21))                     # resolved while silenced: no message
+    engine.agent_get = lambda c, path: SUMMARY_BAD if path == "summary" else []
+    engine.run_once(t0 + timedelta(minutes=22))
+    assert len(sent) == 2
+    firing = [e for e in client.get("/api/hub/alerts/events").json()["events"] if e["state"] == "firing"]
+    assert firing and firing[0]["silenced_until"]
+    assert client.delete(f"/api/hub/alerts/silences/{sil.json()['id']}", headers=CSRF).status_code == 200
+    assert client.get("/api/hub/alerts/silences").json() == []
+
+
+def test_slack_webhook_and_email_channels(client, monkeypatch):
+    posts, mails = [], []
+
+    class Resp:
+        status_code, text = 200, "ok"
+
+    monkeypatch.setattr(alerts.httpx, "post", lambda url, **kw: posts.append((url, kw)) or Resp())
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None, context=None):
+            mails.append({"host": host, "port": port})
+        def starttls(self, context=None): mails[-1]["tls"] = True
+        def login(self, u, p): mails[-1]["login"] = (u, p)
+        def send_message(self, msg): mails[-1]["msg"] = msg
+        def quit(self): pass
+
+    monkeypatch.setattr(alerts.smtplib, "SMTP", FakeSMTP)
+    ready_admin(client)
+    bad = client.post("/api/hub/alerts/channels", json={"name": "s", "type": "slack", "secret": "https://evil.example/x"}, headers=CSRF)
+    assert bad.status_code == 400
+    slack = client.post("/api/hub/alerts/channels", json={"name": "s", "type": "slack", "secret": "https://hooks.slack.com/services/T/B/x"}, headers=CSRF)
+    hook = client.post("/api/hub/alerts/channels", json={"name": "w", "type": "webhook", "url": "https://ops.example/k10y", "secret": "sig"}, headers=CSRF)
+    mail = client.post("/api/hub/alerts/channels", json={"name": "m", "type": "email", "host": "smtp.example", "port": 587, "username": "bot",
+                                                         "secret": "pw", "sender": "k10y@example.com", "recipients": ["ops@example.com"]}, headers=CSRF)
+    assert slack.status_code == hook.status_code == mail.status_code == 200, (slack.text, hook.text, mail.text)
+    assert "hooks.slack.com" not in slack.text and mail.json()["recipients"] == ["ops@example.com"]
+    for ch in (slack, hook, mail):
+        assert client.post(f"/api/hub/alerts/channels/{ch.json()['id']}/test", headers=CSRF).status_code == 200
+    assert posts[0][0] == "https://hooks.slack.com/services/T/B/x" and posts[0][1]["json"]["text"].startswith("✅ *k10y test message*")
+    import hashlib, hmac, json as _json
+    url, kw = posts[1]
+    assert url == "https://ops.example/k10y" and _json.loads(kw["content"])["status"] == "test"
+    assert kw["headers"]["X-K10y-Signature"] == "sha256=" + hmac.new(b"sig", kw["content"], hashlib.sha256).hexdigest()
+    assert mails[0]["tls"] and mails[0]["login"] == ("bot", "pw") and mails[0]["msg"]["To"] == "ops@example.com"
+    assert "<b>" not in mails[0]["msg"].get_content()
+    # Editing without a secret keeps it; switching type needs the new type's secret.
+    keep = client.patch(f"/api/hub/alerts/channels/{slack.json()['id']}", json={"name": "s2", "type": "slack"}, headers=CSRF)
+    assert keep.status_code == 200 and keep.json()["secret_set"]
+    assert client.patch(f"/api/hub/alerts/channels/{slack.json()['id']}", json={"name": "s2", "type": "telegram", "chat_id": "1"}, headers=CSRF).status_code == 400
+
+
+def test_slack_conversion():
+    text = '🔴 <b>CRITICAL</b> · <b>lab</b>\nPod a &amp; b\n<i>why</i>\n<a href="https://k10y.example/overview">Open k10y</a>'
+    assert alerts.html_to_slack(text) == '🔴 *CRITICAL* · *lab*\nPod a &amp; b\n_why_\n<https://k10y.example/overview|Open k10y>'
+    assert alerts.html_to_text(text).endswith("Open k10y: https://k10y.example/overview") and "a & b" in alerts.html_to_text(text)

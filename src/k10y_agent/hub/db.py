@@ -142,7 +142,9 @@ class Database:
                      ("users", "totp_secret", "VARCHAR(512)"),
                      ("users", "totp_enabled", "BOOLEAN DEFAULT FALSE"),
                      ("users", "totp_last_step", "INTEGER"),
-                     ("users", "recovery_codes", "JSON")]
+                     ("users", "recovery_codes", "JSON"),
+                     ("alert_events", "acked_by", "VARCHAR(64)"),
+                     ("alert_events", "acked_at", "TIMESTAMP WITH TIME ZONE")]
 
     def _add_missing_columns(self) -> None:
         insp = inspect(self.engine)
