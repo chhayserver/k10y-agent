@@ -8,8 +8,8 @@
     "preview": "vitepress preview --host 0.0.0.0 --port 4173"
   },
   "devDependencies": {
-    "vitepress": "1.6.3",
-    "vue": "3.5.13"
+    "vitepress": "1.6.4",
+    "vue": "3.5.44"
   },
   "author": "Kang Kimchhay"
 }
