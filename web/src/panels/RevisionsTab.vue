@@ -2,7 +2,7 @@
 // A Deployment's rollout history: every revision with its images, change cause and who changed it (from the
 // activity log), a diff of the pod template between any two revisions, and roll back to a chosen revision.
 import { computed, onMounted, ref, watch } from "vue";
-import { agent, hub } from "@/api/client";
+import { agent, agentMessage, hub } from "@/api/client";
 import Badge from "@/components/Badge.vue";
 import Icon from "@/components/Icon.vue";
 import { actRollback } from "@/lib/actions";
@@ -17,7 +17,7 @@ async function load() {
   try {
     revs.value = await agent(s.current!.id).get(`deployments/${props.namespace}/${props.name}/revisions`);
     b.value = revs.value![0]?.revision || 0; a.value = revs.value![1]?.revision || b.value;
-  } catch (e: any) { error.value = e.message; }
+  } catch (e: any) { error.value = agentMessage(e); }
   try { audit.value = await hub.get("/audit", { cluster_id: s.current!.id, target: `${props.namespace}/${props.name}`, limit: 200 }); } catch { audit.value = []; }
 }
 onMounted(load);

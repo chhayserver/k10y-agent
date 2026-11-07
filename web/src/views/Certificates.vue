@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // TLS certificates in use: those of Ingress TLS secrets, and cert-manager Certificates, with days until they expire.
 import { onMounted, ref, watch } from "vue";
-import { agent } from "@/api/client";
+import { agent, agentMessage } from "@/api/client";
 import Badge from "@/components/Badge.vue";
 import DataTable from "@/components/DataTable.vue";
 import Icon from "@/components/Icon.vue";
@@ -14,7 +14,7 @@ import { useSession } from "@/stores/session";
 const s = useSession(), state = page("certificates", { key: "days_left", dir: 1 });
 const list = ref<any[] | null>(null), error = ref("");
 async function load(fresh = false) {
-  try { list.value = await agent(s.current!.id).get("certificates", fresh ? { fresh: true } : undefined); error.value = ""; } catch (e: any) { error.value = e.message; }
+  try { list.value = await agent(s.current!.id).get("certificates", fresh ? { fresh: true } : undefined); error.value = ""; } catch (e: any) { error.value = agentMessage(e); }
 }
 onMounted(() => load());
 watch(() => s.current?.id, () => load());

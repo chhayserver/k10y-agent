@@ -22,6 +22,14 @@ test:             ## Run unit tests inside the image
 	docker run --rm --entrypoint sh -e K10Y_AUDIT_PATH=/tmp/audit.jsonl -v $(CURDIR)/tests:/tests $(IMAGE):$(TAG) \
 	  -c "pip install --quiet --user pytest httpx && python -m pytest -q /tests"
 
+.PHONY: e2e e2e-image
+e2e-image:        ## Build the browser-test image (Playwright)
+	docker build -t k10y-e2e e2e
+
+e2e:              ## Browser tests against a running hub: make e2e K10Y_E2E_USER=… K10Y_E2E_PASSWORD=… [K10Y_E2E_URL=…]
+	docker run --rm --add-host=host.docker.internal:host-gateway -v $(CURDIR)/e2e:/e2e:ro \
+	  -e K10Y_E2E_URL -e K10Y_E2E_USER -e K10Y_E2E_PASSWORD k10y-e2e
+
 # Docker Hub / registry publishing. REGISTRY_IMAGE=docker.io/<user>/k10y-agent
 REGISTRY_IMAGE ?= docker.io/$(IMAGE)
 PLATFORMS      ?= linux/amd64,linux/arm64

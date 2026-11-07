@@ -2,7 +2,7 @@
 // Helm releases, read from Helm's own release records: chart and version, status, history; values and the
 // rendered manifest (secret-looking values masked, needs secrets.view); compare two revisions; rollback command.
 import { computed, onMounted, reactive, ref, watch } from "vue";
-import { agent } from "@/api/client";
+import { agent, agentMessage } from "@/api/client";
 import Badge from "@/components/Badge.vue";
 import DataTable from "@/components/DataTable.vue";
 import EmptyState from "@/components/EmptyState.vue";
@@ -21,7 +21,7 @@ import { toast } from "@/stores/ui";
 const s = useSession(), state = page("helm", { key: "name", dir: 1 });
 const list = ref<any[] | null>(null), error = ref("");
 const api = () => agent(s.current!.id);
-async function load() { try { list.value = await api().get("helm/releases"); error.value = ""; } catch (e: any) { error.value = e.message; } }
+async function load() { try { list.value = await api().get("helm/releases"); error.value = ""; } catch (e: any) { error.value = agentMessage(e); } }
 onMounted(load);
 watch(() => s.current?.id, load);
 const LEVEL: Record<string, string> = { deployed: "good", superseded: "neutral", failed: "critical", "pending-install": "warning", "pending-upgrade": "warning", "pending-rollback": "warning", uninstalling: "warning" };

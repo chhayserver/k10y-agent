@@ -4,6 +4,11 @@
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
+/** For pages that need a newer agent: a 404 from the agent means it doesn't have that endpoint yet. */
+export function agentMessage(e: any, needs = "2.6"): string {
+  return e instanceof ApiError && e.status === 404 && e.message === "Not Found"   // FastAPI's answer for an unknown route
+    ? `This cluster's agent is too old for this page. Update the agent to ${needs} or newer (see Upgrading in the docs).` : e?.message || String(e);
+}
 
 type Query = Record<string, string | number | boolean | null | undefined>;
 interface Opts { method?: string; body?: unknown; query?: Query; text?: boolean; timeout?: number }
