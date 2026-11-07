@@ -14,7 +14,6 @@ const columns: { id: string; title: string; hint: string; items: Item[] }[] = [
     { t: "Longer metrics history", d: "Keep more than 7 days of Kubernetes and HAProxy charts, or read them from Prometheus.", area: "Monitoring" },
     { t: "Helm chart", d: "Install the agent with Helm, and run the hub inside Kubernetes.", area: "Install" },
     { t: "Audit log export", d: "Ship audit entries to a SIEM or object storage, with retention settings.", area: "Security" },
-    { t: "CI on every change", d: "Automated tests, type checks and image builds for every pull request (workflow ready, being switched on).", area: "Project" },
   ] },
   { id: "exploring", title: "Exploring", hint: "Ideas we're researching. Tell us if you need them", items: [
     { t: "CI/CD pipelines", d: "See and re-run GitLab and Jenkins pipelines next to the clusters they deploy to.", area: "Systems" },
@@ -28,7 +27,7 @@ const columns: { id: string; title: string; hint: string; items: Item[] }[] = [
 ];
 
 const shipped: { v: string; date: string; items: string[] }[] = [
-  { v: "2.7", date: "Nov 2026", items: ["Two-factor login with recovery codes, required for admins or everyone", "Slack, email and signed webhook alerts", "Acknowledge and silence alerts", "Full-volume alerts and volume usage", "Helm rollback from the hub (opt-in)", "Open a Service in the browser, sandboxed", "Live traffic per server on the HAProxy topology", "Config errors shown by line", "Browser tests in the repo"] },
+  { v: "2.7", date: "Nov 2026", items: ["Two-factor login with recovery codes, required for admins or everyone", "Slack, email and signed webhook alerts", "Acknowledge and silence alerts", "Full-volume alerts and volume usage", "Helm rollback from the hub (opt-in)", "Open a Service in the browser, sandboxed", "Live traffic per server on the HAProxy topology", "Config errors shown by line", "Browser tests in the repo", "CI on every pull request"] },
   { v: "2.6", date: "Nov 2026", items: ["Search everything (Ctrl/⌘ K) across clusters and HAProxy", "Rollout history with diff, who changed it, roll back to any revision", "Helm releases: history, values, manifest, compare", "Workload logs: pick a pod, time range, errors only", "Alerts for OOMKilled, stuck rollouts, CronJobs, PVCs, expiring TLS", "Certificates page, CronJob runs, namespace quotas", "Right-sizing and 7-day Kubernetes history", "Service → HAProxy link", "Protected namespaces set in the hub", "Add cluster with just node:port"] },
   { v: "2.5", date: "Oct 2026", items: ["Roles per system: Kubernetes and HAProxy viewer, operator, admin", "HAProxy permissions per instance"] },
   { v: "2.4", date: "Oct 2026", items: ["Guided frontends by use case (microservices, web, API, databases, TCP)", "Every balancing method and health check", "Live IP blocklist, maintenance page, per-route numbers", "Copy frontends and backends between HAProxies", "HAProxy charts up to 7 days", "Follows your own HAProxy config style"] },
