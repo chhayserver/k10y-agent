@@ -89,6 +89,7 @@ _RULES: List[Tuple[str, re.Pattern, str]] = [(m, re.compile(p), perm) for m, p, 
     ("POST", r"^deployments/[^/]+/[^/]+/image$", "workloads.update_image"),
     ("POST", r"^deployments/[^/]+/[^/]+/rollback$", "workloads.rollback"),
     ("POST", r"^helm/releases/[^/]+/[^/]+/rollback$", "workloads.rollback"),
+    ("POST", r"^helm/releases/[^/]+/[^/]+/upgrade$", "apply.yaml"),     # the hub also asks secrets.view
     ("POST", r"^cronjobs/[^/]+/[^/]+/(suspend|resume|trigger)$", "workloads.restart"),
     ("POST", r"^nodes/[^/]+/(cordon|uncordon|drain)$", "nodes.manage"),
     ("POST", r"^apply$", "apply.yaml"),

@@ -1019,6 +1019,8 @@ async def proxy(cluster_id: int, path: str, request: Request, p: Principal = Dep
     c = _get_cluster(s, cluster_id, p, perm)
     if path == "resource" and request.query_params.get("kind") == "Secret" and not p.can("secrets.view", cluster_id):
         raise HTTPException(status_code=403, detail="missing permission: secrets.view")
+    if re.match(r"^helm/releases/[^/]+/[^/]+/upgrade$", path) and not p.can("secrets.view", cluster_id):
+        raise HTTPException(status_code=403, detail="missing permission: secrets.view (Helm values can hold secrets)")
     body = await request.body()
     headers = {"Authorization": f"Bearer {crypto().decrypt(c.token_encrypted)}",
                "X-K10Y-Actor": f"hub:{p.user.username}"[:64]}

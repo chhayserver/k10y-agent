@@ -1,5 +1,6 @@
 """Agent insights: Helm release records, masking, TLS certificate expiry, CronJob health, workload owners,
 and the new problems (OOMKilled, stuck rollouts)."""
+import pytest
 import base64
 import gzip
 import json
@@ -148,3 +149,28 @@ def test_volume_usage_outside_cluster_is_reported_not_raised(monkeypatch):
     insights._vol_cache.update(t=0.0, data=None)
     data = insights.volume_usage(object(), fresh=True)
     assert data["available"] is False and "inside the cluster" in data["errors"][0]
+
+
+def test_helm_unmask_and_chart_rebuild(tmp_path):
+    import base64, os
+    from k10y_agent import insights
+    M = insights.MASK
+    old = {"db": {"password": "s3cret", "host": "pg"}, "tokens": ["a", "b"]}
+    assert insights.unmask({"db": {"password": M, "host": "pg2"}, "tokens": [M, "c"]}, old) == \
+        {"db": {"password": "s3cret", "host": "pg2"}, "tokens": ["a", "c"]}
+    with pytest.raises(ValueError):
+        insights.unmask({"newkey": M}, old)                          # nothing to put back
+
+    b64 = lambda t: base64.b64encode(t.encode()).decode()
+    rel = {"chart": {"metadata": {"apiVersion": "v2", "name": "web", "version": "1.2.3", "appVersion": None},
+                     "values": {"replicas": 1}, "schema": b64('{"type": "object"}'),
+                     "templates": [{"name": "templates/deploy.yaml", "data": b64("kind: Deployment")}],
+                     "files": [{"name": "crds/x.yaml", "data": b64("kind: CRD")}]}}
+    base = insights.write_chart(rel, str(tmp_path))
+    assert open(os.path.join(base, "templates/deploy.yaml")).read() == "kind: Deployment"
+    assert "appVersion" not in open(os.path.join(base, "Chart.yaml")).read()
+    assert os.path.exists(os.path.join(base, "values.schema.json")) and os.path.exists(os.path.join(base, "crds/x.yaml"))
+    with pytest.raises(ValueError):
+        insights.write_chart({"chart": {**rel["chart"], "templates": [{"name": "../../etc/x", "data": ""}]}}, str(tmp_path / "e"))
+    with pytest.raises(ValueError, match="subcharts"):
+        insights.write_chart({"chart": {**rel["chart"], "metadata": {**rel["chart"]["metadata"], "dependencies": [{"name": "redis"}]}}}, str(tmp_path / "d"))

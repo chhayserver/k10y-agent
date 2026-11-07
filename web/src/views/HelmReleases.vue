@@ -72,6 +72,22 @@ async function rollback(n: number, dry: boolean) {
     else { toast(true, r.message || `Rolled back to #${n}`); rb.rev = 0; rb.dry = ""; await load(); await open(list.value?.find((x) => x.name === rel.item.name && x.namespace === rel.item.namespace) || rel.item); }
   } catch (e: any) { rb.err = e.message; } finally { rb.busy = false; }
 }
+// Upgrade with edited values (same chart): dry run shows the manifest diff, then upgrade.
+const canUpgrade = computed(() => canRollback.value && s.can("apply.yaml") && canValues.value);
+const up = reactive({ open: false, text: "", busy: false, diff: "", msg: "", err: "", checked: "" });
+function editValues() {
+  const cur = rel.data[rel.item.revision];
+  Object.assign(up, { open: true, text: cur?.values?.trim() === "{}" ? "" : cur?.values || "", busy: false, diff: "", msg: "", err: "", checked: "" });
+}
+async function upgrade(dry: boolean) {
+  up.busy = true; up.err = "";
+  try {
+    const r = await api().post<any>(`helm/releases/${rel.item.namespace}/${rel.item.name}/upgrade`, { values: up.text, dry_run: dry });
+    if (dry) { up.diff = r.diff || ""; up.msg = r.message; up.checked = up.text; }
+    else { toast(true, r.message || "Upgraded"); up.open = false; await load(); await open(list.value?.find((x) => x.name === rel.item.name && x.namespace === rel.item.namespace) || rel.item); }
+  } catch (e: any) { up.err = e.message; } finally { up.busy = false; }
+}
+const upLines = computed(() => up.diff.split("\n").filter((l) => !l.startsWith("---") && !l.startsWith("+++")));
 const rollbackCmd = (n: number) => `helm rollback ${rel.item?.name} ${n} -n ${rel.item?.namespace}`;
 async function copy(text: string) { try { await navigator.clipboard.writeText(text); toast(true, "Copied"); } catch { toast(false, "Copy failed"); } }
 </script>
@@ -95,7 +111,8 @@ async function copy(text: string) { try { await navigator.clipboard.writeText(te
   <Modal :open="rel.open" :title="rel.item ? `${rel.item.name} · ${rel.item.namespace}` : ''" wide @close="rel.open = false">
     <template v-if="rel.item">
       <div class="hr-head"><span class="mono">{{ rel.item.chart }} {{ rel.item.chart_version }}</span><span class="dim">app {{ rel.item.app_version || "–" }}</span>
-        <Badge :level="LEVEL[rel.item.status] || 'neutral'" :label="rel.item.status" /></div>
+        <Badge :level="LEVEL[rel.item.status] || 'neutral'" :label="rel.item.status" /><span class="grow" />
+        <button v-if="canUpgrade" class="btn sm" type="button" :disabled="!rel.data[rel.item.revision]" @click="editValues">Edit values…</button></div>
       <div v-if="rel.err" class="test-result show err"><Icon name="crit" /><span>{{ rel.err }}</span></div>
       <div class="table-wrap card" style="box-shadow:none"><table class="data"><thead><tr><th>Revision</th><th>Status</th><th>Chart</th><th>App</th><th>Updated</th><th>Description</th><th /></tr></thead>
         <tbody><tr v-for="h in rel.history" :key="h.revision" :class="{ 'hr-sel': rel.view !== 'compare' && rel.shown === h.revision }">
@@ -107,7 +124,7 @@ async function copy(text: string) { try { await navigator.clipboard.writeText(te
             <button v-else-if="h.revision !== rel.item.revision" class="btn ghost sm" type="button" :title="rollbackCmd(h.revision)" @click="copy(rollbackCmd(h.revision))">Copy rollback command</button></td></tr></tbody></table></div>
       <div v-if="rb.rev && (rb.dry || rb.err || rb.busy)" class="hr-rb">
         <div v-if="rb.err" class="test-result show err"><Icon name="crit" /><span>{{ rb.err }}</span></div>
-        <div v-else-if="rb.dry" class="test-result show ok"><Icon name="ok" /><span>{{ rb.dry }}. Nothing has changed yet.</span></div>
+        <div v-else-if="rb.dry" class="test-result show ok"><Icon name="ok" /><span>{{ rb.dry }}.</span></div>
         <p v-else class="hint">Checking with a dry run…</p>
         <div class="hr-row"><button class="btn ghost" type="button" @click="rb.rev = 0">Cancel</button><span class="grow" />
           <button class="btn primary" type="button" :disabled="rb.busy || !rb.dry" @click="rollback(rb.rev, false)">Roll back {{ rel.item.name }} to #{{ rb.rev }}</button></div>
@@ -140,12 +157,28 @@ async function copy(text: string) { try { await navigator.clipboard.writeText(te
     </template>
     <template #actions><span style="flex:1" /><button class="btn" type="button" @click="rel.open = false">Close</button></template>
   </Modal>
+
+  <Modal :open="up.open" :title="rel.item ? `Upgrade ${rel.item.name} with new values` : ''" wide @close="up.open = false">
+    <p class="hint" style="margin:0">The values you set for this release (the chart's defaults still apply for anything not set). Values shown as <code>••••••</code> keep their real value; type a new one to change it. Same chart and version: {{ rel.item?.chart }} {{ rel.item?.chart_version }}.</p>
+    <textarea v-model="up.text" class="ye-text hr-values" spellcheck="false" autocapitalize="off" aria-label="Release values (YAML)" />
+    <div v-if="up.err" class="test-result show err"><Icon name="crit" /><span>{{ up.err }}</span></div>
+    <template v-if="up.checked && up.checked === up.text && !up.err">
+      <div class="test-result show ok"><Icon name="ok" /><span>{{ up.msg }}.</span></div>
+      <div v-if="up.diff" class="ye-diff hx-diff" role="region" aria-label="Rendered objects: before and after">
+        <div v-for="(l, i) in upLines" :key="i" class="ye-line hx-line" :class="{ add: l[0] === '+', del: l[0] === '-', hunk: l.startsWith('@@') }">
+          <span class="ye-op">{{ l.startsWith("@@") ? "" : l[0] === "-" ? "−" : l[0] === "+" ? "+" : "" }}</span><span class="ye-t">{{ l.startsWith("@@") ? "⋯" : l.slice(1) }}</span></div></div>
+    </template>
+    <template #actions><button class="btn ghost" type="button" @click="up.open = false">Cancel</button><span style="flex:1" />
+      <button class="btn" type="button" :disabled="up.busy" @click="upgrade(true)">{{ up.busy && up.checked !== up.text ? "Checking…" : "Dry run" }}</button>
+      <button class="btn primary" type="button" :disabled="up.busy || up.checked !== up.text || !!up.err" @click="upgrade(false)">Upgrade</button></template>
+  </Modal>
 </template>
 
 <style scoped>
 .hr-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .hr-tabs { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .hr-pre { max-height: 420px; white-space: pre; }
+.hr-values { min-height: 260px; }
 .hr-rb { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
 .hr-row { display: flex; gap: 8px; align-items: center; }
 .hr-desc { white-space: normal; min-width: 160px; }

@@ -755,39 +755,103 @@ def k8s_raw_request(method: str, path: str, query: list, headers: Dict[str, str]
 HELM_NAME = re.compile(r"^[a-z0-9]([-a-z0-9.]{0,51}[a-z0-9])?$")
 
 
-def helm_rollback(namespace: str, name: str, revision: int, dry_run: bool) -> Dict[str, Any]:
-    """`helm rollback`, so Helm's hooks run and its history stays right. Runs as the agent's ServiceAccount."""
+def _helm_ready(namespace: str, name: str) -> str:
     import shutil
-    import subprocess
-    import tempfile
     get_controller().guard(namespace)
     if not settings.helm_enabled:
-        raise ActionError("Helm rollback is off on this agent. Set K10Y_HELM_ENABLED=true and apply rbac-helm.yaml to turn it on.")
-    if not HELM_NAME.match(name) or not re.match(NS_NAME, namespace) or revision < 1:
-        raise ActionError("invalid release, namespace or revision")
+        raise ActionError("Helm actions are off on this agent. Set K10Y_HELM_ENABLED=true and apply rbac-helm.yaml to turn them on.")
+    if not HELM_NAME.match(name) or not re.match(NS_NAME, namespace):
+        raise ActionError("invalid release or namespace")
     helm = shutil.which("helm")
     if not helm:
         raise ActionError("helm is not installed in this agent image")
-    cmd = [helm, "rollback", name, str(revision), "--namespace", namespace, "--timeout", "5m0s"]
-    if dry_run:
-        cmd.append("--dry-run")
+    return helm
+
+
+def _run_helm(args: List[str], home: str) -> str:
+    """Run helm as the agent's ServiceAccount, in a throwaway HOME. Returns stdout; failures become ActionError."""
+    import subprocess
+    env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": home, "HELM_CACHE_HOME": f"{home}/cache",
+           "HELM_CONFIG_HOME": f"{home}/config", "HELM_DATA_HOME": f"{home}/data"}
+    for k in ("KUBERNETES_SERVICE_HOST", "KUBERNETES_SERVICE_PORT"):
+        if k in os.environ:
+            env[k] = os.environ[k]
     if settings.kubeconfig:
-        cmd += ["--kubeconfig", settings.kubeconfig]
-    with tempfile.TemporaryDirectory(prefix="helm-") as home:
-        env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": home, "HELM_CACHE_HOME": f"{home}/cache",
-               "HELM_CONFIG_HOME": f"{home}/config", "HELM_DATA_HOME": f"{home}/data"}
-        for k in ("KUBERNETES_SERVICE_HOST", "KUBERNETES_SERVICE_PORT"):
-            if k in os.environ:
-                env[k] = os.environ[k]
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=330, env=env)
-        except subprocess.TimeoutExpired:
-            raise ActionError("helm rollback took longer than 5 minutes")
-    out = (r.stdout + "\n" + r.stderr).strip()
+        args = args + ["--kubeconfig", settings.kubeconfig]
+    try:
+        r = subprocess.run(args, capture_output=True, text=True, timeout=330, env=env)
+    except subprocess.TimeoutExpired:
+        raise ActionError("helm took longer than 5 minutes")
     if r.returncode != 0:
-        raise ActionError(f"helm: {out[-600:] or 'failed'}")
+        raise ActionError(f"helm: {(r.stderr or r.stdout).strip()[-600:] or 'failed'}")
+    return r.stdout
+
+
+def helm_rollback(namespace: str, name: str, revision: int, dry_run: bool) -> Dict[str, Any]:
+    """`helm rollback`, so Helm's hooks run and its history stays right. Runs as the agent's ServiceAccount."""
+    import tempfile
+    helm = _helm_ready(namespace, name)
+    if revision < 1:
+        raise ActionError("invalid revision")
+    with tempfile.TemporaryDirectory(prefix="helm-") as home:
+        out = _run_helm([helm, "rollback", name, str(revision), "--namespace", namespace, "--timeout", "5m0s"]
+                        + (["--dry-run"] if dry_run else []), home)
     what = f"{name} in {namespace} to revision {revision}"
-    return {"message": f"Dry run: Helm can roll back {what}" if dry_run else f"Rolled back {what}", "output": out[-2000:]}
+    return {"message": f"Dry run: Helm can roll back {what}" if dry_run else f"Rolled back {what}", "output": out.strip()[-2000:]}
+
+
+def helm_upgrade(namespace: str, name: str, values_yaml: str, dry_run: bool) -> Dict[str, Any]:
+    """Upgrade a release with new values and the chart it already runs (rebuilt from Helm's record).
+    Values still shown masked keep their real value. A dry run returns the manifest diff."""
+    import difflib
+    import json as _json
+    import tempfile
+    import yaml as _yaml
+    helm = _helm_ready(namespace, name)
+    try:
+        values = _yaml.safe_load(values_yaml or "") or {}
+    except _yaml.YAMLError as e:
+        raise ActionError(f"values are not valid YAML: {e}")
+    if not isinstance(values, dict):
+        raise ActionError("values must be a YAML mapping (key: value)")
+    try:
+        rel = insights.latest_release(get_collector(), namespace, name)
+    except LookupError as e:
+        raise ActionError(str(e))
+    try:
+        values = insights.unmask(values, rel.get("config") or {})
+    except ValueError as e:
+        raise ActionError(str(e))
+    with tempfile.TemporaryDirectory(prefix="helm-") as home:
+        try:
+            chart = insights.write_chart(rel, home)
+        except ValueError as e:
+            raise ActionError(str(e))
+        vfile = os.path.join(home, "values.yaml")
+        with open(vfile, "w") as f:
+            _yaml.safe_dump(values, f, sort_keys=False)
+        args = [helm, "upgrade", name, chart, "--namespace", namespace, "--values", vfile, "--timeout", "5m0s"]
+        out = _run_helm(args + (["--dry-run=server", "--output", "json"] if dry_run else []), home)
+    if not dry_run:
+        return {"message": f"Upgraded {name} in {namespace} with the new values", "output": out.strip()[-2000:]}
+    try:
+        new_manifest = _json.loads(out).get("manifest") or ""
+    except ValueError:
+        new_manifest = ""
+    old, new = insights._mask_manifest(rel.get("manifest") or ""), insights._mask_manifest(new_manifest)
+    diff = "\n".join(difflib.unified_diff(old.splitlines(), new.splitlines(), "running", "after upgrade", lineterm="", n=3))
+    return {"message": f"Dry run: Helm can upgrade {name} in {namespace}" + ("" if diff else " (the rendered objects don't change)"),
+            "diff": diff[:200_000]}
+
+
+class HelmUpgradeBody(DryRun):
+    values: str = Field("", max_length=500_000)
+
+
+@api.post("/helm/releases/{namespace}/{name}/upgrade")
+def upgrade_helm_release(namespace: str, name: str, body: HelmUpgradeBody, request: Request) -> dict:
+    return run_action(request, "helm-upgrade", f"helmrelease/{namespace}/{name}", body.dry_run,
+                      lambda: helm_upgrade(namespace, name, body.values, body.dry_run), {"values_bytes": len(body.values)})
 
 
 @api.post("/helm/releases/{namespace}/{name}/rollback")

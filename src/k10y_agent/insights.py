@@ -141,6 +141,54 @@ def helm_revision(c: Any, namespace: str, name: str, revision: int) -> Dict[str,
     raise LookupError(f"revision {revision} of {namespace}/{name} not found")
 
 
+def latest_release(c: Any, namespace: str, name: str) -> Dict[str, Any]:
+    secrets = _helm_secrets(c, namespace, name)
+    if not secrets:
+        raise LookupError(f"release {namespace}/{name} not found")
+    return _decode_release(max(secrets, key=lambda s: int((s.metadata.labels or {}).get("version", 0))))
+
+
+def unmask(new: Any, old: Any, path: str = "") -> Any:
+    """Put the real values back where the edited values still say MASK (they were shown masked)."""
+    if new == MASK:
+        if old is None or old == MASK:
+            raise ValueError(f"{path or 'a value'} is still {MASK}: type the real value")
+        return old
+    if isinstance(new, dict):
+        return {k: unmask(v, old.get(k) if isinstance(old, dict) else None, f"{path}.{k}" if path else str(k)) for k, v in new.items()}
+    if isinstance(new, list):
+        return [unmask(v, old[i] if isinstance(old, list) and i < len(old) else None, f"{path}[{i}]") for i, v in enumerate(new)]
+    return new
+
+
+def write_chart(rel: Dict[str, Any], root: str) -> str:
+    """Rebuild the release's chart from Helm's record into `root`. Helm doesn't keep subcharts in the record, so
+    charts with dependencies are refused (upgrading without them would delete their resources)."""
+    import os
+    chart = rel.get("chart") or {}
+    meta = {k: v for k, v in (chart.get("metadata") or {}).items() if v not in (None, "", [], {})}
+    if meta.get("dependencies") or chart.get("lock"):
+        raise ValueError("this chart has subcharts, which Helm doesn't keep in its release record; upgrade it with "
+                         "helm and the chart's source")
+    base = os.path.join(root, "chart")
+
+    def put(rel_path: str, data: bytes) -> None:
+        target = os.path.normpath(os.path.join(base, rel_path))
+        if not target.startswith(base + os.sep):
+            raise ValueError(f"unsafe file name in the chart: {rel_path}")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "wb") as f:
+            f.write(data)
+
+    put("Chart.yaml", yaml.safe_dump(meta, sort_keys=False).encode())
+    put("values.yaml", yaml.safe_dump(chart.get("values") or {}, sort_keys=False).encode())
+    for item in (chart.get("templates") or []) + (chart.get("files") or []):
+        put(item["name"], base64.b64decode(item.get("data") or ""))
+    if chart.get("schema"):
+        put("values.schema.json", base64.b64decode(chart["schema"]))
+    return base
+
+
 # --- TLS certificates -------------------------------------------------------------------------
 
 def _cert_view(pem: bytes) -> Optional[Dict[str, Any]]:
