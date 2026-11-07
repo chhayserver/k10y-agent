@@ -18,7 +18,8 @@ const pvcs = useFiltered(() => c.data?.pvcs, state, (x: any) => `${x.name} ${x.n
 const pvs = useFiltered(() => c.data?.pvs, pvState, (x: any) => `${x.name} ${x.claim || ""} ${x.storage_class || ""} ${x.status}`);
 const cur = computed(() => (view.value === "pvc" ? pvcs : pvs));
 const pvcColumns = [{ key: "name", label: "Name", cls: "primary" }, { key: "namespace", label: "Namespace" }, { key: "status", label: "Status" },
-  { key: "capacity", label: "Size", num: true, sort: (x: any) => x.capacity_bytes }, { key: "access_modes", label: "Access", sort: (x: any) => x.access_modes.join() },
+  { key: "capacity", label: "Size", num: true, sort: (x: any) => x.capacity_bytes },
+  { key: "usage", label: "Used", sort: (x: any) => x.usage?.used_percent ?? -1 }, { key: "access_modes", label: "Access", sort: (x: any) => x.access_modes.join() },
   { key: "storage_class", label: "Storage class" }, { key: "volume", label: "Volume", cls: "mono" }, { key: "age_s", label: "Age", num: true }, { key: "_a", label: "Actions", nosort: true, cls: "actions" }];
 const pvColumns = [{ key: "name", label: "Name", cls: "primary mono" }, { key: "status", label: "Status" }, { key: "capacity", label: "Size", num: true, sort: (x: any) => x.capacity_bytes },
   { key: "access_modes", label: "Access", sort: (x: any) => x.access_modes.join() }, { key: "reclaim_policy", label: "Reclaim" }, { key: "claim", label: "Claim" },
@@ -40,6 +41,10 @@ const total = computed(() => fmt.bytes((c.data?.pvcs || []).reduce((a: number, x
       <template #namespace="{ row }"><span class="ns">{{ row.namespace }}</span></template>
       <template #status="{ row }"><Badge :level="PHASE[row.status] || 'neutral'" :label="row.status || '–'" /></template>
       <template #capacity="{ row }">{{ row.capacity || "–" }}</template>
+      <template #usage="{ row }"><span v-if="!row.usage" class="dim" title="Shown while a pod has the volume mounted (read from the node's kubelet)">–</span>
+        <div v-else class="st-use" :title="`${fmt.bytes(row.usage.used_bytes)} of ${fmt.bytes(row.usage.capacity_bytes)} used${row.usage.inodes_percent != null ? ` · inodes ${row.usage.inodes_percent}%` : ''}`">
+          <span class="st-bar"><i :class="row.usage.used_percent >= 90 ? 'crit' : row.usage.used_percent >= 80 ? 'warn' : ''" :style="{ width: `${Math.min(100, row.usage.used_percent)}%` }" /></span>
+          <span class="mono">{{ Math.round(row.usage.used_percent) }}%</span></div></template>
       <template #access_modes="{ row }"><span v-for="m in row.access_modes" :key="m" class="chip" :title="m">{{ MODE[m] || m }}</span></template>
       <template #storage_class="{ row }">{{ row.storage_class || "–" }}</template>
       <template #volume="{ row }"><button v-if="row.volume" class="link mono" @click.stop="openDetail('PersistentVolume', '', row.volume)">{{ row.volume }}</button><span v-else class="dim">–</span></template>
@@ -58,3 +63,10 @@ const total = computed(() => fmt.bytes((c.data?.pvcs || []).reduce((a: number, x
     </DataTable>
   </div></section>
 </template>
+
+<style scoped>
+.st-use { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+.st-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-active); overflow: hidden; }
+.st-bar i { display: block; height: 100%; background: var(--good); }
+.st-bar i.warn { background: var(--warning); } .st-bar i.crit { background: var(--critical); }
+</style>

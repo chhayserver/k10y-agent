@@ -45,6 +45,9 @@ class Settings(BaseSettings):
 
     # Control actions (scale, delete, apply, ...). Also needs the control RBAC role.
     control_enabled: bool = False
+    # Roll back Helm releases with the bundled helm binary. Also needs rbac-helm.yaml (Helm changes whatever its
+    # charts contain, so the agent needs the built-in "edit" role for it).
+    helm_enabled: bool = False
     # Comma-separated namespaces no control action may touch.
     protected_namespaces: str = "kube-system"
     # Browser origins allowed to call this agent directly. Empty (default) disables CORS: browsers

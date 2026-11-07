@@ -14,6 +14,7 @@ import { diffLines, type DiffLine } from "@/lib/diff";
 import { fmt } from "@/lib/format";
 import { useFiltered } from "@/lib/list";
 import { page } from "@/stores/prefs";
+import { useCluster } from "@/stores/cluster";
 import { useSession } from "@/stores/session";
 import { toast } from "@/stores/ui";
 
@@ -59,6 +60,18 @@ const diff = computed<DiffLine[]>(() => {
   const A = rel.data[rel.a], B = rel.data[rel.b];
   return A && B ? diffLines(A[what.value] || "", B[what.value] || "").filter((l, i, arr) => l.op !== " " || arr.slice(Math.max(0, i - 3), i + 4).some((x) => x.op !== " ")) : [];
 });
+// Real rollback when the agent has Helm turned on (K10Y_HELM_ENABLED + rbac-helm.yaml): dry run first, then confirm.
+const cl = useCluster();
+const canRollback = computed(() => Boolean(cl.info?.helm_enabled) && s.can("workloads.rollback") && !cl.isProtected(rel.item?.namespace));
+const rb = reactive({ rev: 0, busy: false, dry: "", err: "" });
+async function rollback(n: number, dry: boolean) {
+  Object.assign(rb, { rev: n, busy: true, err: "", ...(dry ? { dry: "" } : {}) });
+  try {
+    const r = await api().post<any>(`helm/releases/${rel.item.namespace}/${rel.item.name}/rollback`, { revision: n, dry_run: dry });
+    if (dry) rb.dry = r.message || "Dry run passed";
+    else { toast(true, r.message || `Rolled back to #${n}`); rb.rev = 0; rb.dry = ""; await load(); await open(list.value?.find((x) => x.name === rel.item.name && x.namespace === rel.item.namespace) || rel.item); }
+  } catch (e: any) { rb.err = e.message; } finally { rb.busy = false; }
+}
 const rollbackCmd = (n: number) => `helm rollback ${rel.item?.name} ${n} -n ${rel.item?.namespace}`;
 async function copy(text: string) { try { await navigator.clipboard.writeText(text); toast(true, "Copied"); } catch { toast(false, "Copy failed"); } }
 </script>
@@ -90,7 +103,15 @@ async function copy(text: string) { try { await navigator.clipboard.writeText(te
           <td class="mono">{{ h.chart_version }}</td><td>{{ h.app_version || "–" }}</td><td class="dim">{{ h.updated ? fmt.ago(h.updated) : "–" }}</td>
           <td class="hr-desc">{{ h.description }}</td>
           <td class="actions"><button v-if="canValues" class="btn ghost sm" type="button" @click="rel.view = rel.view === 'compare' ? 'values' : rel.view; revision(h.revision)">View</button>
-            <button v-if="h.revision !== rel.item.revision" class="btn ghost sm" type="button" :title="rollbackCmd(h.revision)" @click="copy(rollbackCmd(h.revision))">Roll back…</button></td></tr></tbody></table></div>
+            <button v-if="h.revision !== rel.item.revision && canRollback" class="btn ghost sm" type="button" :disabled="rb.busy" @click="rollback(h.revision, true)">Roll back…</button>
+            <button v-else-if="h.revision !== rel.item.revision" class="btn ghost sm" type="button" :title="rollbackCmd(h.revision)" @click="copy(rollbackCmd(h.revision))">Copy rollback command</button></td></tr></tbody></table></div>
+      <div v-if="rb.rev && (rb.dry || rb.err || rb.busy)" class="hr-rb">
+        <div v-if="rb.err" class="test-result show err"><Icon name="crit" /><span>{{ rb.err }}</span></div>
+        <div v-else-if="rb.dry" class="test-result show ok"><Icon name="ok" /><span>{{ rb.dry }}. Nothing has changed yet.</span></div>
+        <p v-else class="hint">Checking with a dry run…</p>
+        <div class="hr-row"><button class="btn ghost" type="button" @click="rb.rev = 0">Cancel</button><span class="grow" />
+          <button class="btn primary" type="button" :disabled="rb.busy || !rb.dry" @click="rollback(rb.rev, false)">Roll back {{ rel.item.name }} to #{{ rb.rev }}</button></div>
+      </div>
 
       <template v-if="canValues">
         <div class="hr-tabs">
@@ -114,7 +135,8 @@ async function copy(text: string) { try { await navigator.clipboard.writeText(te
         <pre v-else-if="rel.data[rel.shown]" class="logs hr-pre">{{ rel.data[rel.shown][rel.view] || (rel.view === "values" ? "# no values set: the chart's defaults are used" : "") }}</pre>
       </template>
       <p v-else class="hint" style="margin:0">Values and manifests need the <b>secrets.view</b> permission.</p>
-      <p class="hint" style="margin:0"><b>Roll back…</b> copies the <code>helm rollback</code> command: k10y only reads Helm's records, so Helm hooks and its history stay consistent.</p>
+      <p v-if="canRollback" class="hint" style="margin:0"><b>Roll back…</b> runs <code>helm rollback</code> on the agent, after a dry run, so Helm's hooks run and its history stays right. It's in the activity log.</p>
+      <p v-else class="hint" style="margin:0"><b>Copy rollback command</b> gives you the <code>helm rollback</code> command. To roll back from here, turn on Helm on the agent (<code>K10Y_HELM_ENABLED=true</code> and <code>rbac-helm.yaml</code>).</p>
     </template>
     <template #actions><span style="flex:1" /><button class="btn" type="button" @click="rel.open = false">Close</button></template>
   </Modal>
@@ -124,6 +146,8 @@ async function copy(text: string) { try { await navigator.clipboard.writeText(te
 .hr-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .hr-tabs { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .hr-pre { max-height: 420px; white-space: pre; }
+.hr-rb { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.hr-row { display: flex; gap: 8px; align-items: center; }
 .hr-desc { white-space: normal; min-width: 160px; }
 tr.hr-sel td { background: var(--surface-active); }
 .select.sm { height: 30px; width: auto; padding: 0 8px; font-size: 13px; }

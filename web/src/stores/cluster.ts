@@ -5,7 +5,7 @@ import { useSession } from "./session";
 
 export type Point = [number, number, number];
 export interface Info { cluster: string; agent_version: string; kubernetes_version: string; control_enabled: boolean; protected_namespaces: string[];
-  protected_source?: "env" | "hub"; protected_persisted?: boolean }
+  protected_source?: "env" | "hub"; protected_persisted?: boolean; helm_enabled?: boolean }
 
 const HOUR = 3600e3;
 

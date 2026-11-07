@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import logging
+import os
 import time
 import re
 import secrets
@@ -183,6 +184,7 @@ def info() -> dict:
         "kubernetes_version": get_collector().version(),
         "control_enabled": settings.control_enabled,
         "protected_namespaces": settings.protected,
+        "helm_enabled": settings.helm_enabled and settings.control_enabled,
         "protected_source": protected_source,           # "env" (install default) or "hub" (chosen in k10y)
         "protected_persisted": bool(settings.token_secret),  # changes survive restarts and upgrades
     }
@@ -241,7 +243,20 @@ def persistentvolumes() -> list:
 
 @api.get("/persistentvolumeclaims")
 def persistentvolumeclaims(namespace: Optional[str] = None) -> list:
-    return get_collector().persistentvolumeclaims(namespace)
+    pvcs = get_collector().persistentvolumeclaims(namespace)
+    try:
+        usage = insights.volume_usage(get_collector())["volumes"]
+    except Exception:
+        usage = {}
+    for p in pvcs:
+        p["usage"] = usage.get(f"{p['namespace']}/{p['name']}")
+    return pvcs
+
+
+@api.get("/volumes/usage")
+def volumes_usage(fresh: bool = False) -> dict:
+    """How full each PVC is (from the kubelets), the alert threshold, and any node that couldn't be read."""
+    return {**insights.volume_usage(get_collector(), fresh), "full_percent": insights.volume_full_percent()}
 
 
 @api.get("/hpas")
@@ -691,6 +706,52 @@ def set_deployment_image(namespace: str, name: str, body: ImageBody, request: Re
         lambda: get_controller().set_image(namespace, name, body.container, body.image, body.dry_run),
         {"container": body.container, "image": body.image},
     )
+
+
+HELM_NAME = re.compile(r"^[a-z0-9]([-a-z0-9.]{0,51}[a-z0-9])?$")
+
+
+def helm_rollback(namespace: str, name: str, revision: int, dry_run: bool) -> Dict[str, Any]:
+    """`helm rollback`, so Helm's hooks run and its history stays right. Runs as the agent's ServiceAccount."""
+    import shutil
+    import subprocess
+    import tempfile
+    get_controller().guard(namespace)
+    if not settings.helm_enabled:
+        raise ActionError("Helm rollback is off on this agent. Set K10Y_HELM_ENABLED=true and apply rbac-helm.yaml to turn it on.")
+    if not HELM_NAME.match(name) or not re.match(NS_NAME, namespace) or revision < 1:
+        raise ActionError("invalid release, namespace or revision")
+    helm = shutil.which("helm")
+    if not helm:
+        raise ActionError("helm is not installed in this agent image")
+    cmd = [helm, "rollback", name, str(revision), "--namespace", namespace, "--timeout", "5m0s"]
+    if dry_run:
+        cmd.append("--dry-run")
+    if settings.kubeconfig:
+        cmd += ["--kubeconfig", settings.kubeconfig]
+    with tempfile.TemporaryDirectory(prefix="helm-") as home:
+        env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": home, "HELM_CACHE_HOME": f"{home}/cache",
+               "HELM_CONFIG_HOME": f"{home}/config", "HELM_DATA_HOME": f"{home}/data"}
+        for k in ("KUBERNETES_SERVICE_HOST", "KUBERNETES_SERVICE_PORT"):
+            if k in os.environ:
+                env[k] = os.environ[k]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=330, env=env)
+        except subprocess.TimeoutExpired:
+            raise ActionError("helm rollback took longer than 5 minutes")
+    out = (r.stdout + "\n" + r.stderr).strip()
+    if r.returncode != 0:
+        raise ActionError(f"helm: {out[-600:] or 'failed'}")
+    what = f"{name} in {namespace} to revision {revision}"
+    return {"message": f"Dry run: Helm can roll back {what}" if dry_run else f"Rolled back {what}", "output": out[-2000:]}
+
+
+@api.post("/helm/releases/{namespace}/{name}/rollback")
+def rollback_helm_release(namespace: str, name: str, body: RollbackBody, request: Request) -> dict:
+    if body.revision is None:
+        raise HTTPException(status_code=400, detail="revision is required")
+    return run_action(request, "helm-rollback", f"helmrelease/{namespace}/{name}", body.dry_run,
+                      lambda: helm_rollback(namespace, name, body.revision, body.dry_run), {"revision": body.revision})
 
 
 @api.post("/deployments/{namespace}/{name}/rollback")

@@ -119,3 +119,32 @@ def test_stuck_rollout():
         status=client.V1DeploymentStatus(ready_replicas=1, conditions=[client.V1DeploymentCondition(
             type="Progressing", status="False", reason="ProgressDeadlineExceeded")]))
     assert deployment_info(dep)["stuck"] == "rollout stuck: ProgressDeadlineExceeded"
+
+
+def test_volume_usage_from_kubelet_summary_and_full_problem(monkeypatch):
+    from k10y_agent import insights
+    summary = {"node": {"nodeName": "n1"}, "pods": [
+        {"podRef": {"name": "db-0", "namespace": "demo"}, "volume": [
+            {"name": "data", "pvcRef": {"name": "data-db-0", "namespace": "demo"}, "capacityBytes": 10 * 2 ** 30,
+             "usedBytes": int(9.5 * 2 ** 30), "availableBytes": int(0.5 * 2 ** 30), "inodes": 1000, "inodesUsed": 10},
+            {"name": "tmp", "capacityBytes": 100, "usedBytes": 99}]},           # not a PVC: ignored
+        {"podRef": {"name": "web-0", "namespace": "demo"}, "volume": [
+            {"name": "files", "pvcRef": {"name": "files", "namespace": "demo"}, "capacityBytes": 1000, "usedBytes": 100,
+             "inodes": 100, "inodesUsed": 95}]}]}
+    vols = insights.parse_stats_summary(summary)
+    assert set(vols) == {"demo/data-db-0", "demo/files"}
+    assert vols["demo/data-db-0"]["used_percent"] == 95.0 and vols["demo/data-db-0"]["node"] == "n1"
+    monkeypatch.setattr(insights, "volume_usage", lambda c, fresh=False: {"volumes": vols, "errors": [], "available": True})
+    problems = insights.volume_problems(None)
+    assert [(p["name"], p["reason"]) for p in problems] == [("data-db-0", "volume 95% full (9.5Gi of 10.0Gi)"),
+                                                            ("files", "volume out of inodes (95% used)")]
+    monkeypatch.setenv("K10Y_VOLUME_FULL_PERCENT", "96")
+    assert insights.volume_problems(None) == []
+
+
+def test_volume_usage_outside_cluster_is_reported_not_raised(monkeypatch):
+    from k10y_agent import insights
+    monkeypatch.setattr(insights, "SA_DIR", "/nonexistent")
+    insights._vol_cache.update(t=0.0, data=None)
+    data = insights.volume_usage(object(), fresh=True)
+    assert data["available"] is False and "inside the cluster" in data["errors"][0]

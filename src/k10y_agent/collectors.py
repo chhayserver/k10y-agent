@@ -672,6 +672,10 @@ class Collector:
             problems += insights.certificate_problems(self)
         except Exception:      # certificate checks must never break the summary
             pass
+        try:
+            problems += insights.volume_problems(self)
+        except Exception:      # nor volume usage (kubelets unreachable, no permission…)
+            pass
 
         if any(p["kind"] == "Node" and p["reason"] == "NotReady" for p in problems):
             health = "critical"

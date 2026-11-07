@@ -42,6 +42,11 @@ rules:
   - apiGroups: [metrics.k8s.io]
     resources: [nodes, pods]
     verbs: [get, list]
+  # How full each PersistentVolumeClaim is: read from the kubelets' /stats/summary. Read-only resource usage;
+  # this is not nodes/proxy, so it gives no access to pods, logs or exec on the nodes.
+  - apiGroups: [""]
+    resources: [nodes/stats]
+    verbs: [get]
   # TLS certificate expiry for cert-manager users (ignored when cert-manager isn't installed).
   - apiGroups: [cert-manager.io]
     resources: [certificates]

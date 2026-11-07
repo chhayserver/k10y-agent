@@ -220,6 +220,122 @@ def certificate_problems(c: Any) -> List[Dict[str, Any]]:
     return out
 
 
+# --- volume usage ------------------------------------------------------------------------------
+# How full each PVC is, from every node's kubelet (/stats/summary). The agent calls the kubelet directly with its
+# ServiceAccount token, which needs only the read-only nodes/stats permission (not nodes/proxy), and checks the
+# kubelet's certificate against the cluster CA unless K10Y_KUBELET_INSECURE=true.
+
+SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+VOLUME_CACHE_S = 60
+_vol_cache: Dict[str, Any] = {"t": 0.0, "data": None}
+_vol_lock = threading.Lock()
+
+
+def volume_full_percent() -> float:
+    import os
+    try:
+        return float(os.environ.get("K10Y_VOLUME_FULL_PERCENT", "90"))
+    except ValueError:
+        return 90.0
+
+
+def _kubelet_address(node: Any) -> Optional[str]:
+    addrs = {a.type: a.address for a in (node.status.addresses or [])} if node.status else {}
+    ip = addrs.get("InternalIP") or addrs.get("ExternalIP") or addrs.get("Hostname")
+    if not ip:
+        return None
+    port = getattr(getattr(getattr(node.status, "daemon_endpoints", None), "kubelet_endpoint", None), "port", None) or 10250
+    return f"[{ip}]:{port}" if ":" in ip else f"{ip}:{port}"
+
+
+def parse_stats_summary(summary: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """PVC volumes of a kubelet /stats/summary -> {"namespace/claim": usage}."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for pod in summary.get("pods") or []:
+        for v in pod.get("volume") or []:
+            ref = v.get("pvcRef")
+            cap, used = v.get("capacityBytes"), v.get("usedBytes")
+            if not ref or not cap:
+                continue
+            inodes, inodes_used = v.get("inodes"), v.get("inodesUsed")
+            out[f"{ref.get('namespace')}/{ref.get('name')}"] = {
+                "used_bytes": used, "capacity_bytes": cap, "available_bytes": v.get("availableBytes"),
+                "used_percent": round(100 * (used or 0) / cap, 1),
+                "inodes_percent": round(100 * inodes_used / inodes, 1) if inodes and inodes_used is not None else None,
+                "pod": pod.get("podRef", {}).get("name"), "node": summary.get("node", {}).get("nodeName")}
+    return out
+
+
+def volume_usage(c: Any, fresh: bool = False) -> Dict[str, Any]:
+    """{"volumes": {"ns/claim": usage}, "errors": [...], "available": bool}. Cached for a minute."""
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+    import httpx
+    with _vol_lock:
+        if not fresh and _vol_cache["data"] is not None and time.time() - _vol_cache["t"] < VOLUME_CACHE_S:
+            return _vol_cache["data"]
+    try:
+        token = open(f"{SA_DIR}/token").read().strip()
+    except OSError:
+        data = {"volumes": {}, "errors": ["volume usage is read from the kubelets, so it needs the agent to run inside the cluster"],
+                "available": False}
+        with _vol_lock:
+            _vol_cache.update(t=time.time(), data=data)
+        return data
+    verify: Any = False if os.environ.get("K10Y_KUBELET_INSECURE", "").lower() == "true" else f"{SA_DIR}/ca.crt"
+    nodes = [n for n in c.core.list_node().items
+             if any(x.type == "Ready" and x.status == "True" for x in (n.status.conditions or []))]
+
+    def one(node: Any) -> Tuple[Dict[str, Any], Optional[str]]:
+        addr = _kubelet_address(node)
+        if not addr:
+            return {}, f"{node.metadata.name}: no address"
+        try:
+            r = httpx.get(f"https://{addr}/stats/summary", headers={"Authorization": f"Bearer {token}"}, verify=verify, timeout=6.0)
+        except httpx.HTTPError as e:
+            hint = " (set K10Y_KUBELET_INSECURE=true if the kubelet's certificate isn't signed by the cluster CA)" if "CERTIFICATE" in str(e).upper() else ""
+            return {}, f"{node.metadata.name}: {e}{hint}"
+        if r.status_code == 403:
+            return {}, f"{node.metadata.name}: forbidden (the agent needs nodes/stats: re-apply install.yaml)"
+        if r.status_code >= 400:
+            return {}, f"{node.metadata.name}: kubelet answered {r.status_code}"
+        return parse_stats_summary(r.json()), None
+
+    volumes: Dict[str, Dict[str, Any]] = {}
+    errors: List[str] = []
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(nodes)))) as pool:
+        for found, err in pool.map(one, nodes):
+            volumes.update(found)
+            if err:
+                errors.append(err)
+    data = {"volumes": volumes, "errors": errors, "available": bool(volumes) or not errors}
+    with _vol_lock:
+        _vol_cache.update(t=time.time(), data=data)
+    return data
+
+
+def _size(b: Optional[float]) -> str:
+    if not b:
+        return "0"
+    for unit, n in (("Ti", 2 ** 40), ("Gi", 2 ** 30), ("Mi", 2 ** 20)):
+        if b >= n:
+            return f"{b / n:.1f}{unit}"
+    return f"{int(b)}B"
+
+
+def volume_problems(c: Any) -> List[Dict[str, Any]]:
+    limit, out = volume_full_percent(), []
+    for key, v in volume_usage(c)["volumes"].items():
+        ns, name = key.split("/", 1)
+        if v["used_percent"] >= limit:
+            out.append({"kind": "PersistentVolumeClaim", "namespace": ns, "name": name,
+                        "reason": f"volume {v['used_percent']:.0f}% full ({_size(v['used_bytes'])} of {_size(v['capacity_bytes'])})"})
+        elif v.get("inodes_percent") is not None and v["inodes_percent"] >= limit:
+            out.append({"kind": "PersistentVolumeClaim", "namespace": ns, "name": name,
+                        "reason": f"volume out of inodes ({v['inodes_percent']:.0f}% used)"})
+    return out
+
+
 # --- CronJobs ---------------------------------------------------------------------------------
 
 def cronjob_runs(jobs: List[Dict[str, Any]], namespace: str, name: str) -> List[Dict[str, Any]]:

@@ -172,3 +172,39 @@ def test_protected_namespaces_saved_in_token_secret_and_restored(monkeypatch, tm
     assert client.put("/api/v1/settings/protected-namespaces", json={"namespaces": []}).json()["protected_namespaces"] == []
     api.load_protected()
     assert api.settings.protected == []
+
+
+def test_helm_rollback_is_opt_in_guarded_and_runs_helm(monkeypatch):
+    import subprocess
+
+    calls = []
+
+    class FakeController:
+        protected = {"kube-system"}
+
+        def guard(self, ns):
+            if ns in self.protected:
+                raise api.ProtectedNamespaceError(f"namespace {ns!r} is protected")
+
+    monkeypatch.setattr(api.settings, "api_token", "")
+    monkeypatch.setattr(api.settings, "token_secret", "")
+    monkeypatch.setattr(api.settings, "control_enabled", True)
+    monkeypatch.setattr(api, "get_controller", lambda: FakeController())
+    monkeypatch.setattr(api, "audit_log", type("A", (), {"record": lambda self, e: None})())
+    client = TestClient(api.app)
+    url = "/api/v1/helm/releases/demo/web/rollback"
+
+    monkeypatch.setattr(api.settings, "helm_enabled", False)
+    r = client.post(url, json={"revision": 2})
+    assert r.status_code == 400 and "K10Y_HELM_ENABLED" in r.json()["detail"]
+
+    monkeypatch.setattr(api.settings, "helm_enabled", True)
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda n: "/usr/local/bin/helm")
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "Rollback was a success!", ""))
+    assert client.post("/api/v1/helm/releases/kube-system/x/rollback", json={"revision": 1}).status_code == 403
+    assert client.post("/api/v1/helm/releases/demo/Bad;rm/rollback", json={"revision": 1}).status_code == 400
+    r = client.post(url, json={"revision": 2, "dry_run": True})
+    assert r.status_code == 200, r.text
+    assert calls[-1][:6] == ["/usr/local/bin/helm", "rollback", "web", "2", "--namespace", "demo"] and "--dry-run" in calls[-1]
+    assert client.post(url, json={"revision": 2}).json()["message"] == "Rolled back web in demo to revision 2"
