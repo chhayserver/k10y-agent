@@ -180,3 +180,13 @@ def test_sample_has_live_per_server_numbers():
     p, _ = hm.Sample.take(stats(150, 5, 150), c1, 10)
     assert p["s"]["app/web1"] == {"req": 5.0, "sess": 3, "rtime": 12, "e5_pct": 10.0}
     assert "s" not in hm.average([p])                     # per-server numbers are live only, not stored
+
+
+def test_config_errors_point_at_lines_and_sections():
+    text = "global\n  daemon\n\nbackend api\n  balance roundrobinx\n  frobnicate yes\n"
+    err = ("config parsing [/tmp/onlyvalidate1:5] balance only supports 'roundrobin', 'leastconn' options.; "
+           "config parsing [/tmp/onlyvalidate1:6] unknown keyword 'frobnicate' in 'backend' section; config Fatal errors found in configuration.")
+    out = hx.config_errors(err, text)
+    assert [(e["line"], e["section"], e["text"]) for e in out] == [(5, "backend api", "balance roundrobinx"), (6, "backend api", "frobnicate yes")]
+    assert out[1]["message"] == "unknown keyword 'frobnicate' in 'backend' section."
+    assert hx.config_errors("", text) == []

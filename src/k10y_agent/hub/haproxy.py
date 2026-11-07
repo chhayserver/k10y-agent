@@ -1077,6 +1077,27 @@ def _diff(before: str, after: str) -> str:
     return "\n".join(difflib.unified_diff(body(before), body(after), "current", "new", lineterm="", n=3))
 
 
+SECTION_RE = re.compile(r"^(global|defaults|frontend|backend|listen|resolvers|peers|userlist|program|http-errors|ring|cache|mailers)\b\s*(\S*)")
+
+
+def config_errors(error: str, text: str) -> List[Dict[str, Any]]:
+    """HAProxy's check output ("[file:LINE] message; ...") -> [{line, section, text, message}], for the lines k10y
+    sent it, so the review can point at exactly what's wrong."""
+    lines = text.splitlines()
+    out = []
+    for m in re.finditer(r"\[[^\]\s]*?:(\d+)\]\s*([^;]+)", error or ""):
+        n = int(m.group(1))
+        section = ""
+        for prev in reversed(lines[:n]):
+            sm = SECTION_RE.match(prev)
+            if sm:
+                section = f"{sm.group(1)} {sm.group(2)}".strip()
+                break
+        out.append({"line": n, "section": section, "text": lines[n - 1].strip() if 0 < n <= len(lines) else "",
+                    "message": m.group(2).strip().rstrip(".") + "."})
+    return out
+
+
 def plan_and_apply(dp: DataPlane, ops: List[Op], apply: bool) -> Dict[str, Any]:
     """Preview (diff + validation) or apply a list of operations as one change."""
     with tx_lock(dp):
@@ -1109,7 +1130,8 @@ def _plan_and_apply(dp: DataPlane, ops: List[Op], apply: bool) -> Dict[str, Any]
             if not valid:
                 raise DataPlaneError(400, f"HAProxy rejected the configuration: {error}")
             dp.wait_reload(dp.put_raw(after))
-        return {"diff": diff, "valid": valid, "error": error, "applied": apply, "summary": ["edit raw configuration"]}
+        return {"diff": diff, "valid": valid, "error": error, "errors": config_errors(error, after), "applied": apply,
+                "summary": ["edit raw configuration"]}
 
     tx = dp.begin()
     committed = False
@@ -1128,7 +1150,8 @@ def _plan_and_apply(dp: DataPlane, ops: List[Op], apply: bool) -> Dict[str, Any]
             reload_id = dp.commit(tx)
             committed = True
             dp.wait_reload(reload_id)
-        return {"diff": diff, "valid": valid, "error": error, "applied": apply, "summary": summary}
+        return {"diff": diff, "valid": valid, "error": error, "errors": config_errors(error, after), "applied": apply,
+                "summary": summary}
     finally:
         if not committed:
             dp.rollback(tx)

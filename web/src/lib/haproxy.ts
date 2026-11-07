@@ -65,7 +65,8 @@ export const hx = {
   groupDrift: (id: number) => hub.get<{ group: string; text: string; others: { id: number; name: string; same: boolean; diff: string; text?: string; error: string }[] }>(`/haproxy/${id}/group-drift`),
 };
 
-export interface HxPlan { diff: string; valid: boolean; error: string; applied: boolean; summary: string[] }
+export interface HxConfigError { line: number; section: string; text: string; message: string }
+export interface HxPlan { diff: string; valid: boolean; error: string; errors?: HxConfigError[]; applied: boolean; summary: string[] }
 
 // --- shared by the dashboard, Frontends and Backends pages ---------------------------------
 export const fmtRate = (v: number) => (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2).replace(/\.?0+$/, "") || "0");

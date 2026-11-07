@@ -51,7 +51,14 @@ const lines = computed(() => (plan.value?.diff || "").split("\n").filter((l) => 
         <Icon :name="r.valid ? 'ok' : 'crit'" :style="{ color: r.valid ? 'var(--good)' : 'var(--critical)', width: '14px', height: '14px' }" /> {{ r.name }}</button></div>
       <ul class="hx-summary"><li v-for="s in plan.summary || []" :key="s">{{ s }}</li></ul>
       <div class="test-result show" :class="plan.valid ? 'ok' : 'err'"><Icon :name="plan.valid ? 'ok' : 'crit'" />
-        <span>{{ plan.valid ? (plan.applied ? "Applied." : "HAProxy validated the new configuration. Nothing has changed yet.") : `HAProxy rejects this configuration: ${plan.error}` }}</span></div>
+        <span>{{ plan.valid ? (plan.applied ? "Applied." : "HAProxy validated the new configuration. Nothing has changed yet.")
+          : plan.errors?.length ? `HAProxy rejects this configuration (${plan.errors.length} problem${plan.errors.length > 1 ? "s" : ""}). Nothing was changed.` : `HAProxy rejects this configuration: ${plan.error}` }}</span></div>
+      <div v-if="!plan.valid && plan.errors?.length" class="hx-cfgerr" role="list" aria-label="Configuration problems">
+        <div v-for="(e, i) in plan.errors" :key="i" class="hx-cfgerr-row" role="listitem">
+          <span class="hx-cfgerr-where">line {{ e.line }}<template v-if="e.section"> · {{ e.section }}</template></span>
+          <code v-if="e.text" class="hx-cfgerr-code">{{ e.text }}</code>
+          <span class="hx-cfgerr-msg">{{ e.message }}</span></div>
+      </div>
       <div class="lbl" style="margin-top:4px">Configuration changes</div>
       <div class="ye-diff hx-diff" role="region" aria-label="Configuration diff">
         <div v-if="!lines.length" class="ye-gap" style="padding-left:12px">No changes</div>
@@ -68,3 +75,11 @@ const lines = computed(() => (plan.value?.diff || "").split("\n").filter((l) => 
         {{ busy && results ? "Applying…" : results && results.length > 1 ? `Apply on ${results.length} instances` : "Apply" }}</button></template>
   </Modal>
 </template>
+
+<style scoped>
+.hx-cfgerr { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--critical); border-radius: 10px; }
+.hx-cfgerr-row { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 2px 12px; align-items: baseline; }
+.hx-cfgerr-where { font-size: 12px; color: var(--muted); font-family: var(--mono); grid-row: span 2; }
+.hx-cfgerr-code { font-size: 13px; color: var(--critical); overflow-wrap: anywhere; }
+.hx-cfgerr-msg { font-size: 13px; }
+</style>
