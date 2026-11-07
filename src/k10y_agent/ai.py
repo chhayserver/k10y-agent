@@ -32,7 +32,7 @@ PROVIDERS = {
     "openrouter": {"label": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "default_model": ""},
 }
 # OpenRouter shows these on its dashboard so you can see which app made each call.
-OPENROUTER_HEADERS = {"HTTP-Referer": "https://k10y.pages.dev", "X-Title": "k10y"}
+OPENROUTER_HEADERS = {"HTTP-Referer": "https://k10y-agents.pages.dev", "X-Title": "k10y"}
 AI_SECRET = "k10y-ai"
 MAX_STEPS = 16
 MAX_TOOL_OUTPUT = 7000

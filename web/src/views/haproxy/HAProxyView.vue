@@ -195,7 +195,7 @@ watch(() => router.currentRoute.value.query.focus, (f) => {
     <template v-if="data && current && tab === 'backends'">
       <div v-if="!data.keeps_server_state" class="banner show info"><Icon name="warn" /><span class="msg">This HAProxy doesn't keep drain and maintenance states across reloads,
         so any config change puts drained servers back in service. Add <code>server-state-file</code> to <code>global</code> and <code>load-server-state-from-file global</code> to <code>defaults</code>, and save the state before each reload.
-        <a href="https://k10y.pages.dev/docs/haproxy#keep-drain-and-maintenance-across-reloads" target="_blank" rel="noopener">How</a></span></div>
+        <a href="https://k10y-agents.pages.dev/docs/haproxy#keep-drain-and-maintenance-across-reloads" target="_blank" rel="noopener">How</a></span></div>
       <HxBackendsTable :key="`b${current}`" :backends="data.backends" :points="h.points" :focus="focus" :can-configure="canConfigure" :instance-id="current"
         :backend-menu="backendMenu" :server-menu="serverMenu"
         @new-backend="Object.assign(beForm, { open: true, backend: null })"

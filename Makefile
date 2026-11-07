@@ -130,7 +130,7 @@ site-dev:         ## Preview the built website at http://localhost:4173
 	@echo "Website: http://localhost:4173"
 
 CF_ENV     ?= $(HOME)/.cloudflare-k10y.env
-CF_PROJECT ?= k10y
+CF_PROJECT ?= k10y-agents
 site-deploy: site-build  ## Deploy the website to Cloudflare Pages (token in $(CF_ENV))
 	@test -f "$(CF_ENV)" || (echo "missing $(CF_ENV) with CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID" && exit 1)
 	docker run --rm --env-file "$(CF_ENV)" -v $(CURDIR)/website/.vitepress/dist:/dist node:22-alpine \
