@@ -31,6 +31,11 @@ rules:
   - apiGroups: [""]
     resources: [services]
     verbs: [create, patch, update, delete]
+  # Open a Service's HTTP port in the browser through the hub (GET and form POSTs only).
+  # The hub only allows it to users with the services.proxy permission.
+  - apiGroups: [""]
+    resources: [services/proxy]
+    verbs: [get, create]
   # Nodes: cordon / uncordon.
   - apiGroups: [""]
     resources: [nodes]

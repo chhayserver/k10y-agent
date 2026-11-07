@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from kubernetes.config.config_exception import ConfigException
@@ -706,6 +706,50 @@ def set_deployment_image(namespace: str, name: str, body: ImageBody, request: Re
         lambda: get_controller().set_image(namespace, name, body.container, body.image, body.dry_run),
         {"container": body.container, "image": body.image},
     )
+
+
+PROXY_MAX_BYTES = 20 * 2 ** 20
+PROXY_HEADERS = ("content-type", "cache-control", "last-modified", "etag", "location")   # bodies arrive decompressed
+
+
+@api.api_route("/proxy/services/{namespace}/{name}/{port}/{path:path}", methods=["GET", "POST"])
+async def proxy_service(namespace: str, name: str, port: str, path: str, request: Request) -> Response:
+    """One HTTP request to a Service through the Kubernetes API server's service proxy (services/proxy)."""
+    if not settings.control_enabled:
+        raise HTTPException(status_code=403, detail="opening Services needs a control-enabled agent")
+    if namespace in settings.protected:
+        raise HTTPException(status_code=403, detail=f"namespace {namespace} is protected")
+    if not re.match(NS_NAME, namespace) or not re.match(NS_NAME, name) or not re.match(r"^(https?:)?[a-z0-9-]{1,63}$", port):
+        raise HTTPException(status_code=400, detail="invalid service or port")
+    body = await request.body() if request.method == "POST" else None
+    if body and len(body) > 2 * 2 ** 20:
+        raise HTTPException(status_code=413, detail="request too large")
+    headers = {k: v for k, v in request.headers.items() if k.lower() in ("content-type", "accept", "accept-language")}
+    try:
+        status, resp_headers, data = await asyncio.to_thread(
+            k8s_raw_request, request.method, f"/api/v1/namespaces/{namespace}/services/{name}:{port}/proxy/{path}",
+            list(request.query_params.multi_items()), headers, body)
+    except Exception as e:     # connection problems to the API server
+        raise HTTPException(status_code=502, detail=f"kubernetes API: {e}")
+    if len(data) > PROXY_MAX_BYTES:
+        raise HTTPException(status_code=502, detail="response larger than 20 MiB")
+    keep = {k: v for k, v in resp_headers.items() if k.lower() in PROXY_HEADERS}
+    return Response(content=data, status_code=status, headers=keep)
+
+
+def k8s_raw_request(method: str, path: str, query: list, headers: Dict[str, str], body: Optional[bytes]) -> tuple:
+    """One raw HTTP request to the API server with the client's own TLS and credentials (works across client versions)."""
+    from urllib.parse import urlencode
+    ac = get_api_client()
+    cfg = ac.configuration
+    auth = cfg.auth_settings().get("BearerToken") or {}
+    hdrs = {**headers, **({auth["key"]: auth["value"]} if auth.get("value") else {})}
+    url = cfg.host.rstrip("/") + path + (f"?{urlencode(query)}" if query else "")
+    r = ac.rest_client.pool_manager.request(method, url, headers=hdrs, body=body, timeout=30, preload_content=False, redirect=False)
+    try:
+        return r.status, dict(r.headers), r.read(PROXY_MAX_BYTES + 1, decode_content=True)
+    finally:
+        r.release_conn()
 
 
 HELM_NAME = re.compile(r"^[a-z0-9]([-a-z0-9.]{0,51}[a-z0-9])?$")

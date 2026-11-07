@@ -5,6 +5,7 @@ proxies API calls to the agents over HTTPS, checking the user's permissions firs
 """
 
 import asyncio
+from html import escape as html_escape
 import json
 import re
 import logging
@@ -1018,6 +1019,76 @@ async def proxy(cluster_id: int, path: str, request: Request, p: Principal = Dep
         record(r.status_code < 400, _describe_result(r))
     passthrough = {k: v for k, v in r.headers.items() if k.lower() in ("content-type",)}
     return Response(content=r.content, status_code=r.status_code, headers=passthrough)
+
+
+# --- open a Service in the browser -------------------------------------------------------
+# The hub hands out a link /fwd/<token>/ for one Service port, valid for an hour, tied to the user and re-checked on
+# every request. What comes back is someone else's web app, so it must never run as the hub: every response is
+# sandboxed (opaque origin: no access to the hub's cookies, storage or API) and sends no referrer (the token is in
+# the URL). Requests carry no hub cookie; the token alone identifies the link.
+FORWARD_TTL_S = 3600
+FORWARD_CSP = "sandbox allow-scripts allow-forms allow-popups allow-downloads allow-modals"
+
+
+class ForwardBody(BaseModel):
+    namespace: str = Field(pattern=r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$")
+    service: str = Field(pattern=r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$")
+    port: str = Field(pattern=r"^(https?:)?[a-z0-9-]{1,63}$")
+
+
+@api.post("/clusters/{cluster_id}/forward")
+def create_forward(cluster_id: int, body: ForwardBody, request: Request, p: Principal = Depends(current),
+                   s: Session = Depends(db_session)) -> dict:
+    c = _get_cluster(s, cluster_id, p, "services.proxy")
+    now = time.time()
+    links = state.setdefault("forwards", {})
+    for k in [k for k, v in links.items() if v["expires"] < now]:
+        del links[k]
+    token = pysecrets.token_urlsafe(32)
+    links[token_digest(token)] = {"user_id": p.user.id, "cluster_id": c.id, "namespace": body.namespace,
+                                  "service": body.service, "port": body.port, "expires": now + FORWARD_TTL_S}
+    audit(s, request, p, "open-service", f"service/{body.namespace}/{body.service}:{body.port}", cluster=c,
+          message="opened in the browser through the hub (link valid for 1 hour)")
+    return {"url": f"/fwd/{token}/", "expires_in": FORWARD_TTL_S}
+
+
+def _forward_page(status: int, text: str) -> Response:
+    return Response(content=f"<!doctype html><meta charset=utf-8><title>k10y</title><p style='font:15px system-ui;margin:40px'>{text}</p>",
+                    status_code=status, media_type="text/html", headers={"Content-Security-Policy": FORWARD_CSP,
+                                                                         "Referrer-Policy": "no-referrer", "Cache-Control": "no-store"})
+
+
+@app.api_route("/fwd/{token}/{path:path}", methods=["GET", "POST", "OPTIONS"], include_in_schema=False)
+async def forward(token: str, path: str, request: Request) -> Response:
+    cors = {"Access-Control-Allow-Origin": "null", "Access-Control-Allow-Methods": "GET, POST",
+            "Access-Control-Allow-Headers": "Content-Type"}   # the sandboxed page's own fetch() calls
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=cors)
+    link = state.get("forwards", {}).get(token_digest(token))
+    if not link or link["expires"] < time.time():
+        return _forward_page(404, "This link has expired. Open the Service again from k10y.")
+    with state["db"].session() as s:
+        user = s.get(User, link["user_id"])
+        c = s.get(Cluster, link["cluster_id"])
+        if user is None or not user.is_active or c is None or not Principal(user, load_grants(s, user)).can("services.proxy", c.id):
+            return _forward_page(403, "You no longer have access to this Service.")
+        url = f"{c.url.rstrip('/')}/api/v1/proxy/services/{link['namespace']}/{link['service']}/{link['port']}/{path}"
+        headers = {"Authorization": f"Bearer {crypto().decrypt(c.token_encrypted)}", "X-K10Y-Actor": f"hub:{user.username}"[:64],
+                   **{k: v for k, v in request.headers.items() if k.lower() in ("content-type", "accept", "accept-language")}}
+        verify = c.verify_tls
+    body = await request.body() if request.method == "POST" else None
+    try:
+        async with httpx.AsyncClient(verify=verify, timeout=httpx.Timeout(40.0, connect=8.0)) as client:
+            r = await client.request(request.method, url, params=request.query_params, content=body, headers=headers)
+    except httpx.HTTPError as e:
+        return _forward_page(502, f"Can't reach the agent: {html_escape(str(e))}")
+    out = {k: v for k, v in r.headers.items() if k.lower() in ("content-type", "cache-control", "last-modified", "etag")}
+    loc = r.headers.get("location")
+    if loc:
+        out["Location"] = f"/fwd/{token}{loc}" if loc.startswith("/") else loc
+    out.update(cors)
+    out.update({"Content-Security-Policy": FORWARD_CSP, "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff"})
+    return Response(content=r.content, status_code=r.status_code, headers=out)
 
 
 async def _proxy_stream(c: Cluster, url: str, request: Request, headers: Dict[str, str]) -> Response:

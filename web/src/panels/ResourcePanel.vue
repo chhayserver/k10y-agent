@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { agent } from "@/api/client";
+import { agent, hub } from "@/api/client";
 import Badge from "@/components/Badge.vue";
 import Chips from "@/components/Chips.vue";
 import Icon from "@/components/Icon.vue";
@@ -12,7 +12,7 @@ import Skeleton from "@/components/Skeleton.vue";
 import { menuFor } from "@/lib/actions";
 import { DETAIL_KINDS, fmt } from "@/lib/format";
 import { useSession } from "@/stores/session";
-import type { PanelRef } from "@/stores/ui";
+import { toast, type PanelRef } from "@/stores/ui";
 import EventsList from "./EventsList.vue";
 import OpenLink from "./OpenLink.vue";
 import CronJobRuns from "./CronJobRuns.vue";
@@ -81,6 +81,16 @@ const related = computed(() => {
 const host = computed(() => location.hostname);
 const editing = ref(false);
 const cl = useCluster();
+// Open a Service's HTTP port through the hub: a one-hour link, sandboxed so the app can't act as you in k10y.
+const canOpen = computed(() => s.can("services.proxy") && cl.control && !cl.isProtected(props.r.namespace));
+async function openService(p: any) {
+  const win = window.open("about:blank", "_blank");   // open now, or the popup blocker steps in
+  try {
+    const port = p.name || String(p.port);
+    const res = await hub.post<{ url: string }>(`/clusters/${s.current!.id}/forward`, { namespace: props.r.namespace, service: props.r.name, port });
+    if (win) { win.opener = null; win.location.href = res.url; } else window.open(res.url, "_blank", "noopener");
+  } catch (e: any) { win?.close(); toast(false, e.message); }
+}
 const canEdit = computed(() => props.r.kind !== "Secret" && s.can("resources.edit") && cl.control && !cl.isProtected(props.r.namespace || (props.r.kind === "Namespace" ? props.r.name : null)));
 function editDone(saved: boolean) { editing.value = false; if (saved) load(); }
 const copied = ref(false);
@@ -209,9 +219,10 @@ async function copyYaml() { try { await navigator.clipboard.writeText(d.value.ya
       </div>
       <div v-if="r.kind === 'Service'">
         <h3 class="section-title">Ports</h3>
-        <div class="table-wrap card" style="box-shadow:none"><table class="data"><thead><tr><th>Name</th><th>Port</th><th>Target</th><th>Protocol</th><th>NodePort</th></tr></thead><tbody>
+        <div class="table-wrap card" style="box-shadow:none"><table class="data"><thead><tr><th>Name</th><th>Port</th><th>Target</th><th>Protocol</th><th>NodePort</th><th v-if="canOpen"><span class="sr-only">Open</span></th></tr></thead><tbody>
           <tr v-for="p in sp.ports || []" :key="p.port"><td>{{ p.name || "–" }}</td><td class="num">{{ p.port }}</td><td>{{ p.targetPort }}</td><td>{{ p.protocol || "TCP" }}</td>
-            <td><a v-if="p.nodePort" class="ext-link" :href="`http://${host}:${p.nodePort}`" target="_blank" rel="noopener">{{ p.nodePort }}<Icon name="external" /></a><span v-else>–</span></td></tr>
+            <td><a v-if="p.nodePort" class="ext-link" :href="`http://${host}:${p.nodePort}`" target="_blank" rel="noopener">{{ p.nodePort }}<Icon name="external" /></a><span v-else>–</span></td>
+            <td v-if="canOpen" class="actions"><button v-if="(p.protocol || 'TCP') === 'TCP'" class="btn ghost sm" type="button" title="Open this port's web page through the hub (link valid for 1 hour)" @click="openService(p)">Open<Icon name="external" /></button></td></tr>
         </tbody></table></div>
       </div>
       <ServiceHaproxy v-if="r.kind === 'Service'" :namespace="r.namespace!" :name="r.name" />
