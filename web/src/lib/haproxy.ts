@@ -15,7 +15,8 @@ export interface HxBackend { name: string; mode: string; balance: string; balanc
   timeouts?: { connect: number; server: number; tunnel: number }; redispatch?: boolean; retries?: number; keepalive?: boolean; stick_src?: number;
   check_timing?: { inter: number; rise: number; fall: number }; servers: HxServer[]; used_by: string[]; stats: HxStats; k8s_sync: HxSync | null }
 export interface HxOverview { instance: any; group: any[]; frontends: HxFrontend[]; backends: HxBackend[]; config_version: number; keeps_server_state: boolean }
-export type HxPoint = [number, { f: Record<string, { req: number; sess: number; slim: number; e5: number; e5_pct: number; in: number; out: number }>; b: Record<string, { req: number; rq?: number; sess: number; rtime: number; queue: number; e5: number; e5_pct?: number }> }];
+export type HxPoint = [number, { f: Record<string, { req: number; sess: number; slim: number; e5: number; e5_pct: number; in: number; out: number }>; b: Record<string, { req: number; rq?: number; sess: number; rtime: number; queue: number; e5: number; e5_pct?: number }>;
+  s?: Record<string, { req: number; sess: number; rtime: number; e5_pct: number }> }];   // live only: "backend/server"
 export interface HxOp { op: "create" | "update" | "delete" | "raw"; kind: "frontend" | "backend" | "server" | "config"; name?: string; backend?: string; data?: Record<string, any> }
 
 export const STATE: Record<string, { level: Level; label: string }> = {

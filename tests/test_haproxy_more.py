@@ -170,3 +170,13 @@ def test_monitor_samples_history_and_api_endpoints(client, monkeypatch):
     assert client.get(f"/api/hub/haproxy/{iid}/versions").json()[0]["summary"].startswith("canary:")
     logs = client.get(f"/api/hub/haproxy/{iid}/logs").json()
     assert logs["tag"] == "lb1" and logs["enabled"] is False
+
+
+def test_sample_has_live_per_server_numbers():
+    def stats(stot, e5, resp):
+        return [{"type": "server", "name": "web1", "backend_name": "app",
+                 "stats": {"stot": stot, "hrsp_2xx": resp - e5, "hrsp_5xx": e5, "scur": 3, "rtime": 12}}]
+    _, c1 = hm.Sample.take(stats(100, 0, 100), None, 0)
+    p, _ = hm.Sample.take(stats(150, 5, 150), c1, 10)
+    assert p["s"]["app/web1"] == {"req": 5.0, "sess": 3, "rtime": 12, "e5_pct": 10.0}
+    assert "s" not in hm.average([p])                     # per-server numbers are live only, not stored

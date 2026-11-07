@@ -41,7 +41,7 @@ class Sample:
     @staticmethod
     def take(stats: List[Dict[str, Any]], prev: Optional[Dict[str, Any]], dt: float) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         counters: Dict[str, Any] = {}
-        point: Dict[str, Any] = {"f": {}, "b": {}}
+        point: Dict[str, Any] = {"f": {}, "b": {}, "s": {}}   # "s" (per server, "backend/server") is live only
         for it in stats:
             kind, s = it.get("type"), it.get("stats") or {}
             be = it.get("name") or ""            # frontends and backends: their own name
@@ -72,6 +72,18 @@ class Sample:
                                   "sess": int(s.get("scur") or 0), "rtime": int(s.get("rtime") or 0),
                                   "queue": int(s.get("qcur") or 0),
                                   "e5": round(d_e5 / dt, 3) if p and dt else 0.0,
+                                  "e5_pct": round(min(100.0, 100.0 * d_e5 / d_resp), 1) if d_resp else 0.0}
+            elif kind == "server":
+                sk = f"{it.get('backend_name') or ''}/{be}"
+                key = f"s:{sk}"
+                e5, tot = int(s.get("hrsp_5xx") or 0), int(s.get("stot") or 0)
+                resp = sum(int(s.get(k) or 0) for k in ("hrsp_1xx", "hrsp_2xx", "hrsp_3xx", "hrsp_4xx", "hrsp_5xx", "hrsp_other"))
+                counters[key] = (tot, e5, resp)
+                p = (prev or {}).get(key)
+                d_e5 = max(0, e5 - p[1]) if p else 0
+                d_resp = max(0, resp - p[2]) if p else 0
+                point["s"][sk] = {"req": round(max(0, tot - p[0]) / dt, 2) if p and dt else float(s.get("rate") or 0),
+                                  "sess": int(s.get("scur") or 0), "rtime": int(s.get("rtime") or 0),
                                   "e5_pct": round(min(100.0, 100.0 * d_e5 / d_resp), 1) if d_resp else 0.0}
         return point, counters
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// Frontends → backends → servers, with live health colours and live traffic (line width = requests/s,
-// orange/red = errors). Hover a box to trace its path.
+// Frontends → backends → servers, with live health colours and live traffic on every line (width = requests/s,
+// orange/red = 5xx errors), down to each server. Hover a box to trace its path.
 import { computed, ref } from "vue";
 import { backendHealth, bindText, fmtRate, ROUTE_KIND, routeNumbers, routeText, STATE, type HxOverview, type HxPoint } from "@/lib/haproxy";
 
@@ -10,6 +10,8 @@ const emit = defineEmits<{ pick: [kind: "frontend" | "backend" | "server", name:
 const W = [250, 230, 250], GAP = 120, NODE_H = 54, SRV_H = 40, PAD = 14;
 const X = [0, W[0] + GAP, W[0] + GAP + W[1] + GAP];
 const hover = ref<string | null>(null);
+// Live numbers of one server (requests/s, 5xx %, sessions), when the monitor has them.
+const srvLive = (be: string, srv: string) => last.value?.s?.[`${be}/${srv}`];
 
 const layout = computed(() => {
   const fes = props.data.frontends.filter((f) => !f.stats_page);
@@ -56,7 +58,10 @@ const layout = computed(() => {
   }
   for (const s of servers) {
     const y1 = (beY.get(s.be) ?? 0) + NODE_H / 2;
-    edges.push({ id: `${s.key}`, from: `b:${s.be}`, to: s.key, label: "", cls: `srv ${s.s.state}`, ly: 0, d: curve(X[1] + W[1], y1, X[2], s.y + SRV_H / 2) });
+    const live = srvLive(s.be, s.s.name);
+    const cls = `srv ${s.s.state}${live && live.req > 0 ? " flow" : ""}${live && live.e5_pct >= 5 ? " err" : live && live.e5_pct >= 1 ? " warnx" : ""}`;
+    edges.push({ id: `${s.key}`, from: `b:${s.be}`, to: s.key, label: "", cls, ly: 0,
+      w: live ? 1.4 + Math.min(5, Math.log2(1 + live.req) * 1.1) : undefined, d: curve(X[1] + W[1], y1, X[2], s.y + SRV_H / 2) });
   }
   const height = Math.max(ys, ...feNodes.map((n) => n.y + NODE_H), ...beNodes.map((n) => n.y + NODE_H)) + 10;
   return { feNodes, beNodes, servers, edges, height };
@@ -112,7 +117,9 @@ const edgeDim = (e: { from: string; to: string }) => lit.value && !(lit.value.ha
             <rect :width="W[2]" :height="SRV_H" rx="8" /><circle cx="16" :cy="SRV_H / 2" r="5" class="dot" />
             <text x="30" y="17" class="t sm">{{ s.s.name }}<tspan v-if="s.s.backup" class="s"> · backup</tspan></text>
             <text x="30" y="32" class="s">{{ s.s.address }}:{{ s.s.port }} · {{ STATE[s.s.state]?.label }}</text>
-            <text :x="W[2] - 10" y="17" class="r" text-anchor="end">w {{ s.s.weight }}</text>
+            <text :x="W[2] - 10" y="17" class="r" text-anchor="end">{{ srvLive(s.be, s.s.name) ? `${fmtRate(srvLive(s.be, s.s.name)!.req)}/s` : `w ${s.s.weight}` }}</text>
+            <text v-if="srvLive(s.be, s.s.name)" :x="W[2] - 10" y="32" class="s" text-anchor="end"
+              :class="{ errt: srvLive(s.be, s.s.name)!.e5_pct >= 1 }">{{ srvLive(s.be, s.s.name)!.e5_pct >= 1 ? `${srvLive(s.be, s.s.name)!.e5_pct}% 5xx` : `w ${s.s.weight}` }}</text>
           </g>
         </g>
       </svg>
@@ -121,9 +128,10 @@ const edgeDim = (e: { from: string; to: string }) => lit.value && !(lit.value.ha
 </template>
 
 <style scoped>
-.edge.fe.flow path { stroke-dasharray: 6 5; animation: hx-flow 1.2s linear infinite; }
-.edge.fe.warnx path { stroke: var(--warning); }
-.edge.fe.err path { stroke: var(--critical); }
+.edge.fe.flow path, .edge.srv.flow path { stroke-dasharray: 6 5; animation: hx-flow 1.2s linear infinite; }
+.edge.fe.warnx path, .edge.srv.warnx path { stroke: var(--warning); }
+.edge.fe.err path, .edge.srv.err path { stroke: var(--critical); }
+.errt { fill: var(--critical); }
 @keyframes hx-flow { to { stroke-dashoffset: -22; } }
-@media (prefers-reduced-motion: reduce) { .edge.fe.flow path { animation: none; stroke-dasharray: none; } }
+@media (prefers-reduced-motion: reduce) { .edge.fe.flow path, .edge.srv.flow path { animation: none; stroke-dasharray: none; } }
 </style>
