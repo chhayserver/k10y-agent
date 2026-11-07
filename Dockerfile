@@ -32,6 +32,9 @@ os.chmod("/helm", 0o755)
 PY
 
 FROM python:3.12-slim
+LABEL org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.source="https://github.com/chhayserver/k10y-agent"
+COPY LICENSE /usr/share/doc/k10y/LICENSE
 COPY --from=helm /helm /usr/local/bin/helm
 RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin k10y \
  && mkdir -p /data && chown 10001:10001 /data

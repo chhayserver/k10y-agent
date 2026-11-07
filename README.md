@@ -356,3 +356,9 @@ pinned). **edge** is k3d with NodePort 30800 mapped to `localhost:30801`.
 - [ ] Two-factor login (TOTP)
 - [ ] Long-term metrics (Prometheus integration)
 - [ ] Single sign-on (OIDC)
+
+## License
+
+Copyright © 2026 Kang Kimchhay.
+
+k10y is free software under the **GNU Affero General Public License v3.0** ([LICENSE](LICENSE)): you may use, study, change and share it. If you change it and let others use your version over a network (for example as a hosted service), you must offer them the source code of your changes under the same license.

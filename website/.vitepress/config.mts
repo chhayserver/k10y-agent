@@ -71,7 +71,7 @@ export default defineConfig({
     editLink: { pattern: `${repo}/edit/main/website/:path`, text: "Edit this page on GitHub" },
     outline: { level: [2, 3] },
     footer: {
-      message: "Free and open source. Created and maintained by Kang Kimchhay. Kubernetes is a trademark of The Linux Foundation and HAProxy of HAProxy Technologies; k10y is not affiliated with either.",
+      message: "Free and open source under the AGPL-3.0 license. Created and maintained by Kang Kimchhay. Kubernetes is a trademark of The Linux Foundation and HAProxy of HAProxy Technologies; k10y is not affiliated with either.",
       copyright: "© 2026 Kang Kimchhay",
     },
   },
