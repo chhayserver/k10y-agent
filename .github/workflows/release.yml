@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  packages: write      # the Helm chart goes to ghcr.io/<owner>/charts
 
 concurrency:
   group: release
@@ -36,7 +37,7 @@ jobs:
         run: |
           pip install pyyaml
           python scripts/release.py check "${{ steps.v.outputs.version }}"
-          git diff --exit-code deploy/install
+          git diff --exit-code deploy/install deploy/helm
       - name: Tests
         run: |
           pip install ".[server,dev]"
@@ -65,13 +66,22 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - uses: azure/setup-helm@v4
+      - name: Helm chart (oci://ghcr.io/${{ github.repository_owner }}/charts/k10y-agent)
+        run: |
+          helm lint deploy/helm/k10y-agent
+          helm package deploy/helm/k10y-agent
+          echo "${{ github.token }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm push "k10y-agent-${{ steps.v.outputs.version }}.tgz" "oci://ghcr.io/${{ github.repository_owner }}/charts"
+
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python scripts/release.py notes "${{ steps.v.outputs.version }}" > notes.md
           gh release create "$GITHUB_REF_NAME" --title "k10y ${{ steps.v.outputs.version }}" --latest --notes-file notes.md \
-            deploy/install/install.yaml deploy/install/install-readonly.yaml deploy/install/rbac-helm.yaml docker-compose.yml
+            deploy/install/install.yaml deploy/install/install-readonly.yaml deploy/install/rbac-helm.yaml docker-compose.yml \
+            "k10y-agent-${{ steps.v.outputs.version }}.tgz"
 
       - name: Website
         if: ${{ env.CF_TOKEN != '' }}

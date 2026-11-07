@@ -1,0 +1,14 @@
+k10y agent {{ .Chart.AppVersion }} is starting in namespace {{ .Release.Namespace }}.
+
+1. Its API token (created on first start):
+   kubectl -n {{ .Release.Namespace }} get secret k10y-agent -o jsonpath='{.data.api-token}' | base64 -d; echo
+{{- if eq .Values.service.type "NodePort" }}
+2. In the k10y hub: Administration -> Clusters -> Add cluster, address <any-node-ip>:{{ .Values.service.nodePort | default "<nodePort>" }}
+{{- else }}
+2. In the k10y hub: Administration -> Clusters -> Add cluster, with an address that reaches Service k10y-agent port 8080 (HTTPS).
+{{- end }}
+   and the token above. The agent serves HTTPS with a self-signed certificate.
+{{- if not .Values.control }}
+
+Read-only: control actions are off (control: false).
+{{- end }}

@@ -1,0 +1,31 @@
+# k10y agent. The hub connects to it at https://<any-node-ip>:<nodePort> with the token from
+#   kubectl -n <namespace> get secret k10y-agent -o jsonpath='{.data.api-token}' | base64 -d
+image:
+  repository: docker.io/k10y/k10y-agent
+  tag: ""                      # defaults to the chart's appVersion
+  pullPolicy: IfNotPresent
+
+clusterName: ""                # how the agent names this cluster (the hub can use its own name)
+
+# Control actions (scale, restart, roll back, edit, apply, shell, port-forward). false = read-only monitoring.
+control: true
+# Namespaces where every action, edit and shell is refused. Changing them in the hub overrides this.
+protectedNamespaces: [kube-system, k10y]
+
+# Roll back and upgrade Helm releases from the hub. Gives the agent Kubernetes' built-in "edit" role.
+helm: false
+
+service:
+  type: NodePort
+  nodePort: 30800              # empty for a random one; ignored unless type is NodePort
+
+resources:
+  requests: {cpu: 50m, memory: 128Mi}
+  limits: {memory: 320Mi}
+
+# Extra environment variables, e.g. [{name: K10Y_VOLUME_FULL_PERCENT, value: "85"}]
+extraEnv: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

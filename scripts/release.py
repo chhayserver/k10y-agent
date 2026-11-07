@@ -81,11 +81,21 @@ def notes(version: str) -> str:
     return (m.group(1).strip() + f"\n\nImage: `docker.io/k10y/k10y-agent:{version}` (amd64, arm64)\n")
 
 
+GENERATED = [("deploy/install", "install*.yaml", "gen_install.py"), ("deploy/helm/k10y-agent", "**/*", "gen_chart.py")]
+
+
+def generate(version: str) -> None:
+    for _, _, script in GENERATED:
+        subprocess.run([sys.executable, str(ROOT / "scripts" / script), version], check=True, capture_output=True)
+
+
 def installers_current(version: str) -> bool:
-    before = {p.name: p.read_text() for p in (ROOT / "deploy" / "install").glob("install*.yaml")}
-    subprocess.run([sys.executable, str(ROOT / "scripts" / "gen_install.py"), version], check=True, capture_output=True)
-    after = {p.name: p.read_text() for p in (ROOT / "deploy" / "install").glob("install*.yaml")}
-    return before == after
+    """Installers and the Helm chart, regenerated for `version`, are what's committed."""
+    def snapshot():
+        return {str(p): p.read_text() for d, pat, _ in GENERATED for p in (ROOT / d).glob(pat) if p.is_file()}
+    before = snapshot()
+    generate(version)
+    return before == snapshot()
 
 
 def check(version: str) -> None:
@@ -93,7 +103,7 @@ def check(version: str) -> None:
     if f"\n## {version}" not in CHANGELOG.read_text():
         problems.append(f"website/changelog.md has no '## {version}' section")
     if not installers_current(version):
-        problems.append("deploy/install/*.yaml were out of date (regenerated now; commit them)")
+        problems.append("deploy/install/*.yaml or the Helm chart were out of date (regenerated now; commit them)")
     if problems:
         sys.exit("release check failed:\n  " + "\n  ".join(problems))
     print(f"release {version}: versions, changelog and installers agree")
@@ -108,7 +118,7 @@ def main() -> None:
     if cmd == "bump":
         set_version(version)
         bump_changelog(version)
-        subprocess.run([sys.executable, str(ROOT / "scripts" / "gen_install.py"), version], check=True)
+        generate(version)
         check(version)
     elif cmd == "check":
         check(version)
