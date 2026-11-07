@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { agents, loadAgents, outdatedHint } from "@/lib/agents";
 import PasswordInput from "@/components/PasswordInput.vue";
 import { onMounted, reactive, ref } from "vue";
 import { hub } from "@/api/client";
@@ -13,7 +14,7 @@ import { useSession } from "@/stores/session";
 import { toast } from "@/stores/ui";
 const s = useSession(), state = page("manage-clusters", { key: "name", dir: 1 });
 const list = ref<any[] | null>(null);
-async function load() { list.value = await hub.get("/clusters"); }
+async function load() { list.value = await hub.get("/clusters"); loadAgents(true); }
 onMounted(load);
 const edit = reactive({ open: false, id: 0, name: "", url: "", token: "", verify_tls: false, test: null as null | { ok: boolean; text: string }, busy: false });
 function openNew() { Object.assign(edit, { open: true, id: 0, name: "", url: "", token: "", verify_tls: false, test: null }); }
@@ -39,6 +40,7 @@ async function remove(c: any) {
   try { await hub.del(`/clusters/${c.id}`); toast(true, `Removed ${c.name}`); await load(); await s.load(); } catch (e: any) { toast(false, e.message); }
 }
 const columns = [{ key: "name", label: "Name", cls: "primary" }, { key: "url", label: "Agent URL", cls: "mono" }, { key: "verify_tls", label: "TLS" },
+  { key: "agent", label: "Agent", sort: (x: any) => agents.byId[x.id]?.agent_version || "" },
   { key: "created_at", label: "Added" }, { key: "_a", label: "Actions", nosort: true, cls: "actions" }];
 </script>
 <template>
@@ -48,6 +50,9 @@ const columns = [{ key: "name", label: "Name", cls: "primary" }, { key: "url", l
     <Skeleton v-if="!list" :rows="3" />
     <DataTable v-else v-model:sort="state.sort" :rows="list" :columns="columns" :row-key="(c) => String(c.id)" clickable empty-title="No clusters yet" empty-icon="globe" @row="openEdit">
       <template #verify_tls="{ row }"><span class="chip">{{ row.url.startsWith("https") ? (row.verify_tls ? "HTTPS, verified" : "HTTPS, self-signed OK") : "HTTP" }}</span></template>
+      <template #agent="{ row }"><span v-if="!agents.byId[row.id]?.agent_version" class="dim" :title="agents.byId[row.id]?.error || ''">–</span>
+        <template v-else><span class="mono">{{ agents.byId[row.id].agent_version }}</span>
+          <span v-if="agents.byId[row.id].outdated" class="pill-tag warn-tag" :title="outdatedHint(agents.byId[row.id])">update available</span></template></template>
       <template #created_at="{ row }">{{ fmt.dateTime(row.created_at) }}</template>
       <template #_a="{ row }"><button class="btn ghost sm" style="color:var(--critical)" @click="remove(row)">Remove</button></template>
     </DataTable>
@@ -65,3 +70,7 @@ const columns = [{ key: "name", label: "Name", cls: "primary" }, { key: "url", l
       <button class="btn primary" :disabled="edit.busy || !edit.url || (!edit.id && !edit.token)" @click="save">{{ edit.id ? "Save" : "Add cluster" }}</button></template>
   </Modal>
 </template>
+
+<style scoped>
+.warn-tag { color: var(--warning); cursor: help; margin-left: 6px; }
+</style>

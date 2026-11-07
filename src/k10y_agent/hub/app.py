@@ -868,6 +868,52 @@ def list_clusters(p: Principal = Depends(current), s: Session = Depends(db_sessi
     return out
 
 
+# What each agent version added, so the hub can say what an older agent is missing.
+AGENT_FEATURES: List[Tuple[str, str]] = [
+    ("2.6.0", "Search across clusters"), ("2.6.0", "Helm releases"), ("2.6.0", "Certificates and TLS expiry alerts"),
+    ("2.6.0", "Rollout history (Revisions tab)"), ("2.6.0", "CronJob runs and namespace quotas"),
+    ("2.6.0", "OOMKilled, stuck rollout and PVC alerts"), ("2.6.0", "Choosing protected namespaces in the hub"),
+    ("2.7.0", "Volume usage and full-volume alerts"), ("2.7.0", "Helm rollback"), ("2.7.0", "Opening a Service in the browser"),
+]
+_agent_versions: Dict[int, Tuple[float, Optional[str], str]] = {}   # cluster id -> (checked at, version, error)
+
+
+def _semver(v: Optional[str]) -> Tuple[int, ...]:
+    m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", v or "")
+    return tuple(int(x) for x in m.groups()) if m else (0, 0, 0)
+
+
+def agent_status(version: Optional[str]) -> dict:
+    """Is an agent older than the hub, and which features does that cost?"""
+    if not version:
+        return {"agent_version": None, "outdated": False, "missing": []}
+    have = _semver(version)
+    return {"agent_version": version, "outdated": have < _semver(__version__),
+            "missing": [name for since, name in AGENT_FEATURES if _semver(since) > have]}
+
+
+@api.get("/clusters/agents")
+async def cluster_agents(fresh: bool = False, p: Principal = Depends(current), s: Session = Depends(db_session)) -> dict:
+    """Agent version of every cluster you can see, compared with the hub (each checked at most every 5 minutes)."""
+    clusters = [c for c in s.execute(select(Cluster)).scalars() if p.can("cluster.view", c.id) or p.can("clusters.manage")]
+    now = time.time()
+
+    async def one(c: Cluster) -> None:
+        hit = _agent_versions.get(c.id)
+        if hit and not fresh and now - hit[0] < 300:
+            return
+        try:
+            info = await asyncio.to_thread(_agent_get, c, "info")
+            _agent_versions[c.id] = (now, info.get("agent_version"), "")
+        except Exception as e:
+            _agent_versions[c.id] = (now, hit[1] if hit else None, str(e)[:200])
+
+    await asyncio.gather(*(one(c) for c in clusters))
+    return {"hub_version": __version__, "update_url": "https://github.com/chhayserver/k10y-agent/releases/latest/download/install.yaml",
+            "clusters": [{"id": c.id, "name": c.name, **agent_status(_agent_versions[c.id][1]), "error": _agent_versions[c.id][2]}
+                         for c in clusters]}
+
+
 @api.post("/clusters/test")
 def test_cluster(body: ClusterTestBody, p: Principal = Depends(require("clusters.manage")),
                  s: Session = Depends(db_session)) -> dict:

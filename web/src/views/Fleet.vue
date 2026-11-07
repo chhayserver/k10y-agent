@@ -5,11 +5,12 @@ import { useRouter } from "vue-router";
 import Badge from "@/components/Badge.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import Skeleton from "@/components/Skeleton.vue";
+import { agents, loadAgents, outdatedHint } from "@/lib/agents";
 import { fmt, HEALTH } from "@/lib/format";
 import { fleet, refreshFleet } from "@/stores/fleet";
 import { useSession } from "@/stores/session";
 const s = useSession(), router = useRouter();
-onMounted(refreshFleet);
+onMounted(() => { refreshFleet(); loadAgents(); });
 function open(id: number) { s.setCluster(id); router.push(to("overview")); }
 </script>
 <template>
@@ -20,7 +21,8 @@ function open(id: number) { s.setCluster(id); router.push(to("overview")); }
     <EmptyState title="No clusters yet" :sub="s.canGlobal('clusters.manage') ? 'Add a cluster under Administration → Clusters.' : 'Ask an administrator to give you access to a cluster.'" icon="globe" /></div></section>
   <div v-else class="fleet">
     <section v-for="c in s.clusters" :key="c.id" class="card" :class="{ current: c.id === s.current?.id }">
-      <div class="fleet-head"><div style="flex:1;min-width:0"><h3>{{ c.name }} <span v-if="c.id === s.current?.id" class="pill-current">current</span></h3></div>
+      <div class="fleet-head"><div style="flex:1;min-width:0"><h3>{{ c.name }} <span v-if="c.id === s.current?.id" class="pill-current">current</span></h3>
+          <div v-if="agents.byId[c.id]?.outdated" class="agent-old" :title="outdatedHint(agents.byId[c.id])">Agent {{ agents.byId[c.id].agent_version }} · update available<template v-if="agents.byId[c.id].missing.length"> ({{ agents.byId[c.id].missing.length }} features missing)</template></div></div>
         <span v-if="!fleet[c.id]" class="badge neutral">Checking…</span>
         <Badge v-else-if="fleet[c.id].error" level="critical" label="Unreachable" />
         <Badge v-else :level="HEALTH[fleet[c.id].summary.health].level" :label="HEALTH[fleet[c.id].summary.health].label" /></div>
@@ -38,3 +40,7 @@ function open(id: number) { s.setCluster(id); router.push(to("overview")); }
     </section>
   </div>
 </template>
+
+<style scoped>
+.agent-old { margin-top: 4px; font-size: 12px; color: var(--warning); cursor: help; }
+</style>

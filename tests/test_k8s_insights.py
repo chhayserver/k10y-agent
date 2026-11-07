@@ -114,3 +114,14 @@ def test_protected_namespaces_permission():
     roles = {name: perms for name, _, perms in BUILTIN_ROLES}
     assert "namespaces.protect" in roles["Admin"] and "namespaces.protect" in roles["Kubernetes admin"]
     assert "namespaces.protect" not in roles["Kubernetes operator"] and "namespaces.protect" not in roles["Kubernetes viewer"]
+
+
+def test_agent_status_lists_missing_features(monkeypatch):
+    from k10y_agent.hub import app as hub
+    monkeypatch.setattr(hub, "__version__", "2.7.1")
+    old = hub.agent_status("2.4.0")
+    assert old["outdated"] is True and "Helm releases" in old["missing"] and "Helm rollback" in old["missing"]
+    mid = hub.agent_status("2.6.0")
+    assert mid["outdated"] and "Helm releases" not in mid["missing"] and "Helm rollback" in mid["missing"]
+    assert hub.agent_status("2.7.1") == {"agent_version": "2.7.1", "outdated": False, "missing": []}
+    assert hub.agent_status(None)["outdated"] is False

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { agents, loadAgents, outdatedHint } from "@/lib/agents";
 import Logo from "./Logo.vue";
 import { hub } from "@/api/client";
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from "vue";
@@ -117,6 +118,7 @@ function schedule() {
 watch(() => prefs.refresh, schedule);
 watch(() => s.current?.id, () => { c.reset(); closePanel(); c.refresh(); }, { immediate: false });
 onMounted(() => {
+  loadAgents();
   if (s.current) c.refresh();
   schedule();
   refreshFleet();
@@ -228,7 +230,7 @@ const canApply = computed(() => navItem.value?.cluster && s.can("apply.yaml") &&
         </div>
       </nav>
       <div class="sidebar-foot">
-        <template v-if="system?.id === 'kubernetes' && c.info && navItem?.id !== 'home'"><strong>{{ c.info.cluster }}</strong><br>Agent v{{ c.info.agent_version }}<br>{{ c.info.kubernetes_version }}</template>
+        <template v-if="system?.id === 'kubernetes' && c.info && navItem?.id !== 'home'"><strong>{{ c.info.cluster }}</strong><br>Agent v{{ c.info.agent_version }}<span v-if="s.current && agents.byId[s.current.id]?.outdated" class="foot-old" :title="outdatedHint(agents.byId[s.current.id])"> · update</span><br>{{ c.info.kubernetes_version }}</template>
         <template v-else-if="onHaproxy && h.data"><strong>{{ h.data.instance.name }}</strong><br>config version {{ h.data.config_version }}</template>
         <template v-else>k10y hub v{{ s.me?.version }}</template>
       </div>
@@ -271,3 +273,7 @@ const canApply = computed(() => navItem.value?.cluster && s.can("apply.yaml") &&
   <MenuPopover />
   <Toasts />
 </template>
+
+<style scoped>
+.foot-old { color: var(--warning); cursor: help; }
+</style>
