@@ -313,6 +313,7 @@ The agent serves no web page. Interactive API docs are at `https://<agent>:30800
 ```bash
 make build                  # Docker image (builds the Vue app, then the Python package)
 make test                   # unit tests inside the image
+make e2e-image && make e2e K10Y_E2E_USER=… K10Y_E2E_PASSWORD=…   # browser tests against a running hub (read-only)
 make hub-up / hub-logs / hub-down
 make load && make deploy    # RKE2 in the Lima VM (VM=rke2); make load-k3d for k3d
 make push                   # multi-arch (amd64 + arm64) to docker.io/k10y/k10y-agent:$(TAG) and :latest

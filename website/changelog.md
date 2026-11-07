@@ -6,6 +6,20 @@ title: Changelog
 
 Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached to the [GitHub release](https://github.com/chhayserver/k10y-agent/releases).
 
+## Unreleased
+
+- **Two-factor login:** a code from an authenticator app at every sign-in, with 10 single-use recovery codes. Set it up in **My settings**; require it for admins or everyone in **System settings → Sign-in security**; admins can reset it for a lost phone.
+- **More alert channels:** Slack, email (SMTP) and webhooks (JSON, optionally signed with HMAC-SHA256), next to Telegram.
+- **Acknowledge and silence alerts:** acknowledging stops reminders and tells the channels who's on it; silences mute one alert (also when it comes back) or a whole rule for 30 minutes up to a week.
+- **Full-volume alerts:** Storage shows how full each PVC is, and alerts warn at 90% (bytes or inodes). Read from the kubelets with the read-only `nodes/stats` permission.
+- **Helm rollback from k10y** (opt-in): dry run, then `helm rollback` on the agent, with review and audit. Needs `K10Y_HELM_ENABLED=true` and `rbac-helm.yaml`.
+- **Open a Service in the browser** through the hub: one-hour, sandboxed links, with the new `services.proxy` permission.
+- **HAProxy topology:** live traffic down to each server (requests/s and 5xx on every backend → server line).
+- **HAProxy review:** when HAProxy rejects a change, each problem is shown with its line, section and text.
+- Pages that need a newer agent say so instead of showing an error.
+- Browser tests in the repo (`make e2e`), and the hub's startup moved to FastAPI's lifespan.
+- **Agent RBAC:** `nodes/stats` (read) and `services/proxy` (control). Re-apply `install.yaml` when upgrading.
+
 ## 2.6.0 <Badge type="tip" text="latest" />
 
 - **Protected namespaces in the hub:** choose each cluster's protected namespaces in **System settings → Protected namespaces**, with the new `namespaces.protect` permission (Admin and Kubernetes admin have it; it can be given per cluster). The agent keeps the list in its own Secret, so it survives restarts and upgrades, and every change is in the activity log.

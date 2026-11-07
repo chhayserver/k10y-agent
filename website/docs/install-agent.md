@@ -43,8 +43,9 @@ The agent serves **HTTPS** itself on its port (with a self-signed certificate), 
 
 ## What the agent can access
 
-- **Read:** nodes, namespaces, pods and logs, events, services, ConfigMaps, PVCs, PVs, Ingresses, Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs, CronJobs, HPAs, metrics. Secrets are *listed* only for names and keys; their values are never returned.
-- **Write** (`install.yaml` only): the actions listed above, plus server-side apply of common kinds. There are **no RBAC, CRD or cluster-admin permissions**.
+- **Read:** nodes, namespaces, pods and logs, events, services, ConfigMaps, PVCs, PVs, Ingresses, Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs, CronJobs, HPAs, ResourceQuotas, LimitRanges, cert-manager Certificates, metrics, and volume usage from the kubelets (`nodes/stats`). Secrets are *listed* only for names and keys; their values are never returned.
+- **Write** (`install.yaml` only): the actions listed above, plus server-side apply of common kinds and opening a Service's web page (`services/proxy`). There are **no RBAC, CRD or cluster-admin permissions**.
+- **Optional:** `rbac-helm.yaml` gives the agent the built-in **edit** role so it can roll back Helm releases (see [Kubernetes insights](./kubernetes#helm-releases)).
 - **Protected namespaces:** `kube-system` and `k10y` by default. Actions, edits and shells there are refused by the agent. Change them in **System settings → Protected namespaces** (see [Actions](./actions#protected-namespaces)); your choice survives upgrades.
 
 ## Requirements

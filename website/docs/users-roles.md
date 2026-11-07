@@ -26,9 +26,10 @@ So "Operator on staging, Viewer on production" is two assignments for one user, 
 | `workloads.scale` | Scale Deployments and StatefulSets |
 | `workloads.restart` | Restart workloads; suspend, resume and run CronJobs |
 | `workloads.update_image` | Change a Deployment's container image |
-| `workloads.rollback` | Roll back Deployments |
+| `workloads.rollback` | Roll back Deployments and Helm releases |
 | `workloads.delete` | Delete Deployments and Jobs |
 | `pods.exec` | Open a shell in a pod's container |
+| `services.proxy` | Open a Service's web page (HTTP port) in the browser through the hub |
 | `pods.delete` | Delete pods |
 | `services.delete` | Delete Services |
 | `config.delete` | Delete ConfigMaps and Secrets |

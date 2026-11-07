@@ -17,7 +17,14 @@ A Deployment's details panel has a **Revisions** tab: every revision Kubernetes 
 
 **Workloads → Helm releases** lists every release with its chart, version, app version, status and revision, read from Helm's own records (Secrets labelled `owner=helm`). Open one to see its history, and with `secrets.view` its values and rendered manifest, and compare two revisions. Anything that looks like a password, token or key is masked.
 
-**Roll back…** copies the `helm rollback <release> <revision> -n <namespace>` command. k10y doesn't write Helm's records itself, so hooks and history stay consistent.
+**Roll back from k10y** (opt-in): with Helm turned on for the agent, **Roll back…** runs a dry run first, then `helm rollback` on the agent (the image includes Helm 3.16), so Helm's hooks run and its history stays right. It needs `workloads.rollback`, refuses protected namespaces, and is in the activity log. Helm re-applies whatever the chart contains, so the agent needs Kubernetes' built-in **edit** role for this:
+
+```bash
+kubectl apply -f https://github.com/chhayserver/k10y-agent/releases/latest/download/rbac-helm.yaml
+kubectl -n k10y set env deploy/k10y-agent K10Y_HELM_ENABLED=true
+```
+
+Without it, the button is **Copy rollback command** and gives you `helm rollback <release> <revision> -n <namespace>` to run yourself.
 
 ## Certificates
 
@@ -26,6 +33,21 @@ A Deployment's details panel has a **Revisions** tab: every revision Kubernetes 
 ## CronJobs
 
 A CronJob's details panel shows its recent runs (start, duration, result). The problem list warns when its last run failed, when it has never succeeded, or when the latest scheduled run didn't succeed. Suspended CronJobs are left alone, and their Jobs no longer show up twice as failed Jobs.
+
+## Volume usage and full volumes
+
+**Storage** shows how full each PersistentVolumeClaim is (a bar, orange from 80%, red from 90%; hover for bytes and inodes). The problem list, and so [alerts](./alerts), warn when a volume is **90% full** or out of inodes. Change the threshold with `K10Y_VOLUME_FULL_PERCENT` on the agent.
+
+The agent reads this from each node's kubelet (`/stats/summary`), with the read-only `nodes/stats` permission (not `nodes/proxy`), checking the kubelet's certificate against the cluster CA. Usage is only known while a pod has the volume mounted. If your kubelets use certificates not signed by the cluster CA, set `K10Y_KUBELET_INSECURE=true`.
+
+## Open a Service in the browser
+
+A Service's details panel has **Open** next to each TCP port. It opens the Service's web page in a new tab through the hub, without kubectl or a NodePort, using the Kubernetes API server's service proxy.
+
+- Needs the `services.proxy` permission (Admin and Kubernetes admin have it) and a control-enabled agent; protected namespaces are refused.
+- Each link is valid for one hour, works only for you, and stops working if you lose the permission. Opening it is in the activity log.
+- The page runs **sandboxed**: it can't read k10y's cookies or use your k10y session, and the link isn't sent to other sites.
+- It's for HTTP apps and dashboards. Apps that load files from absolute paths (`/static/…`) or need WebSockets may not work fully this way.
 
 ## Namespace quotas
 
@@ -50,4 +72,4 @@ A Service's details panel shows which HAProxy backends send traffic to it: backe
 
 ## Permissions the agent needs
 
-These features use the agent's read-only RBAC: ResourceQuotas and LimitRanges, and cert-manager `certificates`. Re-apply `install.yaml` (or `install-readonly.yaml`) when you [upgrade](./upgrading) the agent to pick them up.
+These features use the agent's read-only RBAC: ResourceQuotas and LimitRanges, cert-manager `certificates`, and `nodes/stats` for volume usage. **Open** uses `services/proxy` from the control role. Re-apply `install.yaml` (or `install-readonly.yaml`) when you [upgrade](./upgrading) the agent to pick them up.

@@ -1,18 +1,27 @@
-# Alerts and Telegram
+# Alerts and notifications
 
 The hub checks your alert rules against every cluster **every 30 seconds**. When a condition has held for the rule's hold time, the alert **fires** and a message is sent. When the condition clears, it **resolves**, and you can get a message for that too. All alerts are kept in PostgreSQL and shown on the **Alerts** page.
 
-## 1. Connect Telegram
+## 1. Add a channel
 
-You need the `settings.manage` permission.
+You need the `settings.manage` permission. Open **Administration → System settings → Alert channels → Add channel** and pick a type. **Save & send test** sends a test message right away. Tokens, Slack webhook URLs and passwords are stored encrypted. You can add several channels, for example one per team.
 
+**Telegram**
 1. In Telegram, message **@BotFather**, send `/newbot`, and copy the bot token.
 2. Send any message to your new bot. For a group, add the bot to the group and post a message there.
-3. In k10y, open **Administration → System settings → Alert channels → Add Telegram bot**.
-4. Paste the token and click **Find chats**. Pick your chat, or paste a chat ID.
-5. Click **Save & send test**. A test message arrives in Telegram.
+3. Paste the token in k10y and click **Find chats**. Pick your chat, or paste a chat ID.
 
-The bot token is stored encrypted. You can add several channels, for example one per team.
+**Slack**: in Slack, open **Apps → Incoming Webhooks → Add to Slack**, pick a channel and paste the webhook URL (`https://hooks.slack.com/…`).
+
+**Email**: your SMTP server (STARTTLS on 587, SSL/TLS on 465, or none), an optional username and password, the From address and one or more To addresses.
+
+**Webhook**: k10y POSTs JSON to your URL for every message: `status` (`firing`, `resolved`, `reminder`, `acknowledged` or `test`), `rule`, `severity`, `title`, `message`, `cluster`, `resource`, `first_seen`, `acked_by`, `url` and `text`. With a **signing secret**, each request has the header `X-K10y-Signature: sha256=<hex>`, the HMAC-SHA256 of the body with your secret, so the receiver can check it came from k10y:
+
+```python
+import hashlib, hmac
+expected = "sha256=" + hmac.new(SECRET.encode(), request_body, hashlib.sha256).hexdigest()
+assert hmac.compare_digest(expected, request.headers["X-K10y-Signature"])
+```
 
 ## 2. Create rules
 
@@ -38,6 +47,9 @@ Options for every rule:
 ## 3. Watch alerts
 
 **Alerts** lists open alerts by default, with tabs for firing, resolved and all. Click one for its timeline (started, fired, resolved, notified), the object, any error sending the message, and the AI diagnosis.
+
+- **Acknowledge** ("I'm on it"): the rule's channels are told who took it, and no more reminders are sent for it. Anyone who can see the alert can acknowledge it. When it resolves, the resolved message is still sent.
+- **Silence…** (needs `alerts.manage`): mute **this alert**, also if it comes back, or **every alert of its rule**, for 30 minutes up to a week, with an optional reason. Silenced alerts are still recorded; only messages stop. Active silences are listed under the alerts, with **End now**.
 
 <Shot src="/shots/alerts.png" alt="Alerts page with history" url="k10y / alerts" />
 

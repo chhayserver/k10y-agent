@@ -34,7 +34,7 @@ Pick **HAProxy** in the system switcher, then the instance in the second switche
 | **Overview** | A dashboard you can arrange: an overall status line, key numbers (requests/s, error rate, response time, sessions, servers up) with trends, **problems** (only when there are some), each **frontend drawn as its routing** (proxy, or path routing to several backends) with live health, one **traffic chart** (pick the metric, compare by frontend or backend, 15 minutes to 7 days, show only some) and an optional topology. **Customize** chooses the sections; it's saved to your account |
 | **Frontends** | Number tiles for what's shown (frontends, requests/s, error rate, sessions, healthy backends). Filter by type (Proxy, Path routing, Other rules), problems, TLS, rate limit or IP allow-list; search by name, port, path or backend; sort by traffic or errors. **Cards** draw each frontend as its routing (path → backend with live server health); **Table** gives one row each, expandable to its routes |
 | **Backends** | Number tiles for what's shown (servers up, new sessions/s, error rate, response time), then one table, a row per backend: health (x/y up), balancing, health check, which frontends use it, sessions, new/s, 5xx, response time. Click a row to see its servers: state, address, weight and share of traffic, health-check result, sessions, requests, 5xx, time in state. Search, filter (Problems, From Kubernetes, used by a frontend) and sort; backends with problems open by themselves |
-| **Topology** | Frontends → backends → servers with **live traffic**: thicker lines carry more requests per second, a moving line has traffic right now, orange or red lines return errors. Labels show the route and its rate; colours show server health. Hover to trace a path, click to open it. |
+| **Topology** | Frontends → backends → servers with **live traffic on every line, down to each server**: thicker lines carry more requests per second, a moving line has traffic right now, orange or red lines return errors (5xx). Labels show the route and its rate; each server shows its requests/s and, when it has errors, its 5xx share. Colours show server health. Hover to trace a path, click to open it. |
 | **Certificates** | TLS certificates on the HAProxy: expiry, domains, which frontends use them; upload, replace, delete |
 | **Rate limits & blocks** | **Blocked IPs** (refused on every frontend, changed live without a reload) and the live stick tables, e.g. the client IPs a rate limit is tracking, with **Unblock** to let one in again |
 | **Logs** | Live request logs: status, request, frontend → server, duration, bytes, client; filter by text or status class; **Block** a client from its log line |
@@ -282,6 +282,11 @@ The Data Plane API (seen in v3.2.18) can crash when it receives two configuratio
 ## Raw configuration
 
 **Config → Edit** opens the whole `haproxy.cfg` for anything the forms don't cover, such as TLS certificates, ACLs, stick tables or global tuning. **Review change** shows the diff and the validation result before you apply. Reading the raw config needs `haproxy.configure` too, because it can contain passwords.
+
+
+### When HAProxy rejects a change
+
+Every change, from the forms or the raw editor, is checked by HAProxy itself before anything is applied. If it's rejected, the review lists **each problem with its line number, its section (for example `backend api`) and the line itself**, next to HAProxy's message, and **Apply** stays off. Nothing on the HAProxy has changed.
 
 ## Permissions
 
