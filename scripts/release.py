@@ -4,7 +4,7 @@
     python scripts/release.py check 2.8.0    # fail unless everything says 2.8.0 and the installers are current
     python scripts/release.py notes 2.8.0    # the changelog section of 2.8.0, for the GitHub release
 
-`make release VERSION=2.8.0` runs the bump; pushing the tag v2.8.0 makes GitHub Actions build, publish and release.
+`make release VERSION=2.8.0` runs the bump; `make publish` then releases it from this machine (scripts/publish.sh).
 """
 
 import json

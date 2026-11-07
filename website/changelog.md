@@ -13,10 +13,10 @@ Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and 
 - **Port-forward for TCP** (databases, Redis…) through the hub: `k10y hub login` and `k10y port-forward`, with the new `pods.portforward` permission.
 - **Helm upgrade with edited values** (dry run with the exact diff; masked values keep their real value).
 - **Activity log export** to a webhook, syslog (UDP/TCP/TLS) or daily files, **retention**, and **CSV/JSON download**.
-- **Helm charts** for the agent and for the hub (bundled PostgreSQL or your own), at `oci://ghcr.io/chhayserver/charts`.
+- **Helm charts** for the agent and for the hub (bundled PostgreSQL or your own), attached to every GitHub release.
 - **"Agent outdated" badge** on the cluster pages, with what's missing and how to update.
 - **Smaller image** (about 490 MB instead of 594 MB) and Helm 3.22.1 (no known critical vulnerabilities).
-- **Automatic releases** from a tag, **security scanning** (Dependabot, CodeQL, Trivy) and **browser tests in CI**.
+- **One-command releases** (`make release` + `make publish`), **security scanning** (Dependabot, CodeQL, Trivy) and **browser tests in CI**.
 - **Agent RBAC:** `pods/portforward` in the control role. Re-apply `install.yaml` when upgrading.
 
 ## 2.7.1 <Badge type="tip" text="latest" />

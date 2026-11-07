@@ -23,10 +23,14 @@ test:             ## Run unit tests inside the image
 	  -c "pip install --quiet --user pytest httpx && python -m pytest -q /tests"
 
 .PHONY: release
-release:          ## Prepare a release: make release VERSION=2.8.0, then commit and push the tag v2.8.0
+release:          ## Prepare a release: make release VERSION=2.8.0 (versions, changelog, installers, charts)
 	@test -n "$(VERSION)" || (echo "usage: make release VERSION=2.8.0" && exit 1)
 	docker run --rm -v $(CURDIR):/w -w /w --entrypoint python $(IMAGE):$(TAG) scripts/release.py bump $(VERSION)
-	@echo "Now: git commit -am 'Release $(VERSION)' && git tag -a v$(VERSION) -m 'k10y $(VERSION)' && git push origin main v$(VERSION)"
+	@echo "Review the changes (git diff), then: make publish"
+
+.PHONY: publish
+publish:          ## Publish the version prepared by make release: image, git tag, GitHub release with charts, website
+	scripts/publish.sh
 
 .PHONY: e2e e2e-image
 e2e-image:        ## Build the browser-test image (Playwright)

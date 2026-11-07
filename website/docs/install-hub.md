@@ -78,7 +78,7 @@ docker compose down               # remove containers; data stays in ./data
 The hub can also run in a cluster, with the **k10y-hub** Helm chart:
 
 ```bash
-helm install k10y-hub oci://ghcr.io/chhayserver/charts/k10y-hub -n k10y-hub --create-namespace \
+helm install k10y-hub https://github.com/chhayserver/k10y-agent/releases/latest/download/k10y-hub.tgz -n k10y-hub --create-namespace \
   --set publicUrl=https://k10y.example.com
 kubectl -n k10y-hub get secret k10y-hub-secrets -o jsonpath='{.data.admin-password}' | base64 -d; echo   # first password
 kubectl -n k10y-hub port-forward svc/k10y-hub 8443:8443                                                  # or use an Ingress

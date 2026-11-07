@@ -345,11 +345,13 @@ pinned). **edge** is k3d with NodePort 30800 mapped to `localhost:30801`.
 
 ## Releasing
 
-1. Write the changes under `## Unreleased` in `website/changelog.md`.
-2. `make release VERSION=X.Y.Z`, review, then `git commit -am "Release X.Y.Z" && git tag -a vX.Y.Z -m "k10y X.Y.Z" && git push origin main vX.Y.Z`.
-3. GitHub Actions (`.github/workflows/release.yml`) checks the versions, runs the tests, builds and pushes the multi-arch image, pushes the Helm charts to `oci://ghcr.io/chhayserver/charts`, creates the GitHub release with the install files and deploys the website. It needs the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (and `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` for the website).
+Releases are made from the maintainer's machine:
 
-Every pull request runs CI (tests, type check, website and image builds, a Trivy scan, and browser tests against a kind cluster), CodeQL, and Dependabot keeps dependencies current.
+1. Write the changes under `## Unreleased` in `website/changelog.md`.
+2. `make release VERSION=X.Y.Z`: every version, the changelog, the installers and the Helm charts are updated. Review with `git diff`.
+3. `make publish`: checks, builds and tests the image, commits and tags, pushes the multi-arch image to Docker Hub, creates the GitHub release with the install files and both Helm charts, deploys the website and updates the local hub. It needs `docker login` as `k10y`, `gh`, `helm` and `~/.cloudflare-k10y.env`.
+
+Every pull request runs CI (tests, version check, type check, website and image builds, a Trivy scan, and browser tests against a kind cluster) and CodeQL; Dependabot keeps dependencies current.
 
 ## Roadmap
 

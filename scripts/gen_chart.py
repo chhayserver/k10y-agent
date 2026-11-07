@@ -3,7 +3,7 @@ and stamp the version on both charts (the hub chart's templates are hand-written
 
     python scripts/gen_chart.py 2.8.0
 
-Install:  helm install k10y-agent oci://ghcr.io/chhayserver/charts/k10y-agent -n k10y --create-namespace
+Install:  helm install k10y-agent https://github.com/chhayserver/k10y-agent/releases/latest/download/k10y-agent.tgz -n k10y --create-namespace
 """
 
 import sys

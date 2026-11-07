@@ -19,7 +19,7 @@ kubectl apply -f https://github.com/chhayserver/k10y-agent/releases/latest/downl
 Or with **Helm**:
 
 ```bash
-helm install k10y-agent oci://ghcr.io/chhayserver/charts/k10y-agent -n k10y --create-namespace \
+helm install k10y-agent https://github.com/chhayserver/k10y-agent/releases/latest/download/k10y-agent.tgz -n k10y --create-namespace \
   --set clusterName=prod-eu            # control: false for read-only; helm: true for Helm rollback/upgrade
 ```
 
