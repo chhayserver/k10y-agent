@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from .. import __version__, ai
 from . import alerts, haproxy, haproxy_monitor, k8s_insights
 from ..config import Settings
-from .db import (AuditEntry, Cluster, Database, Role, RoleAssignment, SessionRow, Setting, User, UserPreference, get_setting,
+from .db import (ApiToken, AuditEntry, Cluster, Database, Role, RoleAssignment, SessionRow, Setting, User, UserPreference, get_setting,
                  utcnow)
 from .permissions import (ALL_PERMISSIONS, BUILTIN_BASELINE, BUILTIN_ROLES, CLUSTER_PERMISSIONS, SPLIT_ROLES, GLOBAL_PERMISSIONS, HAPROXY_PERMISSIONS, HUB_PERMISSIONS,
                           required_permission)
@@ -173,8 +173,10 @@ def crypto() -> Crypto:
 # --- auth -----------------------------------------------------------------------------
 
 class Principal:
-    def __init__(self, user: User, grants: Dict[Optional[int], Set[str]], session_id: Optional[int] = None):
+    def __init__(self, user: User, grants: Dict[Optional[int], Set[str]], session_id: Optional[int] = None,
+                 token_name: Optional[str] = None):
         self.user = user
+        self.token_name = token_name   # set when the request came with an API token
         self.grants = grants  # None = everything, cluster id = one cluster, "hx:<id>" = one HAProxy -> permissions
         self.session_id = session_id
 
@@ -230,10 +232,44 @@ def authenticate(s: Session, token: Optional[str]) -> Principal:
     return Principal(user, load_grants(s, user), row.id)
 
 
+TOKEN_PREFIX = "k10y_"
+
+
+def authenticate_token(s: Session, raw: str, ip: str = "") -> Principal:
+    """API token -> Principal: the user's permissions, limited to the token's role when it has one."""
+    row = s.execute(select(ApiToken).where(ApiToken.token_hash == token_digest(raw))).scalar_one_or_none()
+    now = utcnow()
+    if row is None or (row.expires_at and _aware(row.expires_at) < now):
+        raise HTTPException(status_code=401, detail="invalid or expired API token")
+    user = s.get(User, row.user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=401, detail="account disabled")
+    grants = load_grants(s, user)
+    if row.role_id is not None:
+        role = s.get(Role, row.role_id)
+        allowed = set(role.permissions or []) if role else set()
+        grants = {k: v & allowed for k, v in grants.items()}
+    if not row.last_used_at or (now - _aware(row.last_used_at)).total_seconds() > 60:
+        row.last_used_at, row.last_ip = now, ip[:64]
+        s.commit()
+    return Principal(user, grants, token_name=row.name)
+
+
+def bearer_token(request: Request) -> Optional[str]:
+    auth = request.headers.get("authorization") or ""
+    return auth[7:].strip() if auth.lower().startswith("bearer ") and auth[7:].strip().startswith(TOKEN_PREFIX) else None
+
+
 def current(request: Request, s: Session = Depends(db_session)) -> Principal:
-    p = authenticate(s, request.cookies.get(COOKIE))
-    if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get("x-k10y-csrf") != "1":
-        raise HTTPException(status_code=403, detail="missing CSRF header")
+    raw = bearer_token(request)
+    if raw:   # API token: no cookie involved, so no CSRF check; tokens can't make or manage tokens
+        p = authenticate_token(s, raw, request.client.host if request.client else "")
+        if request.url.path.startswith("/api/hub/auth/") and request.url.path != "/api/hub/auth/me":
+            raise HTTPException(status_code=403, detail="sign in with a password for account settings; API tokens can't change them")
+    else:
+        p = authenticate(s, request.cookies.get(COOKIE))
+        if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get("x-k10y-csrf") != "1":
+            raise HTTPException(status_code=403, detail="missing CSRF header")
     if p.user.must_change_password and request.url.path not in ("/api/hub/auth/me", "/api/hub/auth/password",
                                                                 "/api/hub/auth/logout"):
         raise HTTPException(status_code=403, detail="password change required")
@@ -286,6 +322,8 @@ def require(perm: str):
 def audit(s: Session, request: Request, p: Optional[Principal], action: str, target: str = "", *, ok: bool = True,
           message: str = "", params: Optional[dict] = None, cluster: Optional[Cluster] = None,
           dry_run: bool = False, username: str = "") -> None:
+    if p is not None and p.token_name:
+        params = {**(params or {}), "via_token": p.token_name}
     s.add(AuditEntry(user_id=p.user.id if p else None, username=p.user.username if p else username,
                      cluster_id=cluster.id if cluster else None, cluster_name=cluster.name if cluster else "",
                      action=action, target=target, params=params or {}, dry_run=dry_run, ok=ok, message=message[:2000],
@@ -454,6 +492,77 @@ def totp_disable(body: TotpPasswordBody, request: Request, p: Principal = Depend
 
 def _clear_totp(user: User) -> None:
     user.totp_enabled, user.totp_secret, user.totp_last_step, user.recovery_codes = False, None, None, None
+
+
+# --- API tokens ---------------------------------------------------------------------------
+
+class TokenBody(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    expires_days: int = Field(90, ge=0, le=730)     # 0 = never
+    role_id: Optional[int] = None                    # limit the token to this role's permissions
+
+
+def token_view(t: ApiToken, role_name: Optional[str] = None) -> dict:
+    iso = lambda d: _aware(d).isoformat() if d else None
+    return {"id": t.id, "name": t.name, "prefix": t.prefix, "role_id": t.role_id, "role": role_name,
+            "created_at": iso(t.created_at), "expires_at": iso(t.expires_at), "last_used_at": iso(t.last_used_at), "last_ip": t.last_ip}
+
+
+def _tokens_of(s: Session, user_id: int) -> list:
+    roles = {r.id: r.name for r in s.execute(select(Role)).scalars()}
+    return [token_view(t, roles.get(t.role_id)) for t in s.execute(select(ApiToken).where(ApiToken.user_id == user_id)
+                                                                     .order_by(ApiToken.created_at.desc())).scalars()]
+
+
+@api.get("/auth/tokens")
+def my_tokens(p: Principal = Depends(current), s: Session = Depends(db_session)) -> list:
+    return _tokens_of(s, p.user.id)
+
+
+@api.post("/auth/tokens")
+def create_token(body: TokenBody, request: Request, p: Principal = Depends(current), s: Session = Depends(db_session)) -> dict:
+    """The token is shown once; only its digest is stored."""
+    if body.role_id is not None and s.get(Role, body.role_id) is None:
+        raise HTTPException(status_code=400, detail="unknown role")
+    if s.execute(select(func.count(ApiToken.id)).where(ApiToken.user_id == p.user.id)).scalar() >= 25:
+        raise HTTPException(status_code=400, detail="You have 25 tokens. Revoke some first.")
+    raw = TOKEN_PREFIX + pysecrets.token_urlsafe(32)
+    t = ApiToken(user_id=p.user.id, name=body.name, token_hash=token_digest(raw), prefix=raw[:len(TOKEN_PREFIX) + 6],
+                 role_id=body.role_id, expires_at=utcnow() + timedelta(days=body.expires_days) if body.expires_days else None)
+    s.add(t)
+    s.commit()
+    role = s.get(Role, body.role_id).name if body.role_id else None
+    audit(s, request, p, "token-create", body.name, params={"expires_days": body.expires_days, "role": role})
+    return {**token_view(t, role), "token": raw}
+
+
+@api.delete("/auth/tokens/{token_id}")
+def revoke_my_token(token_id: int, request: Request, p: Principal = Depends(current), s: Session = Depends(db_session)) -> dict:
+    t = s.get(ApiToken, token_id)
+    if t is None or t.user_id != p.user.id:
+        raise HTTPException(status_code=404, detail="token not found")
+    s.delete(t)
+    s.commit()
+    audit(s, request, p, "token-revoke", t.name)
+    return {"ok": True}
+
+
+@api.get("/users/{user_id}/tokens")
+def user_tokens(user_id: int, p: Principal = Depends(require("users.manage")), s: Session = Depends(db_session)) -> list:
+    return _tokens_of(s, user_id)
+
+
+@api.delete("/users/{user_id}/tokens/{token_id}")
+def revoke_user_token(user_id: int, token_id: int, request: Request, p: Principal = Depends(require("users.manage")),
+                      s: Session = Depends(db_session)) -> dict:
+    t = s.get(ApiToken, token_id)
+    if t is None or t.user_id != user_id:
+        raise HTTPException(status_code=404, detail="token not found")
+    user = s.get(User, user_id)
+    s.delete(t)
+    s.commit()
+    audit(s, request, p, "token-revoke", f"{user.username if user else user_id}/{t.name}", message="revoked by an administrator")
+    return {"ok": True}
 
 
 @api.post("/auth/logout")

@@ -80,6 +80,22 @@ class SessionRow(Base):
     last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ApiToken(Base):
+    """A personal API token: acts as its user, optionally limited to one role's permissions. Only a digest is kept."""
+    __tablename__ = "api_tokens"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(64))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    prefix: Mapped[str] = mapped_column(String(16), default="")         # shown so people can tell tokens apart
+    # Deleting the role deletes the token: it must never fall back to all of the user's permissions.
+    role_id: Mapped[Optional[int]] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_ip: Mapped[str] = mapped_column(String(64), default="")
+
+
 class UserPreference(Base):
     """Personal dashboard settings (hidden pages, theme, refresh, start page...), so they follow the user."""
     __tablename__ = "user_preferences"

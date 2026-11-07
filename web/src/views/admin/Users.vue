@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ApiTokens from "@/components/ApiTokens.vue";
 import PasswordInput from "@/components/PasswordInput.vue";
 import { computed, onMounted, reactive, ref } from "vue";
 import { hub } from "@/api/client";
@@ -114,6 +115,7 @@ const columns = [{ key: "username", label: "Username", cls: "primary" }, { key: 
       </div>
       <button class="btn sm" style="align-self:flex-start" @click="edit.assignments.push({ role_id: roles[0]?.id, cluster_id: null, haproxy_id: null })">Add role</button>
     </div>
+    <div v-if="edit.id" class="form-row"><span class="lbl">API tokens</span><ApiTokens :key="edit.id" :user-id="edit.id" /></div>
     <div v-if="edit.id" class="form-row"><div style="display:flex;align-items:center;gap:8px"><span class="lbl" style="flex:1">Signed-in devices</span>
       <button v-if="userSessions?.length" class="btn sm" type="button" @click="signOutEverywhere({ id: edit.id, username: edit.username })">Sign out everywhere</button></div>
       <SessionsList :sessions="userSessions" /></div>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ApiTokens from "@/components/ApiTokens.vue";
 import TwoFactorSetup from "@/components/TwoFactorSetup.vue";
 import { computed, onMounted, ref } from "vue";
 import { hub } from "@/api/client";
@@ -60,6 +61,7 @@ function reset() { if (confirm("Reset all your dashboard preferences to their de
           <button class="btn" @click="reset">Reset</button></div>
       </div></section>
       <section class="card"><div class="card-head"><h2>Two-factor login</h2></div><div class="card-body"><TwoFactorSetup /></div></section>
+      <section class="card"><div class="card-head"><h2>API tokens</h2></div><div class="card-body"><ApiTokens /></div></section>
       <section class="card"><div class="card-head"><h2>Signed-in devices</h2><div class="right">
         <button v-if="(sessions?.length || 0) > 1" class="btn sm" @click="endOthers">Sign out all others</button></div></div>
         <div class="card-body"><SessionsList :sessions="sessions" can-end @end="endSession" />
