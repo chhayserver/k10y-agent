@@ -17,9 +17,9 @@ RUN pip install --no-cache-dir --prefix=/install ".[server]"
 # 3. Helm, for rolling back Helm releases from the hub (opt-in on the agent). Checksums pinned from the Helm release.
 FROM python:3.12-slim AS helm
 ARG TARGETARCH
-ARG HELM_VERSION=v3.16.3
-ARG HELM_SHA256_amd64=f5355c79190951eed23c5432a3b920e071f4c00a64f75e077de0dd4cb7b294ea
-ARG HELM_SHA256_arm64=5bd34ed774df6914b323ff84a0a156ea6ff2ba1eaf0113962fa773f3f9def798
+ARG HELM_VERSION=v3.22.1
+ARG HELM_SHA256_amd64=896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea
+ARG HELM_SHA256_arm64=4c29e286b279d170fa048ddfc3e4e83dcd069ca9c52102766ba672d7149e694d
 RUN python - <<'PY'
 import hashlib, io, os, tarfile, urllib.request
 arch = os.environ["TARGETARCH"]
