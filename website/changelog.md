@@ -6,7 +6,7 @@ title: Changelog
 
 Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached to the [GitHub release](https://github.com/chhayserver/k10y-agent/releases).
 
-## Unreleased
+## 2.6.0 <Badge type="tip" text="latest" />
 
 - **Protected namespaces in the hub:** choose each cluster's protected namespaces in **System settings → Protected namespaces**, with the new `namespaces.protect` permission (Admin and Kubernetes admin have it; it can be given per cluster). The agent keeps the list in its own Secret, so it survives restarts and upgrades, and every change is in the activity log.
 - **Add cluster: just type the address.** Enter `192.168.64.2:30800` without a scheme; k10y finds how the agent answers. The agent serves HTTPS itself, also through a NodePort, so `https://` is added for you, and an `http://` address is switched to `https://` when the agent speaks TLS (before, it failed with "Server disconnected").
@@ -22,7 +22,7 @@ Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and 
 - **Service → HAProxy:** a Service shows the HAProxy backends that send traffic to it.
 - **Agent RBAC:** read access to ResourceQuotas, LimitRanges and cert-manager Certificates. Re-apply `install.yaml` when upgrading.
 
-## 2.5.0 <Badge type="tip" text="latest" />
+## 2.5.0
 
 - **HAProxy permissions per instance:** a role can now be assigned on **one HAProxy instance** (like one cluster), so someone can operate `lb-edge-1` without seeing or touching the others. Lists, pages, buttons, alerts and group changes all follow it.
 - **New `haproxy.manage` permission** for adding, editing and removing HAProxy instances and their Data Plane API logins (it used to be part of `clusters.manage`). Roles that had `clusters.manage` get it automatically.
