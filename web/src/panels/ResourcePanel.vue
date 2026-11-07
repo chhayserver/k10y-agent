@@ -82,6 +82,12 @@ const host = computed(() => location.hostname);
 const editing = ref(false);
 const cl = useCluster();
 // Open a Service's HTTP port through the hub: a one-hour link, sandboxed so the app can't act as you in k10y.
+// k10y port-forward command for a TCP port (the CLI goes through the hub with an API token).
+const canForward = computed(() => s.can("pods.portforward") && cl.control && !cl.isProtected(props.r.namespace));
+async function copyForward(p: any) {
+  const cmd = `k10y port-forward ${s.current!.name} svc/${props.r.name} ${p.port} -n ${props.r.namespace}`;
+  try { await navigator.clipboard.writeText(cmd); toast(true, "Copied. Run it after k10y hub login (My settings → API tokens)."); } catch { toast(false, cmd); }
+}
 const canOpen = computed(() => s.can("services.proxy") && cl.control && !cl.isProtected(props.r.namespace));
 async function openService(p: any) {
   const win = window.open("about:blank", "_blank");   // open now, or the popup blocker steps in
@@ -219,10 +225,12 @@ async function copyYaml() { try { await navigator.clipboard.writeText(d.value.ya
       </div>
       <div v-if="r.kind === 'Service'">
         <h3 class="section-title">Ports</h3>
-        <div class="table-wrap card" style="box-shadow:none"><table class="data"><thead><tr><th>Name</th><th>Port</th><th>Target</th><th>Protocol</th><th>NodePort</th><th v-if="canOpen"><span class="sr-only">Open</span></th></tr></thead><tbody>
+        <div class="table-wrap card" style="box-shadow:none"><table class="data"><thead><tr><th>Name</th><th>Port</th><th>Target</th><th>Protocol</th><th>NodePort</th><th v-if="canOpen || canForward"><span class="sr-only">Open</span></th></tr></thead><tbody>
           <tr v-for="p in sp.ports || []" :key="p.port"><td>{{ p.name || "–" }}</td><td class="num">{{ p.port }}</td><td>{{ p.targetPort }}</td><td>{{ p.protocol || "TCP" }}</td>
             <td><a v-if="p.nodePort" class="ext-link" :href="`http://${host}:${p.nodePort}`" target="_blank" rel="noopener">{{ p.nodePort }}<Icon name="external" /></a><span v-else>–</span></td>
-            <td v-if="canOpen" class="actions"><button v-if="(p.protocol || 'TCP') === 'TCP'" class="btn ghost sm" type="button" title="Open this port's web page through the hub (link valid for 1 hour)" @click="openService(p)">Open<Icon name="external" /></button></td></tr>
+            <td v-if="canOpen || canForward" class="actions"><template v-if="(p.protocol || 'TCP') === 'TCP'">
+              <button v-if="canOpen" class="btn ghost sm" type="button" title="Open this port's web page through the hub (link valid for 1 hour)" @click="openService(p)">Open<Icon name="external" /></button>
+              <button v-if="canForward" class="btn ghost sm" type="button" title="Copy the k10y port-forward command for this port (databases, Redis, any TCP)" @click="copyForward(p)"><Icon name="copy" />Forward</button></template></td></tr>
         </tbody></table></div>
       </div>
       <ServiceHaproxy v-if="r.kind === 'Service'" :namespace="r.namespace!" :name="r.name" />

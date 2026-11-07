@@ -1618,6 +1618,95 @@ async def pod_shell(ws: WebSocket, cluster_id: int, namespace: str, pod: str, co
         record(True, "shell closed" + (f": {reason}" if reason else ""), {"seconds": int(time.monotonic() - started)})
 
 
+@app.websocket("/api/hub/clusters/{cluster_id}/portforward/{kind}/{namespace}/{name}")
+async def port_forward(ws: WebSocket, cluster_id: int, kind: str, namespace: str, name: str, port: int = Query(..., ge=1, le=65535)) -> None:
+    """k10y port-forward <-> hub <-> agent, one TCP connection per WebSocket. API token or session (from this hub's
+    pages only) with pods.portforward; every connection is audited."""
+    await ws.accept()   # so refusals reach the CLI with their reason
+    raw = (ws.headers.get("authorization") or "")[7:].strip() if (ws.headers.get("authorization") or "").lower().startswith("bearer ") else ""
+    with state["db"].session() as s:
+        try:
+            if raw.startswith(TOKEN_PREFIX):
+                p = authenticate_token(s, raw, ws.client.host if ws.client else "")
+            else:
+                origin, host = ws.headers.get("origin", ""), ws.headers.get("host", "")
+                if not origin or urlsplit(origin).netloc != host:
+                    raise HTTPException(status_code=401, detail="use an API token (k10y hub login)")
+                p = authenticate(s, ws.cookies.get(COOKIE))
+        except HTTPException as e:
+            await ws.close(code=4401, reason=str(e.detail)[:120])
+            return
+        c = s.get(Cluster, cluster_id)
+        if c is None or not p.can("cluster.view", cluster_id) or p.user.must_change_password or must_setup_2fa(s, p):
+            await ws.close(code=4404, reason="cluster not found")
+            return
+        if not p.can("pods.portforward", cluster_id):
+            await ws.close(code=4403, reason="missing permission: pods.portforward")
+            return
+        token, verify, base, username = crypto().decrypt(c.token_encrypted), c.verify_tls, c.url.rstrip("/"), p.user.username
+        cluster_name, user_id, via = c.name, p.user.id, p.token_name
+    target = f"{kind}/{namespace}/{name}:{port}"
+    client_ip = ws.client.host if ws.client else ""
+
+    def record(ok: bool, message: str, params: Optional[dict] = None) -> None:
+        with state["db"].session() as s2:
+            s2.add(AuditEntry(user_id=user_id, username=username, cluster_id=cluster_id, cluster_name=cluster_name,
+                              action="port-forward", target=target, params={**(params or {}), **({"via_token": via} if via else {})},
+                              ok=ok, message=message[:2000], client_ip=client_ip))
+            s2.commit()
+
+    url = ("wss://" + base[len("https://"):] if base.startswith("https://") else "ws://" + base.split("://", 1)[-1]) + \
+        f"/api/v1/portforward/{quote(kind)}/{quote(namespace)}/{quote(name)}?port={port}"
+    ssl_ctx = None
+    if url.startswith("wss://"):
+        ssl_ctx = ssl.create_default_context()
+        if not verify:
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+    started = time.monotonic()
+    try:
+        agent_ws = await ws_connect(url, ssl=ssl_ctx, open_timeout=10, max_size=2 ** 22,
+                                    additional_headers={"Authorization": f"Bearer {token}", "X-K10Y-Actor": f"hub:{username}"[:64]})
+    except Exception as e:
+        record(False, f"cannot reach the agent: {e}")
+        await ws.close(code=1011, reason=f"cannot reach the agent: {e}"[:120])
+        return
+    sent = received = 0
+
+    async def to_agent() -> None:
+        nonlocal sent
+        while True:
+            msg = await ws.receive()
+            if msg.get("type") == "websocket.disconnect":
+                return
+            data = msg.get("bytes") or (msg.get("text") or "").encode()
+            sent += len(data)
+            await agent_ws.send(data)
+
+    async def to_client() -> None:
+        nonlocal received
+        async for msg in agent_ws:
+            data = msg if isinstance(msg, bytes) else msg.encode()
+            received += len(data)
+            await ws.send_bytes(data)
+
+    tasks = [asyncio.create_task(to_agent()), asyncio.create_task(to_client())]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in tasks:
+            task.cancel()
+        code, reason = getattr(agent_ws, "close_code", None), getattr(agent_ws, "close_reason", "") or ""
+        await agent_ws.close()
+        try:
+            await ws.close(code=code if code and code >= 4000 else 1000, reason=reason[:120])
+        except (RuntimeError, WebSocketDisconnect):
+            pass
+        refused = bool(code and code >= 4000)
+        record(not refused, reason or "connection closed",
+               {"seconds": int(time.monotonic() - started), "bytes_in": sent, "bytes_out": received})
+
+
 # --- alerts ---------------------------------------------------------------------------
 
 def _agent_get(c: Cluster, path: str) -> Any:

@@ -28,6 +28,10 @@ rules:
   - apiGroups: [""]
     resources: [pods/exec]
     verbs: [get, create]
+  # Port-forward (k10y port-forward). The hub only allows it to users with the pods.portforward permission.
+  - apiGroups: [""]
+    resources: [pods/portforward]
+    verbs: [get, create]
   - apiGroups: [""]
     resources: [services]
     verbs: [create, patch, update, delete]

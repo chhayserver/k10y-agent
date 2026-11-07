@@ -15,6 +15,9 @@ from rich.table import Table
 app = typer.Typer(help="Monitor Kubernetes clusters through k10y agents.", no_args_is_help=True)
 cluster_app = typer.Typer(help="Manage the agent endpoints the CLI knows about.", no_args_is_help=True)
 app.add_typer(cluster_app, name="cluster")
+hub_app = typer.Typer(help="Use a k10y hub (with an API token) for commands that go through it, like port-forward.",
+                      no_args_is_help=True)
+app.add_typer(hub_app, name="hub")
 
 console = Console()
 CONFIG_PATH = Path(os.environ.get("K10Y_CONFIG", str(Path.home() / ".k10y" / "config.yaml")))
@@ -499,6 +502,116 @@ def audit(cluster: Optional[str] = ClusterOpt, limit: int = typer.Option(30, "--
         result = "[red]failed[/red]" if not a["ok"] else "dry run" if a["dry_run"] else "[green]ok[/green]"
         table.add_row(a["time"], a["actor"], a["action"], a["target"], result, a["message"])
     console.print(table)
+
+
+# --- hub: port-forward --------------------------------------------------------
+
+
+@hub_app.command("login")
+def hub_login(
+    url: str = typer.Argument(..., help="Hub address, e.g. https://k10y.example.com:8443"),
+    token: str = typer.Option("", "--token", "-t", help="API token from My settings → API tokens (asked if omitted)."),
+    insecure: bool = typer.Option(False, "--insecure", "-k", help="Skip TLS verification (self-signed hub certificate)."),
+) -> None:
+    """Save the hub address and an API token (in ~/.k10y/config.yaml, readable only by you)."""
+    token = token or getpass.getpass("API token: ")
+    url = url.rstrip("/")
+    try:
+        r = httpx.get(f"{url}/api/hub/auth/me", headers={"Authorization": f"Bearer {token}"}, verify=not insecure, timeout=15)
+    except httpx.HTTPError as e:
+        _fail(f"cannot reach {url}: {e}")
+    if r.status_code != 200:
+        _fail(f"the hub refused the token ({r.status_code}): {_error_detail(r)}")
+    cfg = load_config()
+    cfg["hub"] = {"url": url, "token": token, "insecure": insecure}
+    save_config(cfg)
+    console.print(f"signed in to [bold]{url}[/bold] as {r.json()['user']['username']}")
+
+
+def _hub() -> Dict[str, Any]:
+    hub = load_config().get("hub")
+    if not hub:
+        _fail("no hub yet; run `k10y hub login URL` with an API token first")
+    return hub
+
+
+@app.command("port-forward")
+def port_forward(
+    cluster: str = typer.Argument(..., help="Cluster name as shown in the hub."),
+    target: str = typer.Argument(..., help="svc/NAME or pod/NAME"),
+    ports: str = typer.Argument(..., help="PORT, or LOCAL:REMOTE (e.g. 15432:5432)"),
+    namespace: str = typer.Option("default", "--namespace", "-n"),
+    address: str = typer.Option("127.0.0.1", "--address", help="Local address to listen on."),
+) -> None:
+    """Forward a local port to a pod or Service through the hub (needs the pods.portforward permission)."""
+    import asyncio
+    import ssl
+    from urllib.parse import quote
+
+    from websockets.asyncio.client import connect
+
+    hub = _hub()
+    kind, _, name = target.partition("/")
+    kind = {"svc": "service", "service": "service", "pod": "pod", "po": "pod"}.get(kind, "")
+    if not kind or not name:
+        _fail("target must be svc/NAME or pod/NAME")
+    local, _, remote = ports.partition(":")
+    try:
+        local_port, remote_port = int(local), int(remote or local)
+    except ValueError:
+        _fail("ports must be PORT or LOCAL:REMOTE")
+    auth = {"Authorization": f"Bearer {hub['token']}"}
+    r = httpx.get(f"{hub['url']}/api/hub/clusters", headers=auth, verify=not hub.get("insecure"), timeout=15)
+    if r.status_code != 200:
+        _fail(f"hub: {_error_detail(r)}")
+    match = [c for c in r.json() if c["name"] == cluster]
+    if not match:
+        _fail(f"no cluster {cluster!r} on the hub (you see: {', '.join(c['name'] for c in r.json()) or 'none'})")
+    base = hub["url"].replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+    ws_url = f"{base}/api/hub/clusters/{match[0]['id']}/portforward/{kind}/{quote(namespace)}/{quote(name)}?port={remote_port}"
+    ctx = None
+    if ws_url.startswith("wss://"):
+        ctx = ssl.create_default_context()
+        if hub.get("insecure"):
+            ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            async with connect(ws_url, ssl=ctx, additional_headers=auth, open_timeout=15, max_size=2 ** 22) as ws:
+                async def up() -> None:
+                    while data := await reader.read(65536):
+                        await ws.send(data)
+                    await ws.close()
+
+                async def down() -> None:
+                    async for msg in ws:
+                        writer.write(msg if isinstance(msg, bytes) else msg.encode())
+                        await writer.drain()
+
+                done, pending = await asyncio.wait([asyncio.create_task(up()), asyncio.create_task(down())],
+                                                   return_when=asyncio.FIRST_COMPLETED)
+                for t in pending:
+                    t.cancel()
+                if ws.close_code and ws.close_code >= 4000:
+                    console.print(f"[red]refused:[/red] {ws.close_reason}")
+        except Exception as e:
+            console.print(f"[red]connection failed:[/red] {e}")
+        finally:
+            writer.close()
+
+    async def serve() -> None:
+        server = await asyncio.start_server(handle, address, local_port)
+        console.print(f"Forwarding {address}:{local_port} -> {kind}/{namespace}/{name}:{remote_port} on {cluster} "
+                      f"(through {hub['url']}). Ctrl+C to stop.")
+        async with server:
+            await server.serve_forever()
+
+    try:
+        asyncio.run(serve())
+    except KeyboardInterrupt:
+        pass
+    except OSError as e:
+        _fail(f"cannot listen on {address}:{local_port}: {e}")
 
 
 if __name__ == "__main__":

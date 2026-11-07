@@ -15,6 +15,7 @@ CLUSTER_PERMISSIONS: Dict[str, str] = {
     "workloads.delete": "Delete Deployments and Jobs",
     "pods.exec": "Open a shell in a pod's container",
     "services.proxy": "Open a Service's web page (HTTP port) in the browser through the hub",
+    "pods.portforward": "Forward a pod's or Service's TCP port to your computer (k10y port-forward)",
     "pods.delete": "Delete pods",
     "services.delete": "Delete Services",
     "config.delete": "Delete ConfigMaps and Secrets",

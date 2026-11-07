@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from . import insights, __version__
 from .collectors import Collector
 from .config import Settings
-from . import ai, logstream, podexec
+from . import ai, logstream, podexec, portforward
 from .metrics_history import MetricsHistory
 from .resources import NotSupported, ResourceViewer
 from .controls import ActionError, AuditLog, Controller, ProtectedNamespaceError, api_error_message, now_iso
@@ -1031,6 +1031,56 @@ async def pod_exec(ws: WebSocket, namespace: str, pod: str, container: Optional[
             await ws.close()
         except RuntimeError:
             pass
+
+
+@app.websocket("/api/v1/portforward/{kind}/{namespace}/{name}")
+async def port_forward(ws: WebSocket, kind: str, namespace: str, name: str, port: int = Query(..., ge=1, le=65535)) -> None:
+    """One TCP connection to a pod or Service port, carried as binary WebSocket messages."""
+    try:
+        require_token(ws.headers.get("authorization"))
+    except HTTPException as e:
+        await ws.close(code=4401, reason=str(e.detail)[:120])
+        return
+    if kind not in ("pod", "service") or not re.match(NS_NAME, namespace) or not re.match(r"^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$", name):
+        await ws.close(code=4400, reason="invalid target")
+        return
+    if not settings.control_enabled:
+        await ws.close(code=4403, reason="port-forward needs a control-enabled agent")
+        return
+    if namespace in settings.protected:
+        await ws.close(code=4403, reason=f"namespace {namespace} is protected")
+        return
+    await ws.accept()   # accept first, so refusals below reach the client with their reason
+    actor = (ws.headers.get("x-k10y-actor") or "unknown")[:64]
+    target = f"{kind}/{namespace}/{name}:{port}"
+
+    def record(ok: bool, message: str, params: Optional[dict] = None) -> None:
+        audit_log.record({"time": now_iso(), "actor": actor, "client": ws.client.host if ws.client else None, "action": "port-forward",
+                          "target": target, "params": params or {}, "dry_run": False, "ok": ok, "message": message})
+
+    try:
+        core = client.CoreV1Api(client.ApiClient(get_api_client().configuration))   # stream swaps the client's request
+        pod, pod_port = await asyncio.to_thread(portforward.resolve, core, kind, namespace, name, port)
+        pf, sock = await asyncio.to_thread(portforward.open_forward, core, namespace, pod, pod_port)
+    except Exception as e:   # not found, not ready, no permission, API errors
+        reason = api_error_message(e) if isinstance(e, ApiException) else str(e)
+        record(False, reason)
+        status = e.status if isinstance(e, ApiException) and e.status in (403, 404) else 404 if isinstance(e, portforward.ForwardError) else 500
+        await ws.close(code=4000 + status, reason=reason[:120])   # 4xxx: refused before any byte was forwarded
+        return
+    started = time.monotonic()
+    sent = received = 0
+    try:
+        sent, received = await portforward.bridge(ws, pf, sock, pod_port)
+        ok, message = True, "connection closed"
+    except (portforward.ForwardError, WebSocketDisconnect) as e:
+        ok, message = isinstance(e, WebSocketDisconnect), str(e) or "connection closed"
+    finally:
+        try:
+            await ws.close()
+        except RuntimeError:
+            pass
+    record(ok, message, {"pod": pod, "pod_port": pod_port, "seconds": int(time.monotonic() - started), "bytes_in": sent, "bytes_out": received})
 
 
 @api.post("/apply")
