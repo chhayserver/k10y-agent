@@ -6,7 +6,13 @@ title: Changelog
 
 Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached (plus the optional `rbac-helm.yaml` from 2.7) to the [GitHub release](https://github.com/chhayserver/k10y-agent/releases).
 
-## 2.7.0 <Badge type="tip" text="latest" />
+## 2.7.1 <Badge type="tip" text="latest" />
+
+- **New website address:** the docs and website moved to **https://k10y-agents.pages.dev** (the old k10y.pages.dev no longer works). Links in the dashboard point there.
+- **License:** k10y is free software under the **GNU AGPL-3.0**. The image now carries the license (`/usr/share/doc/k10y/LICENSE`) and an OCI license label.
+- **CI** runs tests, the type check and the image build on every pull request.
+
+## 2.7.0
 
 - **Two-factor login:** a code from an authenticator app at every sign-in, with 10 single-use recovery codes. Set it up in **My settings**; require it for admins or everyone in **System settings → Sign-in security**; admins can reset it for a lost phone.
 - **More alert channels:** Slack, email (SMTP) and webhooks (JSON, optionally signed with HMAC-SHA256), next to Telegram.
