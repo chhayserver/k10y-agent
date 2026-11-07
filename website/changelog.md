@@ -6,7 +6,7 @@ title: Changelog
 
 Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached (plus the optional `rbac-helm.yaml` from 2.7) to the [GitHub release](https://github.com/chhayserver/k10y-agent/releases).
 
-## Unreleased
+## 2.8.0 <Badge type="tip" text="latest" />
 
 - **Single sign-on (OpenID Connect):** Google, Microsoft Entra ID, Keycloak, Okta and others, with groups mapped to roles and accounts created at first sign-in.
 - **API tokens** for scripts, CI and the CLI: act as you, optionally limited to a role, audited, revocable.
@@ -19,7 +19,7 @@ Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and 
 - **One-command releases** (`make release` + `make publish`), **security scanning** (Dependabot, CodeQL, Trivy) and **browser tests in CI**.
 - **Agent RBAC:** `pods/portforward` in the control role. Re-apply `install.yaml` when upgrading.
 
-## 2.7.1 <Badge type="tip" text="latest" />
+## 2.7.1
 
 - **New website address:** the docs and website moved to **https://k10y-agents.pages.dev** (the old k10y.pages.dev no longer works). Links in the dashboard point there.
 - **License:** k10y is free software under the **GNU AGPL-3.0**. The image now carries the license (`/usr/share/doc/k10y/LICENSE`) and an OCI license label.

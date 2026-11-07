@@ -5,15 +5,11 @@ import { computed, ref } from "vue";
 interface Item { t: string; d: string; area: string; v?: string }
 const columns: { id: string; title: string; hint: string; items: Item[] }[] = [
   { id: "next", title: "Next up", hint: "Being designed or built now", items: [
-    { t: "Helm upgrade from the hub", d: "Change a release's values and upgrade it with review and audit (rollback shipped in 2.7).", area: "Control" },
-    { t: "Port-forward for TCP", d: "Reach databases and other non-HTTP ports through the hub (HTTP Services open in the browser since 2.7).", area: "Control" },
+    { t: "Longer metrics history", d: "Keep more than 7 days of Kubernetes and HAProxy charts, or read them from Prometheus.", area: "Monitoring" },
+    { t: "Helm upgrade to a new chart version", d: "Upgrade a release to a newer chart from its repository, not only with new values.", area: "Control" },
   ] },
   { id: "planned", title: "Planned", hint: "Agreed, not started", items: [
     { t: "More systems in the hub", d: "Nginx first, then databases (PostgreSQL, MySQL) and Redis, each with its own pages but the same login, roles, audit and alerts.", area: "Systems" },
-    { t: "Single sign-on (OIDC)", d: "Sign in with Google, Microsoft Entra ID, Keycloak or any OIDC provider, mapping groups to roles.", area: "Security" },
-    { t: "Longer metrics history", d: "Keep more than 7 days of Kubernetes and HAProxy charts, or read them from Prometheus.", area: "Monitoring" },
-    { t: "Helm chart", d: "Install the agent with Helm, and run the hub inside Kubernetes.", area: "Install" },
-    { t: "Audit log export", d: "Ship audit entries to a SIEM or object storage, with retention settings.", area: "Security" },
   ] },
   { id: "exploring", title: "Exploring", hint: "Ideas we're researching. Tell us if you need them", items: [
     { t: "CI/CD pipelines", d: "See and re-run GitLab and Jenkins pipelines next to the clusters they deploy to.", area: "Systems" },
@@ -27,6 +23,7 @@ const columns: { id: string; title: string; hint: string; items: Item[] }[] = [
 ];
 
 const shipped: { v: string; date: string; items: string[] }[] = [
+  { v: "2.8", date: "Nov 2026", items: ["Single sign-on (OpenID Connect) with groups mapped to roles", "API tokens for scripts and CI", "Port-forward for databases and any TCP", "Helm upgrade with edited values", "Activity log export (webhook, syslog, files) and retention", "Helm charts for the agent and the hub", "Agent outdated badge", "Smaller image, security scanning, browser tests in CI"] },
   { v: "2.7", date: "Nov 2026", items: ["Two-factor login with recovery codes, required for admins or everyone", "Slack, email and signed webhook alerts", "Acknowledge and silence alerts", "Full-volume alerts and volume usage", "Helm rollback from the hub (opt-in)", "Open a Service in the browser, sandboxed", "Live traffic per server on the HAProxy topology", "Config errors shown by line", "Browser tests in the repo", "CI on every pull request"] },
   { v: "2.6", date: "Nov 2026", items: ["Search everything (Ctrl/⌘ K) across clusters and HAProxy", "Rollout history with diff, who changed it, roll back to any revision", "Helm releases: history, values, manifest, compare", "Workload logs: pick a pod, time range, errors only", "Alerts for OOMKilled, stuck rollouts, CronJobs, PVCs, expiring TLS", "Certificates page, CronJob runs, namespace quotas", "Right-sizing and 7-day Kubernetes history", "Service → HAProxy link", "Protected namespaces set in the hub", "Add cluster with just node:port"] },
   { v: "2.5", date: "Oct 2026", items: ["Roles per system: Kubernetes and HAProxy viewer, operator, admin", "HAProxy permissions per instance"] },
