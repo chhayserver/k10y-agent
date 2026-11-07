@@ -6,18 +6,23 @@ import Badge from "@/components/Badge.vue";
 import Icon from "@/components/Icon.vue";
 import { toast } from "@/stores/ui";
 import Modal from "@/components/Modal.vue";
+import { useSession } from "@/stores/session";
+import ProtectedNamespaces from "./ProtectedNamespaces.vue";
+const session = useSession();
+// AI providers and alert channels need settings.manage; protected namespaces need namespaces.protect on a cluster.
+const manage = session.canAll("settings.manage"), protect = session.canGlobal("namespaces.protect");
 const ai = ref<any>(null);
 const drafts = reactive<Record<string, { key: string; model: string; base: string; models: string[]; busy: boolean; msg: string; ok: boolean }>>({});
 async function load() {
   ai.value = await hub.get("/settings/ai");
   for (const [id, p] of Object.entries<any>(ai.value.providers)) drafts[id] = { key: "", model: p.model || p.default_model, base: p.base_url || p.default_base_url, models: drafts[id]?.models || [], busy: false, msg: "", ok: true };
 }
-onMounted(load);
+onMounted(() => manage && load());
 
 // alert channels (Telegram)
 const channels = ref<any[] | null>(null);
 async function loadChannels() { channels.value = await hub.get("/alerts/channels"); }
-onMounted(loadChannels);
+onMounted(() => manage && loadChannels());
 const ch = reactive({ open: false, id: 0, name: "", chat_id: "", bot_token: "", enabled: true, token_set: false, chats: [] as any[], busy: false, msg: "", ok: true });
 function newChannel() { Object.assign(ch, { open: true, id: 0, name: "Telegram", chat_id: "", bot_token: "", enabled: true, token_set: false, chats: [], msg: "" }); }
 function editChannel(c: any) { Object.assign(ch, { open: true, id: c.id, name: c.name, chat_id: c.chat_id, bot_token: "", enabled: c.enabled, token_set: c.token_set, chats: [], msg: "" }); }
@@ -58,6 +63,8 @@ async function activate(id: string) { try { ai.value = await hub.post("/settings
 async function removeKey(id: string) { if (!confirm("Remove this provider's key?")) return; ai.value = await hub.del(`/settings/ai/${id}`); await load(); }
 </script>
 <template>
+  <template v-if="protect"><ProtectedNamespaces /><div style="height:28px" /></template>
+  <template v-if="manage">
   <div class="section-bar"><h2>AI providers</h2><span class="hint">Keys are stored encrypted in the hub's PostgreSQL database and are never sent back to the browser. Every cluster uses the active provider.</span></div>
   <div v-if="ai" class="two-col">
     <section v-for="(p, id) in ai.providers" :key="id" class="card">
@@ -95,6 +102,7 @@ async function removeKey(id: string) { if (!confirm("Remove this provider's key?
         <td><Badge :level="c.enabled ? 'good' : 'neutral'" :label="c.enabled ? 'Enabled' : 'Off'" /></td>
         <td class="actions"><button class="btn ghost sm" @click="testChannel(c)">Send test</button><button class="btn ghost sm" style="color:var(--critical)" @click="removeChannel(c)">Delete</button></td></tr></tbody></table>
   </div></section>
+  </template>
 
   <Modal :open="ch.open" :title="ch.id ? `Edit ${ch.name}` : 'Add Telegram bot'" @close="ch.open = false">
     <ol class="hint" style="margin:0;padding-left:18px;line-height:1.6"><li>In Telegram, message <b>@BotFather</b>, send <code>/newbot</code> and copy the token.</li>

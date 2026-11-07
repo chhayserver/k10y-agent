@@ -105,3 +105,12 @@ def test_service_shows_the_haproxy_backends_that_serve_it(client, monkeypatch):
     assert sorted((x["backend"], x["via"]) for x in found) == [("api", "Kubernetes sync"), ("shop", "same addresses")]
     shop = next(x for x in found if x["backend"] == "shop")
     assert shop["instance"] == "lb1" and shop["frontends"] == ["web"] and shop["servers"][0]["address"] == "10.0.0.1"
+
+
+def test_protected_namespaces_permission():
+    from k10y_agent.hub.permissions import BUILTIN_ROLES, required_permission
+
+    assert required_permission("PUT", "settings/protected-namespaces") == "namespaces.protect"
+    roles = {name: perms for name, _, perms in BUILTIN_ROLES}
+    assert "namespaces.protect" in roles["Admin"] and "namespaces.protect" in roles["Kubernetes admin"]
+    assert "namespaces.protect" not in roles["Kubernetes operator"] and "namespaces.protect" not in roles["Kubernetes viewer"]

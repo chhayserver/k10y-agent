@@ -2,13 +2,14 @@ import asyncio
 import base64
 import logging
 import time
+import re
 import secrets
 from contextlib import asynccontextmanager
 
 import httpx
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -69,9 +70,36 @@ def provision_token() -> None:
         log.error("could not provision API token: %s", e)
 
 
+# Protected namespaces chosen in the hub are kept in the agent's own token Secret (key protected-namespaces), so
+# they survive restarts and upgrades. Without that key, K10Y_PROTECTED_NAMESPACES applies.
+PROTECTED_KEY = "protected-namespaces"
+protected_source = "env"
+
+
+def _apply_protected(namespaces: List[str]) -> None:
+    settings.protected_namespaces = ",".join(namespaces)
+    get_controller().protected = set(namespaces)
+
+
+def load_protected() -> None:
+    global protected_source
+    if not settings.token_secret:
+        return
+    try:
+        sec = client.CoreV1Api(get_api_client()).read_namespaced_secret(settings.token_secret, NAMESPACE_FILE.read_text().strip())
+    except (OSError, ApiException) as e:
+        log.warning("could not read protected namespaces from Secret %s: %s", settings.token_secret, e)
+        return
+    raw = (sec.data or {}).get(PROTECTED_KEY)
+    if raw is not None:
+        _apply_protected([ns for ns in base64.b64decode(raw).decode().split(",") if ns])
+        protected_source = "hub"
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     provision_token()
+    load_protected()
     metrics_history.start()
     yield
     metrics_history.stop()
@@ -155,6 +183,8 @@ def info() -> dict:
         "kubernetes_version": get_collector().version(),
         "control_enabled": settings.control_enabled,
         "protected_namespaces": settings.protected,
+        "protected_source": protected_source,           # "env" (install default) or "hub" (chosen in k10y)
+        "protected_persisted": bool(settings.token_secret),  # changes survive restarts and upgrades
     }
 
 
@@ -537,6 +567,37 @@ def quotas(namespace: Optional[str] = None) -> dict:
 @api.get("/search")
 def search(q: str = Query(..., min_length=2, max_length=100)) -> list:
     return insights.search(get_collector(), q)
+
+
+NS_NAME = r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
+
+
+class ProtectedBody(BaseModel):
+    namespaces: List[str] = Field(..., max_length=200)
+
+
+@api.put("/settings/protected-namespaces")
+def set_protected_namespaces(body: ProtectedBody, request: Request) -> dict:
+    """Choose the namespaces where every action, edit and shell is refused."""
+    global protected_source
+    names = sorted({n.strip() for n in body.namespaces if n.strip()})
+    bad = [n for n in names if not re.match(NS_NAME, n)]
+    if bad:
+        raise HTTPException(status_code=400, detail=f"not a valid namespace name: {', '.join(bad)}")
+    before = settings.protected
+    if settings.token_secret:
+        client.CoreV1Api(get_api_client()).patch_namespaced_secret(
+            settings.token_secret, NAMESPACE_FILE.read_text().strip(), {"stringData": {PROTECTED_KEY: ",".join(names)}})
+    _apply_protected(names)
+    protected_source = "hub"
+    added, removed = sorted(set(names) - set(before)), sorted(set(before) - set(names))
+    message = "; ".join(x for x in (f"protected {', '.join(added)}" if added else "",
+                                     f"no longer protected {', '.join(removed)}" if removed else "") if x) or "no change"
+    audit_log.record({"time": now_iso(), "actor": (request.headers.get("x-k10y-actor") or "unknown")[:64],
+                      "client": request.client.host if request.client else None, "action": "protected-namespaces",
+                      "target": "protected namespaces", "params": {"namespaces": names, "added": added, "removed": removed},
+                      "dry_run": False, "ok": True, "message": message})
+    return {**info(), "message": message}
 
 
 @api.get("/audit")

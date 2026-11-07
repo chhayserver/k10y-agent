@@ -844,7 +844,10 @@ async def proxy(cluster_id: int, path: str, request: Request, p: Principal = Dep
                 target = f"{b.get('kind', '')} {b['namespace'] + '/' if b.get('namespace') else ''}{b.get('name', '')}"
             except (ValueError, AttributeError, TypeError):
                 pass
-        audit(s, request, p, {"POST": path.split("/")[-1], "PUT": "edit"}.get(request.method, "delete"),
+        action = {"POST": path.split("/")[-1], "PUT": "edit"}.get(request.method, "delete")
+        if path == "settings/protected-namespaces":
+            action, target = "protected-namespaces", "protected namespaces"
+        audit(s, request, p, action,
               target, ok=ok, message=message, params=params, cluster=c, dry_run=dry)
 
     if request.method == "GET" and path.endswith("/logs/stream"):

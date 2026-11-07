@@ -43,7 +43,7 @@ Set in the agent's Deployment (`install.yaml`).
 | `K10Y_API_TOKEN` | — | Use this token instead of a Secret |
 | `K10Y_CLUSTER_NAME` | `kubernetes` | Display name (the installer reads it from ConfigMap `k10y-settings`) |
 | `K10Y_CONTROL_ENABLED` | `false` (`true` in `install.yaml`) | Allow actions. Also needs the control RBAC role. |
-| `K10Y_PROTECTED_NAMESPACES` | `kube-system` (`kube-system,k10y` in the installer) | Namespaces where actions, edits and shells are refused |
+| `K10Y_PROTECTED_NAMESPACES` | `kube-system` (`kube-system,k10y` in the installer) | Namespaces where actions, edits and shells are refused. The starting list: once changed in **System settings → Protected namespaces**, the agent's Secret `k10y-agent` holds it instead. |
 | `K10Y_TLS` | `true` in the installer | Serve HTTPS |
 | `K10Y_CORS_ORIGINS` | empty | Browser origins allowed to call the agent directly. Leave empty: browsers go through the hub. |
 | `K10Y_METRICS_POLL_S` | `5` | How often metrics-server is checked |

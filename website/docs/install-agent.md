@@ -45,7 +45,7 @@ The agent serves **HTTPS** itself on its port (with a self-signed certificate), 
 
 - **Read:** nodes, namespaces, pods and logs, events, services, ConfigMaps, PVCs, PVs, Ingresses, Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs, CronJobs, HPAs, metrics. Secrets are *listed* only for names and keys; their values are never returned.
 - **Write** (`install.yaml` only): the actions listed above, plus server-side apply of common kinds. There are **no RBAC, CRD or cluster-admin permissions**.
-- **Protected namespaces:** `kube-system` and `k10y` by default. Actions, edits and shells there are refused by the agent.
+- **Protected namespaces:** `kube-system` and `k10y` by default. Actions, edits and shells there are refused by the agent. Change them in **System settings → Protected namespaces** (see [Actions](./actions#protected-namespaces)); your choice survives upgrades.
 
 ## Requirements
 

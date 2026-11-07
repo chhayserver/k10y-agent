@@ -23,7 +23,7 @@ export const SYSTEMS: SystemDef[] = [
 export const systemById = (id: string | undefined) => SYSTEMS.find((x) => x.id === id);
 
 // system: the page belongs to that system (shown when it's selected). No system: shared hub page.
-// perm: needed on the current cluster; global: needed on all clusters; cluster: page needs a selected cluster;
+// perm: needed on the current cluster; global: needed on all clusters ("a|b": either); cluster: page needs a selected cluster;
 // slug: URL segment (defaults to id); tab: passed to the page component (one component, several pages).
 export interface NavItem {
   id: string; label: string; icon: string; section: string; system?: string; slug?: string; tab?: string;
@@ -73,7 +73,7 @@ export const NAV: NavItem[] = [
   { id: "roles", label: "Roles", icon: "lock", section: "Administration", slug: "admin/roles", global: "users.manage" },
   { id: "manage-clusters", label: "Clusters", icon: "logo", section: "Administration", slug: "admin/clusters", global: "clusters.manage" },
   { id: "manage-haproxy", label: "HAProxy instances", icon: "lb", section: "Administration", slug: "admin/haproxy", global: "haproxy.manage" },
-  { id: "system", label: "System settings", icon: "gear", section: "Administration", slug: "admin/system", global: "settings.manage" },
+  { id: "system", label: "System settings", icon: "gear", section: "Administration", slug: "admin/system", global: "settings.manage|namespaces.protect" },
   { id: "settings", label: "My settings", icon: "gear", section: "You", locked: true },
 ];
 

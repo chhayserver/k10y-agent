@@ -8,6 +8,7 @@ Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and 
 
 ## Unreleased
 
+- **Protected namespaces in the hub:** choose each cluster's protected namespaces in **System settings → Protected namespaces**, with the new `namespaces.protect` permission (Admin and Kubernetes admin have it; it can be given per cluster). The agent keeps the list in its own Secret, so it survives restarts and upgrades, and every change is in the activity log.
 - **Add cluster: just type the address.** Enter `192.168.64.2:30800` without a scheme; k10y finds how the agent answers. The agent serves HTTPS itself, also through a NodePort, so `https://` is added for you, and an `http://` address is switched to `https://` when the agent speaks TLS (before, it failed with "Server disconnected").
 - **Search everything (Ctrl/⌘ K):** find any Kubernetes object or Helm release in every cluster, and HAProxy frontends, backends and servers, from the top bar.
 - **Rollout history:** a Deployment's **Revisions** tab lists each revision with images and who changed it, compares two revisions, and rolls back to any one.

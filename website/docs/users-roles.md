@@ -35,6 +35,7 @@ So "Operator on staging, Viewer on production" is two assignments for one user, 
 | `nodes.manage` | Cordon, uncordon and drain nodes |
 | `resources.edit` | Edit an object's YAML in its details panel |
 | `apply.yaml` | Create or update objects with Apply YAML |
+| `namespaces.protect` | Choose the cluster's protected namespaces, where every action, edit and shell is refused |
 | `ai.use` | Run AI investigations |
 | `audit.view` | See the activity log |
 
@@ -71,7 +72,7 @@ One set of roles per system, plus Admin. Give Kubernetes roles on everything or 
 | **Admin** | everything | Everything, including users, settings, clusters and HAProxy instances. It can't be edited or deleted. |
 | **Kubernetes viewer** | everything or one cluster | View, logs and activity. |
 | **Kubernetes operator** | everything or one cluster | View, logs, Secrets, scale, restart, update image, roll back, delete pods, edit YAML, apply YAML, AI, activity. **Not** the shell. |
-| **Kubernetes admin** | everything or one cluster | Every cluster permission, including deletes, the pod shell and draining nodes. |
+| **Kubernetes admin** | everything or one cluster | Every cluster permission, including deletes, the pod shell, draining nodes and choosing protected namespaces. |
 | **HAProxy viewer** | everything or one HAProxy | See frontends, backends, servers, live numbers, logs and history. |
 | **HAProxy operator** | everything or one HAProxy | Viewer, plus drain and maintenance, rolling deploys, blocking IPs and the AI assistant. No config changes. |
 | **HAProxy admin** | everything or one HAProxy | Everything on HAProxy: config changes, the raw config, the connection, and the AI assistant. |

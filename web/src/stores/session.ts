@@ -37,8 +37,11 @@ export const useSession = defineStore("session", {
     /** A global permission. HAProxy permissions also count when given on at least one instance (to show the
      *  HAProxy pages); use canHx for one instance and canAll for "on every instance". */
     canGlobal(): (perm: string) => boolean {
-      return (perm: string) => Boolean(this.me && (this.me.global_permissions.includes(perm)
-        || ((perm.startsWith("haproxy.") || perm === "ai.use") && (this.me.haproxy || []).some((h) => h.permissions.includes(perm)))));
+      // "a|b": either one. namespaces.protect counts on any cluster (the settings page lists only those clusters).
+      const one = (perm: string) => Boolean(this.me && (this.me.global_permissions.includes(perm)
+        || ((perm.startsWith("haproxy.") || perm === "ai.use") && (this.me.haproxy || []).some((h) => h.permissions.includes(perm)))
+        || (perm === "namespaces.protect" && this.clusters.some((c) => c.permissions.includes(perm)))));
+      return (perm: string) => perm.split("|").some(one);
     },
     canAll(): (perm: string) => boolean {
       return (perm: string) => Boolean(this.me && this.me.global_permissions.includes(perm));
