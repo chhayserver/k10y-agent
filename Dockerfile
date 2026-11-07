@@ -1,5 +1,5 @@
 # 1. Web UI (Vue 3 + TypeScript). Built on the build machine's platform; output is plain static files.
-FROM --platform=$BUILDPLATFORM node:22-alpine AS web
+FROM --platform=$BUILDPLATFORM node:25-alpine AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
