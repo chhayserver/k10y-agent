@@ -1,0 +1,15 @@
+apiVersion: v2
+name: k10y-hub
+description: 'k10y hub: web UI, sign-in, roles, clusters, HAProxy, alerts and activity
+  log'
+type: application
+version: 2.7.1
+appVersion: 2.7.1
+home: https://k10y-agents.pages.dev
+sources:
+- https://github.com/chhayserver/k10y-agent
+keywords:
+- kubernetes
+- haproxy
+- dashboard
+kubeVersion: '>=1.24.0-0'

@@ -81,11 +81,12 @@ def notes(version: str) -> str:
     return (m.group(1).strip() + f"\n\nImage: `docker.io/k10y/k10y-agent:{version}` (amd64, arm64)\n")
 
 
-GENERATED = [("deploy/install", "install*.yaml", "gen_install.py"), ("deploy/helm/k10y-agent", "**/*", "gen_chart.py")]
+GENERATED = [("deploy/install", "install*.yaml", "gen_install.py"), ("deploy/helm/k10y-agent", "**/*", "gen_chart.py"),
+             ("deploy/helm/k10y-hub", "Chart.yaml", "gen_chart.py")]
 
 
 def generate(version: str) -> None:
-    for _, _, script in GENERATED:
+    for script in dict.fromkeys(script for _, _, script in GENERATED):
         subprocess.run([sys.executable, str(ROOT / "scripts" / script), version], check=True, capture_output=True)
 
 

@@ -1,0 +1,14 @@
+k10y hub {{ .Chart.AppVersion }} is starting in namespace {{ .Release.Namespace }}.
+
+Sign in as {{ .Values.adminUser }}. The first password (you must change it at first sign-in):
+  kubectl -n {{ .Release.Namespace }} get secret {{ .Release.Name }}-secrets -o jsonpath='{.data.admin-password}' | base64 -d; echo
+{{- if .Values.ingress.enabled }}
+
+Open https://{{ .Values.ingress.host }}
+{{- else }}
+
+Open it with:  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ .Release.Name }} 8443:{{ .Values.service.port }}
+then https://localhost:8443 (self-signed certificate)
+{{- end }}
+
+Back up the Secret {{ .Release.Name }}-secrets (key secret-key): it decrypts the tokens and keys k10y stores.

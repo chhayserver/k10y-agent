@@ -67,12 +67,14 @@ jobs:
           cache-to: type=gha,mode=max
 
       - uses: azure/setup-helm@v4
-      - name: Helm chart (oci://ghcr.io/${{ github.repository_owner }}/charts/k10y-agent)
+      - name: Helm charts (oci://ghcr.io/${{ github.repository_owner }}/charts/k10y-agent and k10y-hub)
         run: |
-          helm lint deploy/helm/k10y-agent
-          helm package deploy/helm/k10y-agent
           echo "${{ github.token }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
-          helm push "k10y-agent-${{ steps.v.outputs.version }}.tgz" "oci://ghcr.io/${{ github.repository_owner }}/charts"
+          for chart in k10y-agent k10y-hub; do
+            helm lint "deploy/helm/$chart"
+            helm package "deploy/helm/$chart"
+            helm push "$chart-${{ steps.v.outputs.version }}.tgz" "oci://ghcr.io/${{ github.repository_owner }}/charts"
+          done
 
       - name: GitHub release
         env:
@@ -81,7 +83,7 @@ jobs:
           python scripts/release.py notes "${{ steps.v.outputs.version }}" > notes.md
           gh release create "$GITHUB_REF_NAME" --title "k10y ${{ steps.v.outputs.version }}" --latest --notes-file notes.md \
             deploy/install/install.yaml deploy/install/install-readonly.yaml deploy/install/rbac-helm.yaml docker-compose.yml \
-            "k10y-agent-${{ steps.v.outputs.version }}.tgz"
+            "k10y-agent-${{ steps.v.outputs.version }}.tgz" "k10y-hub-${{ steps.v.outputs.version }}.tgz"
 
       - name: Website
         if: ${{ env.CF_TOKEN != '' }}

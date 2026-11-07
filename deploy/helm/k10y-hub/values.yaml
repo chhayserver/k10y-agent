@@ -1,0 +1,53 @@
+# k10y hub: web UI, sign-in, users and roles, clusters, alerts, activity log. Talks to k10y agents.
+image:
+  repository: docker.io/k10y/k10y-agent
+  tag: ""                      # defaults to the chart's appVersion
+  pullPolicy: IfNotPresent
+
+adminUser: admin
+# First admin password (must be changed at first sign-in). Empty: one is generated, see the NOTES.
+adminPassword: ""
+# The address people use, for links in alerts and the single sign-on callback, e.g. https://k10y.example.com
+publicUrl: ""
+
+# Bundled PostgreSQL (one replica with a volume). Set enabled: false and externalDatabase.url to use your own.
+postgresql:
+  enabled: true
+  image: docker.io/library/postgres:16-alpine
+  storage: 5Gi
+  storageClass: ""
+externalDatabase:
+  url: ""                      # postgresql://user:password@host:5432/k10y
+  existingSecret: ""           # or a Secret with key "url"
+
+# The hub's own volume: its self-signed certificate and exported activity files.
+persistence:
+  size: 1Gi
+  storageClass: ""
+
+# HTTPS with a self-signed certificate on port 8443. Behind an Ingress that ends TLS, set tls: false.
+tls: true
+
+service:
+  type: ClusterIP              # NodePort or LoadBalancer to reach it without an Ingress
+  port: 8443
+  nodePort: ""
+
+ingress:
+  enabled: false
+  className: ""
+  host: k10y.example.com
+  annotations: {}
+  tlsSecret: ""                # a TLS Secret for the host (e.g. from cert-manager)
+
+# UDP syslog receiver for HAProxy logs (0 = off).
+syslogPort: 5514
+
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {memory: 768Mi}
+
+extraEnv: []
+nodeSelector: {}
+tolerations: []
+affinity: {}

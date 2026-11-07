@@ -1,0 +1,136 @@
+{{- if and (not .Values.postgresql.enabled) (not .Values.externalDatabase.url) (not .Values.externalDatabase.existingSecret) }}
+{{- fail "set postgresql.enabled=true, or externalDatabase.url / externalDatabase.existingSecret" }}
+{{- end }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-data
+  labels: {{- include "k10y-hub.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources: {requests: {storage: {{ .Values.persistence.size }}}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels: {{- include "k10y-hub.labels" . | nindent 4 }}
+spec:
+  replicas: 1                  # the hub keeps live state (alerts, HAProxy samples) in memory: one replica
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: {{ .Release.Name }}}
+  template:
+    metadata:
+      labels: {app: {{ .Release.Name }}}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: hub
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - {name: K10Y_MODE, value: hub}
+            - {name: K10Y_PORT, value: "8443"}
+            - {name: K10Y_TLS, value: {{ .Values.tls | quote }}}
+            - {name: K10Y_TLS_DIR, value: /data/tls}
+            - {name: K10Y_DATA_DIR, value: /data}
+            - {name: K10Y_ADMIN_USER, value: {{ .Values.adminUser | quote }}}
+            - {name: K10Y_PUBLIC_URL, value: {{ .Values.publicUrl | quote }}}
+            - {name: K10Y_SYSLOG_PORT, value: {{ .Values.syslogPort | quote }}}
+            - name: K10Y_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: {{ .Release.Name }}-secrets, key: secret-key}}
+            - name: K10Y_ADMIN_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ .Release.Name }}-secrets, key: admin-password}}
+            {{- if .Values.postgresql.enabled }}
+            - name: PG_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ .Release.Name }}-secrets, key: postgres-password}}
+            - name: K10Y_DATABASE_URL
+              value: postgresql://k10y:$(PG_PASSWORD)@{{ .Release.Name }}-postgres:5432/k10y
+            {{- else if .Values.externalDatabase.existingSecret }}
+            - name: K10Y_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ .Values.externalDatabase.existingSecret }}, key: url}}
+            {{- else }}
+            - {name: K10Y_DATABASE_URL, value: {{ .Values.externalDatabase.url | quote }}}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - {name: https, containerPort: 8443}
+            {{- if .Values.syslogPort }}
+            - {name: syslog, containerPort: {{ .Values.syslogPort }}, protocol: UDP}
+            {{- end }}
+          readinessProbe:
+            httpGet: {path: /healthz, port: https, scheme: {{ if .Values.tls }}HTTPS{{ else }}HTTP{{ end }}}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: https, scheme: {{ if .Values.tls }}HTTPS{{ else }}HTTP{{ end }}}
+            periodSeconds: 20
+            failureThreshold: 6
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: data, mountPath: /data}, {name: tmp, mountPath: /tmp}]
+      volumes:
+        - {name: data, persistentVolumeClaim: {claimName: {{ .Release.Name }}-data}}
+        - {name: tmp, emptyDir: {}}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+  labels: {{- include "k10y-hub.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector: {app: {{ .Release.Name }}}
+  ports:
+    - name: https
+      port: {{ .Values.service.port }}
+      targetPort: https
+      {{- if and (eq .Values.service.type "NodePort") .Values.service.nodePort }}
+      nodePort: {{ .Values.service.nodePort }}
+      {{- end }}
+    {{- if .Values.syslogPort }}
+    - {name: syslog, port: {{ .Values.syslogPort }}, targetPort: syslog, protocol: UDP}
+    {{- end }}
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+  labels: {{- include "k10y-hub.labels" . | nindent 4 }}
+  annotations:
+    {{- if .Values.tls }}
+    nginx.ingress.kubernetes.io/backend-protocol: HTTPS
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tlsSecret }}
+  tls: [{hosts: [{{ .Values.ingress.host | quote }}], secretName: {{ .Values.ingress.tlsSecret }}}]
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: {service: {name: {{ .Release.Name }}, port: {name: https}}}
+{{- end }}
