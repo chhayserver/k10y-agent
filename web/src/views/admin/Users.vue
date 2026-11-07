@@ -34,7 +34,7 @@ const scopeName = (a: Assign) => (a.haproxy_id ? `HAProxy ${haproxies.value.find
   : a.cluster_id ? clusterName(a.cluster_id) : "everything");
 const rows = computed(() => { const q = state.q.trim().toLowerCase(); return (users.value || []).filter((u) => !q || `${u.username} ${u.display_name}`.toLowerCase().includes(q)); });
 
-const edit = reactive({ open: false, id: 0, username: "", display_name: "", password: "", is_active: true, must_change_password: true, assignments: [] as Assign[], err: "", busy: false });
+const edit = reactive({ open: false, id: 0, username: "", display_name: "", password: "", is_active: true, must_change_password: true, totp: false, assignments: [] as Assign[], err: "", busy: false });
 function openNew() { Object.assign(edit, { open: true, id: 0, username: "", display_name: "", password: "", is_active: true, must_change_password: true, assignments: [{ role_id: roles.value.find((r) => r.name === "Kubernetes viewer")?.id || roles.value[0]?.id, cluster_id: null }], err: "" }); }
 const userSessions = ref<any[] | null>(null);
 async function loadUserSessions(id: number) { userSessions.value = null; try { userSessions.value = await hub.get(`/users/${id}/sessions`); } catch { userSessions.value = []; } }
@@ -48,7 +48,12 @@ async function setActive(u: any, active: boolean) {
   try { await hub.patch(`/users/${u.id}`, { is_active: active }); toast(true, `${u.username} ${active ? "enabled" : "disabled"}`); load(); }
   catch (e: any) { toast(false, e.message); }
 }
-function openEdit(u: any) { loadUserSessions(u.id); Object.assign(edit, { open: true, id: u.id, username: u.username, display_name: u.display_name, password: "", is_active: u.is_active, must_change_password: u.must_change_password, assignments: u.assignments.map((a: any) => ({ role_id: a.role_id, cluster_id: a.cluster_id, haproxy_id: a.haproxy_id || null })), err: "" }); }
+function openEdit(u: any) { loadUserSessions(u.id); Object.assign(edit, { open: true, id: u.id, username: u.username, display_name: u.display_name, password: "", is_active: u.is_active, must_change_password: u.must_change_password, totp: !!u.totp_enabled, assignments: u.assignments.map((a: any) => ({ role_id: a.role_id, cluster_id: a.cluster_id, haproxy_id: a.haproxy_id || null })), err: "" }); }
+// Lost phone: turn the user's two-factor login off; if it's required they set it up again at next sign-in.
+async function resetTotp() {
+  if (!confirm(`Reset two-factor login for ${edit.username}? Their authenticator app and recovery codes stop working.`)) return;
+  try { await hub.post(`/users/${edit.id}/totp/reset`, {}); edit.totp = false; await load(); } catch (e: any) { edit.err = e.message; }
+}
 async function save() {
   edit.err = ""; edit.busy = true;
   const body: any = { display_name: edit.display_name, is_active: edit.is_active, assignments: edit.assignments.filter((a) => a.role_id) };
@@ -74,7 +79,7 @@ const columns = [{ key: "username", label: "Username", cls: "primary" }, { key: 
   <section class="card flush"><div class="card-body table-wrap">
     <Skeleton v-if="!users && !error" :rows="4" />
     <DataTable v-else-if="users" v-model:sort="state.sort" :rows="rows" :columns="columns" :row-key="(u) => String(u.id)" clickable empty-title="No users" @row="openEdit">
-      <template #is_active="{ row }"><Badge :level="row.is_active ? 'good' : 'neutral'" :label="row.is_active ? 'Active' : 'Disabled'" /> <span v-if="row.must_change_password" class="pill-tag">must change password</span></template>
+      <template #is_active="{ row }"><Badge :level="row.is_active ? 'good' : 'neutral'" :label="row.is_active ? 'Active' : 'Disabled'" /> <span v-if="row.must_change_password" class="pill-tag">must change password</span> <span v-if="row.totp_enabled" class="pill-tag" title="Signs in with a code from an authenticator app">2FA</span></template>
       <template #assignments="{ row }"><span v-for="(a, i) in row.assignments" :key="i" class="chip">{{ a.role }} · {{ scopeName(a) }}</span><span v-if="!row.assignments.length" class="dim">no access</span></template>
       <template #last_seen_at="{ row }"><span v-if="row.last_seen_at">{{ fmt.ago(row.last_seen_at) }}</span>
         <span v-else class="dim">{{ row.last_login_at ? `last login ${fmt.ago(row.last_login_at)}` : "never signed in" }}</span></template>
@@ -93,6 +98,8 @@ const columns = [{ key: "username", label: "Username", cls: "primary" }, { key: 
       <div class="form-row"><label class="lbl">{{ edit.id ? "Reset password (optional)" : "Password" }}</label><PasswordInput v-model="edit.password" autocomplete="new-password" placeholder="at least 8 characters, letters + numbers" /></div>
       <div class="form-row" style="justify-content:flex-end"><label class="pill"><input v-model="edit.must_change_password" type="checkbox"> Must change password at next login</label>
         <label class="pill"><input v-model="edit.is_active" type="checkbox"> Account active</label></div>
+      <div v-if="edit.id" class="form-row" style="flex-direction:row;align-items:center;gap:8px"><span class="lbl" style="flex:1">Two-factor login: <b>{{ edit.totp ? "on" : "off" }}</b></span>
+        <button v-if="edit.totp" class="btn sm" type="button" @click="resetTotp">Reset two-factor</button></div>
     </div>
     <div class="form-row"><span class="lbl">Roles</span>
       <p class="hint" style="margin:0">A role on <b>everything</b> applies to every cluster and every HAProxy, and also grants its hub permissions (users, clusters, settings, alerts). On <b>one cluster</b>, only its cluster permissions count there; on <b>one HAProxy</b>, only its HAProxy permissions count there.</p>

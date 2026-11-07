@@ -98,3 +98,49 @@ class LoginLimiter:
     def reset(self, username: str, ip: str) -> None:
         with self.lock:
             self.fails.pop(self._key(username, ip), None)
+
+
+# --- two-factor login (TOTP, RFC 6238: 6 digits, 30 s, SHA-1, as every authenticator app expects) -------------
+
+TOTP_STEP = 30
+
+
+def new_totp_secret() -> str:
+    return base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
+
+
+def totp_code(secret: str, step: int) -> str:
+    import hmac
+    key = base64.b32decode(secret + "=" * (-len(secret) % 8), casefold=True)
+    mac = hmac.new(key, step.to_bytes(8, "big"), hashlib.sha1).digest()
+    offset = mac[-1] & 0x0F
+    return f"{(int.from_bytes(mac[offset:offset + 4], 'big') & 0x7FFFFFFF) % 1_000_000:06d}"
+
+
+def totp_match(secret: str, code: str, last_step: Optional[int] = None, now: Optional[float] = None) -> Optional[int]:
+    """The time step `code` belongs to (allowing one step of clock drift), or None. A step at or before
+    `last_step` is refused, so a code can't be used twice."""
+    import hmac
+    code = "".join(ch for ch in code if ch.isdigit())
+    if len(code) != 6:
+        return None
+    current = int((time.time() if now is None else now) // TOTP_STEP)
+    for step in (current, current - 1, current + 1):
+        if hmac.compare_digest(totp_code(secret, step), code) and (last_step is None or step > last_step):
+            return step
+    return None
+
+
+def totp_uri(secret: str, username: str, issuer: str = "k10y") -> str:
+    from urllib.parse import quote
+    return f"otpauth://totp/{quote(issuer)}:{quote(username)}?secret={secret}&issuer={quote(issuer)}&digits=6&period={TOTP_STEP}"
+
+
+def new_recovery_codes(n: int = 10) -> list:
+    """Single-use codes like 7f3k-q9wm, for when the phone is lost. Only their digests are stored."""
+    alphabet = "23456789abcdefghjkmnpqrstuvwxyz"
+    return ["-".join("".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(2)) for _ in range(n)]
+
+
+def recovery_digest(code: str) -> str:
+    return hashlib.sha256(code.strip().lower().replace(" ", "").encode()).hexdigest()

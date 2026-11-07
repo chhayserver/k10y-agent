@@ -33,6 +33,7 @@ from .db import (AuditEntry, Cluster, Database, Role, RoleAssignment, SessionRow
 from .permissions import (ALL_PERMISSIONS, BUILTIN_BASELINE, BUILTIN_ROLES, CLUSTER_PERMISSIONS, SPLIT_ROLES, GLOBAL_PERMISSIONS, HAPROXY_PERMISSIONS, HUB_PERMISSIONS,
                           required_permission)
 from .security import (Crypto, LoginLimiter, check_password_policy, hash_password, new_session_token, token_digest,
+                       new_recovery_codes, new_totp_secret, recovery_digest, totp_match, totp_uri,
                        verify_password)
 
 log = logging.getLogger("k10y.hub")
@@ -235,7 +236,30 @@ def current(request: Request, s: Session = Depends(db_session)) -> Principal:
     if p.user.must_change_password and request.url.path not in ("/api/hub/auth/me", "/api/hub/auth/password",
                                                                 "/api/hub/auth/logout"):
         raise HTTPException(status_code=403, detail="password change required")
+    if request.url.path not in TOTP_SETUP_PATHS and must_setup_2fa(s, p):
+        raise HTTPException(status_code=403, detail="two-factor setup required")
     return p
+
+
+# --- two-factor policy ------------------------------------------------------------------
+# Setting "security": {"require_2fa": "off" | "admins" | "everyone"}. Admins = anyone with a hub-wide permission
+# to manage users, settings, clusters or HAProxy instances.
+ADMIN_PERMS = {"users.manage", "settings.manage", "clusters.manage", "haproxy.manage"}
+TOTP_SETUP_PATHS = {"/api/hub/auth/me", "/api/hub/auth/totp", "/api/hub/auth/password", "/api/hub/auth/logout", "/api/hub/auth/totp/setup",
+                    "/api/hub/auth/totp/enable"}
+
+
+def require_2fa_policy(s: Session) -> str:
+    row = s.get(Setting, "security")
+    value = (row.value or {}).get("require_2fa") if row else None
+    return value if value in ("off", "admins", "everyone") else "off"
+
+
+def must_setup_2fa(s: Session, p: "Principal") -> bool:
+    if p.user.totp_enabled:
+        return False
+    policy = require_2fa_policy(s)
+    return policy == "everyone" or (policy == "admins" and bool(ADMIN_PERMS & p.global_perms()))
 
 
 def _aware(dt):
@@ -271,6 +295,19 @@ def audit(s: Session, request: Request, p: Optional[Principal], action: str, tar
 class LoginBody(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=256)
+    code: Optional[str] = Field(None, max_length=32)   # authenticator or recovery code, when two-factor is on
+
+
+class TotpPasswordBody(BaseModel):
+    password: str = Field(min_length=1, max_length=256)
+
+
+class TotpCodeBody(BaseModel):
+    code: str = Field(min_length=1, max_length=32)
+
+
+class SecurityBody(BaseModel):
+    require_2fa: str = Field(pattern="^(off|admins|everyone)$")
 
 
 class PasswordBody(BaseModel):
@@ -282,7 +319,8 @@ def me_payload(s: Session, p: Principal) -> dict:
     clusters = s.execute(select(Cluster).order_by(Cluster.name)).scalars().all()
     return {
         "user": {"id": p.user.id, "username": p.user.username, "display_name": p.user.display_name,
-                 "must_change_password": p.user.must_change_password},
+                 "must_change_password": p.user.must_change_password, "totp_enabled": bool(p.user.totp_enabled),
+                 "must_setup_2fa": must_setup_2fa(s, p)},
         "global_permissions": sorted(p.global_perms()),
         "clusters": [{"id": c.id, "name": c.name, "permissions": sorted(p.cluster_perms(c.id))}
                      for c in clusters if "cluster.view" in p.cluster_perms(c.id)],
@@ -304,6 +342,18 @@ def login(body: LoginBody, request: Request, response: Response, s: Session = De
         audit(s, request, None, "login", body.username, ok=False, message="invalid username or password",
               username=body.username)
         raise HTTPException(status_code=401, detail="Invalid username or password.")
+    if user.totp_enabled:
+        if not body.code:
+            return {"totp_required": True}   # password was right; ask for the code (nothing is set yet)
+        how = _second_factor(user, body.code)
+        if how is None:
+            limiter.failed(body.username, ip)
+            s.commit()
+            audit(s, request, None, "login", user.username, ok=False, message="wrong two-factor code", username=user.username)
+            raise HTTPException(status_code=401, detail="That code isn't right. Use the current code from your authenticator app, or a recovery code.")
+        if how == "recovery":
+            audit(s, request, Principal(user, {}), "totp-recovery-used", user.username,
+                  message=f"signed in with a recovery code ({len(user.recovery_codes or [])} left)")
     limiter.reset(body.username, ip)
     token = new_session_token()
     s.add(SessionRow(token_hash=token_digest(token), user_id=user.id,
@@ -317,6 +367,92 @@ def login(body: LoginBody, request: Request, response: Response, s: Session = De
     p = Principal(user, load_grants(s, user))
     audit(s, request, p, "login", user.username, message="logged in")
     return me_payload(s, p)
+
+
+def _second_factor(user: User, code: str) -> Optional[str]:
+    """Check an authenticator code (remembering its time step) or use up a recovery code. Caller commits."""
+    secret = crypto().decrypt(user.totp_secret) if user.totp_secret else ""
+    step = totp_match(secret, code, user.totp_last_step) if secret else None
+    if step is not None:
+        user.totp_last_step = step
+        return "totp"
+    digest = recovery_digest(code)
+    if digest in (user.recovery_codes or []):
+        user.recovery_codes = [c for c in user.recovery_codes if c != digest]
+        return "recovery"
+    return None
+
+
+def _check_password(user: User, password: str) -> None:
+    if not verify_password(user.password_hash, password):
+        raise HTTPException(status_code=400, detail="Your password is wrong.")
+
+
+@api.post("/auth/totp/setup")
+def totp_setup(body: TotpPasswordBody, p: Principal = Depends(current), s: Session = Depends(db_session)) -> dict:
+    """Start enrolling: a new secret to scan. It only counts once a code from it is confirmed."""
+    user = s.get(User, p.user.id)
+    if user.totp_enabled:
+        raise HTTPException(status_code=400, detail="Two-factor login is already on. Turn it off first to use a new device.")
+    _check_password(user, body.password)
+    secret = new_totp_secret()
+    user.totp_secret = crypto().encrypt(secret)
+    s.commit()
+    return {"secret": secret, "uri": totp_uri(secret, user.username)}
+
+
+@api.post("/auth/totp/enable")
+def totp_enable(body: TotpCodeBody, request: Request, p: Principal = Depends(current), s: Session = Depends(db_session)) -> dict:
+    user = s.get(User, p.user.id)
+    if user.totp_enabled or not user.totp_secret:
+        raise HTTPException(status_code=400, detail="Start the setup first.")
+    step = totp_match(crypto().decrypt(user.totp_secret), body.code)
+    if step is None:
+        raise HTTPException(status_code=400, detail="That code isn't right. Check the time on your phone and try the newest code.")
+    codes = new_recovery_codes()
+    user.totp_enabled, user.totp_last_step, user.recovery_codes = True, step, [recovery_digest(c) for c in codes]
+    s.commit()
+    audit(s, request, p, "totp-enable", user.username, message="turned on two-factor login")
+    return {"recovery_codes": codes, "me": me_payload(s, Principal(user, p.grants))}
+
+
+@api.post("/auth/totp/recovery-codes")
+def totp_new_recovery_codes(body: TotpPasswordBody, request: Request, p: Principal = Depends(current),
+                            s: Session = Depends(db_session)) -> dict:
+    user = s.get(User, p.user.id)
+    if not user.totp_enabled:
+        raise HTTPException(status_code=400, detail="Two-factor login is off.")
+    _check_password(user, body.password)
+    codes = new_recovery_codes()
+    user.recovery_codes = [recovery_digest(c) for c in codes]
+    s.commit()
+    audit(s, request, p, "totp-recovery-codes", user.username, message="made new recovery codes (the old ones stop working)")
+    return {"recovery_codes": codes}
+
+
+@api.get("/auth/totp")
+def totp_status(p: Principal = Depends(current), s: Session = Depends(db_session)) -> dict:
+    user = s.get(User, p.user.id)
+    policy = require_2fa_policy(s)
+    required = policy == "everyone" or (policy == "admins" and bool(ADMIN_PERMS & p.global_perms()))
+    return {"enabled": bool(user.totp_enabled), "recovery_codes_left": len(user.recovery_codes or []), "required": required}
+
+
+@api.post("/auth/totp/disable")
+def totp_disable(body: TotpPasswordBody, request: Request, p: Principal = Depends(current),
+                 s: Session = Depends(db_session)) -> dict:
+    user = s.get(User, p.user.id)
+    _check_password(user, body.password)
+    if totp_status(p, s)["required"]:
+        raise HTTPException(status_code=400, detail="Two-factor login is required for your account, so it can't be turned off.")
+    _clear_totp(user)
+    s.commit()
+    audit(s, request, p, "totp-disable", user.username, message="turned off two-factor login")
+    return me_payload(s, Principal(user, p.grants))
+
+
+def _clear_totp(user: User) -> None:
+    user.totp_enabled, user.totp_secret, user.totp_last_step, user.recovery_codes = False, None, None, None
 
 
 @api.post("/auth/logout")
@@ -445,7 +581,7 @@ class RoleBody(BaseModel):
 
 def user_view(u: User) -> dict:
     return {"id": u.id, "username": u.username, "display_name": u.display_name, "is_active": u.is_active,
-            "must_change_password": u.must_change_password,
+            "must_change_password": u.must_change_password, "totp_enabled": bool(u.totp_enabled),
             "created_at": u.created_at.isoformat() if u.created_at else None,
             "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
             "sessions": getattr(u, "live_sessions", None), "last_seen_at": getattr(u, "last_seen_at", None),
@@ -577,6 +713,19 @@ def revoke_user_sessions(user_id: int, request: Request, p: Principal = Depends(
     s.commit()
     audit(s, request, p, "session-revoke", user.username, message=f"signed out {n} session(s)")
     return {"ok": True, "revoked": n}
+
+
+@api.post("/users/{user_id}/totp/reset")
+def reset_user_totp(user_id: int, request: Request, p: Principal = Depends(require("users.manage")),
+                    s: Session = Depends(db_session)) -> dict:
+    """For a lost phone: turns two-factor off; the user sets it up again at next sign-in if it is required."""
+    user = s.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    _clear_totp(user)
+    s.commit()
+    audit(s, request, p, "totp-reset", user.username, message="two-factor login reset by an administrator")
+    return user_view(user)
 
 
 @api.delete("/users/{user_id}")
@@ -983,6 +1132,28 @@ class DiagnoseBody(BaseModel):
     question: str = Field("", max_length=2000)
 
 
+@api.get("/settings/security")
+def get_security(p: Principal = Depends(require("settings.manage")), s: Session = Depends(db_session)) -> dict:
+    return {"require_2fa": require_2fa_policy(s)}
+
+
+@api.put("/settings/security")
+def put_security(body: SecurityBody, request: Request, p: Principal = Depends(require("settings.manage")),
+                 s: Session = Depends(db_session)) -> dict:
+    if body.require_2fa != "off" and not p.user.totp_enabled:
+        raise HTTPException(status_code=400, detail="Turn on two-factor login for your own account first (My settings), "
+                                                    "so you don't lock yourself out.")
+    row = s.get(Setting, "security")
+    value = {**((row.value or {}) if row else {}), "require_2fa": body.require_2fa}
+    if row:
+        row.value = value
+    else:
+        s.add(Setting(key="security", value=value))
+    s.commit()
+    audit(s, request, p, "settings-security", "two-factor login", message=f"two-factor login required for: {body.require_2fa}")
+    return {"require_2fa": body.require_2fa}
+
+
 @api.get("/settings/ai")
 def get_ai(p: Principal = Depends(current), s: Session = Depends(db_session)) -> dict:
     return ai.AIConfigStore.public(HubAIStore(s).load_all())
@@ -1156,7 +1327,7 @@ async def pod_shell(ws: WebSocket, cluster_id: int, namespace: str, pod: str, co
             await ws.close(code=4401, reason=str(e.detail))
             return
         c = s.get(Cluster, cluster_id)
-        if c is None or not p.can("cluster.view", cluster_id) or p.user.must_change_password:
+        if c is None or not p.can("cluster.view", cluster_id) or p.user.must_change_password or must_setup_2fa(s, p):
             await ws.close(code=4404, reason="cluster not found")
             return
         if not p.can("pods.exec", cluster_id):

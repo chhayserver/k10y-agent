@@ -24,6 +24,12 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Two-factor login: the TOTP secret (encrypted; set while enrolling, used once enabled), the last time step
+    # used (no code works twice) and digests of the unused recovery codes.
+    totp_secret: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    totp_last_step: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    recovery_codes: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     assignments: Mapped[List["RoleAssignment"]] = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -132,7 +138,11 @@ class Database:
                      ("alert_events", "haproxy_id", "INTEGER"),
                      ("haproxy_instances", "log_tag", "VARCHAR(64) DEFAULT ''"),
                      ("haproxy_instances", "group_name", "VARCHAR(64) DEFAULT ''"),
-                     ("role_assignments", "haproxy_id", "INTEGER")]
+                     ("role_assignments", "haproxy_id", "INTEGER"),
+                     ("users", "totp_secret", "VARCHAR(512)"),
+                     ("users", "totp_enabled", "BOOLEAN DEFAULT FALSE"),
+                     ("users", "totp_last_step", "INTEGER"),
+                     ("users", "recovery_codes", "JSON")]
 
     def _add_missing_columns(self) -> None:
         insp = inspect(self.engine)

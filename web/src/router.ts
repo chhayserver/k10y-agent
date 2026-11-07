@@ -47,6 +47,7 @@ const legacy: RouteRecordRaw[] = NAV.filter((n) => `/${n.id}` !== pathOf(n)).map
 const routes: RouteRecordRaw[] = [
   { path: "/login", component: () => import("@/views/Login.vue"), meta: { bare: true, public: true } },
   { path: "/password", component: () => import("@/views/ChangePassword.vue"), meta: { bare: true } },
+  { path: "/two-factor", component: () => import("@/views/TwoFactorRequired.vue"), meta: { bare: true } },
   { path: "/", redirect: () => { const p = to(prefs.start || "home"); return p === "/" ? to("home") : p; } },
   ...NAV.map((n) => ({ path: pathOf(n), component: component(n.id)!, meta: { nav: n }, props: n.tab ? { tab: n.tab } : undefined })),
   { path: "/k8s", redirect: () => to("overview") },
@@ -64,6 +65,7 @@ router.beforeEach(async (target) => {
   if (target.meta.public) return s.me ? "/" : true;
   if (!s.me) return { path: "/login", query: target.fullPath !== "/" ? { next: target.fullPath } : {} };
   if (s.me.user.must_change_password && target.path !== "/password") return "/password";
+  if (!s.me.user.must_change_password && s.me.user.must_setup_2fa && target.path !== "/two-factor") return "/two-factor";
   const nav = target.meta.nav as (typeof NAV)[number] | undefined;
   const sys = systemById(nav?.system);
   if (sys && !sys.visible(s)) return to("home");

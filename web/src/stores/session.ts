@@ -5,7 +5,7 @@ import { loadAccountPrefs, stopAccountSync } from "./prefs";
 export interface ClusterRef { id: number; name: string; permissions: string[] }
 export interface HaproxyRef { id: number; name: string; permissions: string[] }
 export interface Me {
-  user: { id: number; username: string; display_name: string; must_change_password: boolean };
+  user: { id: number; username: string; display_name: string; must_change_password: boolean; totp_enabled?: boolean; must_setup_2fa?: boolean };
   global_permissions: string[];
   clusters: ClusterRef[];
   haproxy?: HaproxyRef[];        // HAProxy instances this user has a role on, with the permissions there
@@ -60,11 +60,15 @@ export const useSession = defineStore("session", {
       this.fixCurrent();
       return this.me;
     },
-    async login(username: string, password: string) {
-      this.me = await hub.post<Me>("/auth/login", { username, password });
-      if (!this.me!.user.must_change_password) await loadAccountPrefs();
+    /** Signs in. Returns "code" when the account has two-factor login and `code` is still needed. */
+    async login(username: string, password: string, code?: string): Promise<"ok" | "code"> {
+      const r = await hub.post<Me | { totp_required: true }>("/auth/login", { username, password, ...(code ? { code } : {}) });
+      if ("totp_required" in r) return "code";
+      this.me = r;
+      if (!this.me.user.must_change_password && !this.me.user.must_setup_2fa) await loadAccountPrefs();
       this.checked = true;
       this.fixCurrent();
+      return "ok";
     },
     async logout() {
       stopAccountSync();

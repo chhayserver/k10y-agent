@@ -9,18 +9,36 @@ const s = useSession(), router = useRouter(), route = useRoute();
 let saved = "";
 try { saved = localStorage.getItem("k10y.lastUser") || ""; } catch { /* storage blocked */ }
 const username = ref(saved), password = ref(""), error = ref(""), busy = ref(false), caps = ref(false);
+// Second step for accounts with two-factor login: the authenticator code (or a recovery code).
+const step = ref<"password" | "code">("password"), code = ref("");
 async function submit() {
   error.value = ""; busy.value = true;
   try {
-    await s.login(username.value.trim(), password.value);
+    if (await s.login(username.value.trim(), password.value, step.value === "code" ? code.value.trim() : undefined) === "code") {
+      step.value = "code"; return;
+    }
     try { localStorage.setItem("k10y.lastUser", username.value.trim()); } catch { /* storage blocked */ }
-    router.replace(s.me?.user.must_change_password ? "/password" : String(route.query.next || "/"));
-  } catch (e: any) { error.value = e.message; password.value = ""; } finally { busy.value = false; }
+    router.replace(s.me?.user.must_change_password ? "/password" : s.me?.user.must_setup_2fa ? "/two-factor" : String(route.query.next || "/"));
+  } catch (e: any) {
+    error.value = e.message;
+    if (step.value === "code") code.value = ""; else password.value = "";
+  } finally { busy.value = false; }
 }
+function back() { step.value = "password"; code.value = ""; password.value = ""; error.value = ""; }
 </script>
 <template>
   <AuthLayout>
-    <form class="auth-form" novalidate @submit.prevent="submit">
+    <form v-if="step === 'code'" class="auth-form" novalidate @submit.prevent="submit">
+      <div class="auth-head"><h1>Two-factor login</h1><p>Enter the 6-digit code from your authenticator app for <b>{{ username }}</b>.</p></div>
+      <div class="form-row"><label class="lbl" for="code">Code</label>
+        <div class="icon-input"><Icon name="lock" /><input id="code" v-model="code" class="input totp-input" autocomplete="one-time-code" inputmode="numeric" autofocus required placeholder="123 456" maxlength="20"></div>
+        <span class="hint">Lost your phone? Type one of your recovery codes instead.</span></div>
+      <div v-if="error" class="auth-error" role="alert"><Icon name="crit" /><span>{{ error }}</span></div>
+      <button class="btn primary auth-submit" type="submit" :disabled="busy || code.trim().length < 6">
+        <span v-if="busy" class="spinner" aria-hidden="true" />{{ busy ? "Checking…" : "Sign in" }}</button>
+      <button class="btn ghost" type="button" @click="back">Use another account</button>
+    </form>
+    <form v-else class="auth-form" novalidate @submit.prevent="submit">
       <div class="auth-head"><h1>Welcome back</h1><p>Sign in to your k10y hub to continue.</p></div>
       <div class="form-row"><label class="lbl" for="u">Username</label>
         <div class="icon-input"><Icon name="user" /><input id="u" v-model="username" class="input" autocomplete="username" :autofocus="!username" required placeholder="your.name"></div></div>
@@ -34,3 +52,7 @@ async function submit() {
     </form>
   </AuthLayout>
 </template>
+
+<style scoped>
+.totp-input { font-family: var(--mono); letter-spacing: .2em; font-size: 18px; }
+</style>

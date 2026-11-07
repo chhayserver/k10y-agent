@@ -12,6 +12,15 @@ const session = useSession();
 // AI providers and alert channels need settings.manage; protected namespaces need namespaces.protect on a cluster.
 const manage = session.canAll("settings.manage"), protect = session.canGlobal("namespaces.protect");
 const ai = ref<any>(null);
+
+// sign-in security: require two-factor login
+const security = reactive({ require_2fa: "off", saved: "off", busy: false, msg: "" });
+onMounted(async () => { if (!manage) return; try { const r = await hub.get<any>("/settings/security"); security.require_2fa = security.saved = r.require_2fa; } catch { /* older hub */ } });
+async function saveSecurity() {
+  security.busy = true; security.msg = "";
+  try { security.saved = (await hub.put<any>("/settings/security", { require_2fa: security.require_2fa })).require_2fa; toast(true, "Sign-in security saved"); }
+  catch (e: any) { security.msg = e.message; } finally { security.busy = false; }
+}
 const drafts = reactive<Record<string, { key: string; model: string; base: string; models: string[]; busy: boolean; msg: string; ok: boolean }>>({});
 async function load() {
   ai.value = await hub.get("/settings/ai");
@@ -65,6 +74,14 @@ async function removeKey(id: string) { if (!confirm("Remove this provider's key?
 <template>
   <template v-if="protect"><ProtectedNamespaces /><div style="height:28px" /></template>
   <template v-if="manage">
+  <div class="section-bar"><h2>Sign-in security</h2><span class="hint">Two-factor login adds a code from an authenticator app to every sign-in. Each person sets it up in My settings.</span></div>
+  <section class="card" style="margin-bottom:28px"><div class="card-body" style="display:flex;flex-direction:column;gap:12px">
+    <div class="pref-row"><div class="lbl">Require two-factor login<div>People who must use it and haven't set it up are asked to do it right after signing in. Admins are users with a role on everything that can manage users, settings, clusters or HAProxy instances.</div></div>
+      <div class="segmented" role="group"><button v-for="[v, l] in [['off', 'Optional'], ['admins', 'Admins'], ['everyone', 'Everyone']]" :key="v" type="button" :aria-pressed="security.require_2fa === v" @click="security.require_2fa = v">{{ l }}</button></div></div>
+    <div v-if="security.msg" class="test-result show err"><Icon name="crit" /><span>{{ security.msg }}</span></div>
+    <div v-if="security.require_2fa !== security.saved" style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" type="button" @click="security.require_2fa = security.saved">Undo</button>
+      <button class="btn primary" type="button" :disabled="security.busy" @click="saveSecurity">Save</button></div>
+  </div></section>
   <div class="section-bar"><h2>AI providers</h2><span class="hint">Keys are stored encrypted in the hub's PostgreSQL database and are never sent back to the browser. Every cluster uses the active provider.</span></div>
   <div v-if="ai" class="two-col">
     <section v-for="(p, id) in ai.providers" :key="id" class="card">
