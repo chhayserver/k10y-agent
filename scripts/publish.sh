@@ -34,7 +34,7 @@ step "Helm charts"
 rm -rf dist/charts && mkdir -p dist/charts
 for chart in k10y-agent k10y-hub; do
   helm lint "deploy/helm/$chart" >/dev/null
-  helm package -q "deploy/helm/$chart" -d dist/charts
+  helm package "deploy/helm/$chart" -d dist/charts >/dev/null
   cp "dist/charts/$chart-$V.tgz" "dist/charts/$chart.tgz"   # stable name for .../releases/latest/download/
 done
 
