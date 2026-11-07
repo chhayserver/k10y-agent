@@ -65,10 +65,10 @@ export function actImage(o: any) {
     },
   });
 }
-export function actRollback(o: any) {
+export function actRollback(o: any, revision: number | null = null) {
   openAction({
     title: "Roll back deployment", desc: `Choose the revision of ${ref(o)} to return to. This starts a rolling update.`, form: RollbackForm,
-    model: { namespace: o.namespace, name: o.name, revision: null }, confirmLabel: "Roll back",
+    model: { namespace: o.namespace, name: o.name, revision }, confirmLabel: "Roll back",
     request: (m, dry) => {
       if (!m.revision) throw new Error("Pick a revision.");
       return { path: `deployments/${o.namespace}/${o.name}/rollback`, body: { revision: m.revision, dry_run: dry } };

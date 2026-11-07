@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { hub } from "@/api/client";
 import Badge from "@/components/Badge.vue";
 import DataTable from "@/components/DataTable.vue";
 import LineChart from "@/components/LineChart.vue";
@@ -9,19 +10,35 @@ import Skeleton from "@/components/Skeleton.vue";
 import { menuFor } from "@/lib/actions";
 import { fmt } from "@/lib/format";
 import { useCluster } from "@/stores/cluster";
+import { useSession } from "@/stores/session";
 import { page, prefs } from "@/stores/prefs";
 import { openDetail } from "@/stores/ui";
+import { RANGES, isLong, type RangeKey } from "@/lib/k8sHistory";
 
-const c = useCluster(), state = page("nodes", { key: "name", dir: 1 });
-const RANGES = { "5m": 5 * 60e3, "15m": 15 * 60e3, "1h": 60 * 60e3 } as const;
+const c = useCluster(), s = useSession(), state = page("nodes", { key: "name", dir: 1 });
+
 const m = ref<any>(null);
 let timer = 0;
 async function poll() { if (!c.paused && !document.hidden) try { m.value = await c.loadMetrics("nodes"); } catch { /* retry */ } }
 onMounted(() => { poll(); timer = window.setInterval(poll, 5000); });
 onBeforeUnmount(() => clearInterval(timer));
 const names = computed(() => Object.keys(m.value?.nodes || {}).sort().slice(0, 8));
+// longer than an hour: the hub's 5-minute averages, one request per node
+const longPts = ref<Record<string, number[][]>>({});
+let longTimer = 0;
+async function loadLong() {
+  const cid = s.current?.id;
+  if (!cid || !isLong(prefs.range)) return;
+  const since = Date.now() - RANGES[prefs.range as RangeKey], out: Record<string, number[][]> = {};
+  await Promise.all(names.value.map(async (n) => {
+    try { out[n] = (await hub.get<{ points: number[][] }>(`/clusters/${cid}/history`, { scope: "node", name: n, since })).points; } catch { out[n] = []; }
+  }));
+  longPts.value = out;
+}
+watch([() => prefs.range, names], () => { clearInterval(longTimer); if (isLong(prefs.range)) { loadLong(); longTimer = window.setInterval(loadLong, 60000); } }, { immediate: true });
+onBeforeUnmount(() => clearInterval(longTimer));
 const series = (k: 1 | 2, cap: string) => names.value.map((n, i) => ({ label: n, color: `var(--series-${i + 1})`,
-  points: m.value.nodes[n].points.map((p: any) => [p[0], m.value.nodes[n][cap] ? (p[k] / m.value.nodes[n][cap]) * 100 : 0]) }));
+  points: (isLong(prefs.range) ? longPts.value[n] || [] : m.value.nodes[n].points).map((p: any) => [p[0], m.value.nodes[n][cap] ? (p[k] / m.value.nodes[n][cap]) * 100 : 0]) }));
 const pct = (v: number) => `${Math.round(v)}%`;
 const columns = [
   { key: "name", label: "Name", cls: "primary" }, { key: "ready", label: "Status", sort: (n: any) => (n.ready ? 1 : 0) },

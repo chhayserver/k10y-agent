@@ -44,6 +44,7 @@ export default defineConfig({
         { text: "Using k10y", items: [
           { text: "Dashboard tour", link: "/docs/dashboard" },
           { text: "Logs and live logs", link: "/docs/logs" },
+          { text: "Kubernetes insights", link: "/docs/kubernetes" },
           { text: "Actions and safety", link: "/docs/actions" },
           { text: "Edit YAML", link: "/docs/edit-yaml" },
           { text: "Pod shell", link: "/docs/shell" },

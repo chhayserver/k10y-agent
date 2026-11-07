@@ -18,7 +18,7 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 from websockets.asyncio.client import connect as ws_connect
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
@@ -892,8 +892,10 @@ async def _proxy_stream(c: Cluster, url: str, request: Request, headers: Dict[st
 
 @api.get("/audit")
 def list_audit(p: Principal = Depends(current), s: Session = Depends(db_session), cluster_id: Optional[int] = None,
-               limit: int = 300) -> list:
+               limit: int = 300, target: Optional[str] = Query(None, max_length=300, description="Only entries about this object (substring).")) -> list:
     q = select(AuditEntry).order_by(AuditEntry.id.desc()).limit(min(max(limit, 1), 1000))
+    if target:
+        q = q.where(AuditEntry.target.contains(target))
     all_ids = [c.id for c in s.execute(select(Cluster)).scalars()]
     allowed = [cid for cid in all_ids if p.can("audit.view", cid)]
     if cluster_id is not None:

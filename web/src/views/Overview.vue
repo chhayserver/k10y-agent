@@ -12,9 +12,11 @@ import { useCluster } from "@/stores/cluster";
 import { prefs } from "@/stores/prefs";
 import { useSession } from "@/stores/session";
 import { openDetail } from "@/stores/ui";
+import { RANGES, isLong, useLongHistory } from "@/lib/k8sHistory";
 
 const s = useSession(), c = useCluster();
-const RANGES = { "5m": 5 * 60e3, "15m": 15 * 60e3, "1h": 60 * 60e3 } as const;
+const long = useLongHistory(() => s.current?.id, () => prefs.range, "cluster");
+const pts = computed(() => (isLong(prefs.range) ? long.value || [] : m.value?.points || []));
 const sum = computed(() => c.data?.summary);
 const m = ref<any>(null);
 let timer = 0;
@@ -64,11 +66,11 @@ const liveLabel = computed(() => (c.paused ? "Paused" : c.liveError ? "Metrics u
     <div class="two-col">
       <section class="card"><div class="card-head"><h2>CPU</h2><span class="sub hide-sm">cluster-wide</span>
           <div v-if="last && m" class="chart-now"><b>{{ cores(last[1] / 1000) }}</b>of {{ cores(m.cpu_allocatable_m / 1000) }} · {{ fmt.pct((last[1] / m.cpu_allocatable_m) * 100) }}</div></div>
-        <div class="card-body"><LineChart v-if="m" :series="[{ label: 'CPU', color: 'var(--series-1)', points: m.points.map((p: any) => [p[0], p[1] / 1000]) }]" :y-fmt="cores"
-          :refs="[{ v: m.cpu_allocatable_m / 1000, label: 'capacity' }]" :range="RANGES[prefs.range]" area :empty-sub="m.error || 'A point arrives each time metrics-server measures (about every 15 seconds).'" aria-label="Cluster CPU" /><Skeleton v-else /></div></section>
+        <div class="card-body"><LineChart v-if="m" :series="[{ label: 'CPU', color: 'var(--series-1)', points: pts.map((p: any) => [p[0], p[1] / 1000]) }]" :y-fmt="cores"
+          :refs="[{ v: m.cpu_allocatable_m / 1000, label: 'capacity' }]" :range="RANGES[prefs.range]" area :empty-sub="m.error || (isLong(prefs.range) ? 'k10y keeps 5-minute averages for 7 days; longer ranges fill in over time.' : 'A point arrives each time metrics-server measures (about every 15 seconds).')" aria-label="Cluster CPU" /><Skeleton v-else /></div></section>
       <section class="card"><div class="card-head"><h2>Memory</h2><span class="sub hide-sm">cluster-wide</span>
           <div v-if="last && m" class="chart-now"><b>{{ gib(last[2] / 2 ** 30) }}</b>of {{ gib(m.memory_allocatable_bytes / 2 ** 30) }} · {{ fmt.pct((last[2] / m.memory_allocatable_bytes) * 100) }}</div></div>
-        <div class="card-body"><LineChart v-if="m" :series="[{ label: 'Memory', color: 'var(--series-2)', points: m.points.map((p: any) => [p[0], p[2] / 2 ** 30]) }]" :y-fmt="gib"
+        <div class="card-body"><LineChart v-if="m" :series="[{ label: 'Memory', color: 'var(--series-2)', points: pts.map((p: any) => [p[0], p[2] / 2 ** 30]) }]" :y-fmt="gib"
           :refs="[{ v: m.memory_allocatable_bytes / 2 ** 30, label: 'capacity' }]" :range="RANGES[prefs.range]" area :empty-sub="m.error || 'Waiting for the first measurement.'" aria-label="Cluster memory" /><Skeleton v-else /></div></section>
     </div>
 

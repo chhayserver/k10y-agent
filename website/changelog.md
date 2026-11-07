@@ -9,6 +9,17 @@ Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and 
 ## Unreleased
 
 - **Add cluster: just type the address.** Enter `192.168.64.2:30800` without a scheme; k10y finds how the agent answers. The agent serves HTTPS itself, also through a NodePort, so `https://` is added for you, and an `http://` address is switched to `https://` when the agent speaks TLS (before, it failed with "Server disconnected").
+- **Search everything (Ctrl/⌘ K):** find any Kubernetes object or Helm release in every cluster, and HAProxy frontends, backends and servers, from the top bar.
+- **Rollout history:** a Deployment's **Revisions** tab lists each revision with images and who changed it, compares two revisions, and rolls back to any one.
+- **Helm releases:** charts, versions, status and history; values and manifest (secrets masked, needs `secrets.view`); compare revisions; copy the rollback command.
+- **Workload logs:** pick a pod or all, start from the last 15 min / hour / 6 hours, errors only, highlighted matches.
+- **Smarter alerts:** OOMKilled, stuck rollouts, failed or late CronJobs, PVCs pending or lost, and TLS certificates expiring within 14 days join the problem list.
+- **Certificates page** with days left for Ingress TLS secrets and cert-manager Certificates.
+- **CronJob runs** and **namespace quotas** in the details panels.
+- **Right-sizing:** real CPU (p95) and memory (peak) per pod against requests and limits, with recommended values and what you'd free.
+- **7-day history:** the hub keeps 5-minute samples for 7 days; Overview, Nodes and pods get 6 h, 24 h and 7 d ranges.
+- **Service → HAProxy:** a Service shows the HAProxy backends that send traffic to it.
+- **Agent RBAC:** read access to ResourceQuotas, LimitRanges and cert-manager Certificates. Re-apply `install.yaml` when upgrading.
 
 ## 2.5.0 <Badge type="tip" text="latest" />
 

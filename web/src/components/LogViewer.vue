@@ -10,6 +10,11 @@ const s = useSession();
 const MAX_LINES = 5000;
 const container = ref(props.containers?.[0] || ""), tail = ref(props.workload ? 50 : 200), previous = ref(false), wrap = ref(true);
 const live = ref(true), paused = ref(false), filter = ref(""), stick = ref(true);
+// Live mode can start from a time instead of a number of lines; workloads can show one pod; "errors only" keeps
+// lines that look like errors. Matches of the filter are highlighted.
+const since = ref(0), pod = ref(""), errorsOnly = ref(false);
+const SINCE: [number, string][] = [[0, ""], [900, "last 15 min"], [3600, "last hour"], [21600, "last 6 hours"]];
+const ERROR_RE = /\b(error|err|fatal|panic|exception|traceback|failed|failure|critical|crit|5\d\d)\b/i;
 const lines = ref<string[]>([]), status = ref<"loading" | "live" | "ended" | "error" | "idle">("loading"), error = ref("");
 const pre = ref<HTMLElement | null>(null);
 let ctrl: AbortController | null = null, lastAt = 0, retry = 0, held: string[] = [];
@@ -37,8 +42,8 @@ async function follow(resume = false) {
   const my = (ctrl = new AbortController());
   if (!resume) { lines.value = []; held = []; }
   status.value = resume ? status.value : "loading"; error.value = "";
-  const since = resume && lastAt ? Math.max(1, Math.ceil((Date.now() - lastAt) / 1000)) : undefined;
-  const query = { container: props.workload ? undefined : container.value, tail: resume ? 0 : tail.value, since_seconds: since };
+  const from = resume && lastAt ? Math.max(1, Math.ceil((Date.now() - lastAt) / 1000)) : since.value || undefined;
+  const query = { container: props.workload ? undefined : container.value, tail: resume ? 0 : since.value ? MAX_LINES : tail.value, since_seconds: from };
   try {
     const r = await fetch(`/api/hub/clusters/${s.current!.id}/api/${props.path}/stream${qs(query)}`, { signal: my.signal, credentials: "same-origin" });
     if (!r.ok || !r.body) {
@@ -66,13 +71,28 @@ async function follow(resume = false) {
 }
 
 function reload() { if (live.value && !previous.value) follow(); else snapshot(); }
-watch([container, tail, previous, live], () => { if (previous.value) live.value = false; reload(); }, { immediate: true });
+watch([container, tail, previous, live, since], () => { if (previous.value) live.value = false; reload(); }, { immediate: true });
 watch(() => props.path, reload);
 watch(paused, (p) => { if (!p && held.length) { const h = held; held = []; push(h); } });
 onBeforeUnmount(stop);
 
 function onScroll() { const el = pre.value; if (el) stick.value = el.scrollHeight - el.scrollTop - el.clientHeight < 30; }
-const shown = computed(() => { const q = filter.value.trim().toLowerCase(); return q ? lines.value.filter((l) => l.toLowerCase().includes(q)) : lines.value; });
+const shown = computed(() => {
+  const q = filter.value.trim().toLowerCase();
+  return lines.value.filter((l) => (!q || l.toLowerCase().includes(q)) && (!errorsOnly.value || ERROR_RE.test(l))
+    && (!pod.value || l.startsWith(`[${pod.value}] `)));
+});
+const pods = computed(() => (props.workload ? [...new Set(lines.value.map((l) => /^\[([^\]]+)\] /.exec(l)?.[1]).filter(Boolean) as string[])].sort() : []));
+// "…text…" split around the filter's matches, for highlighting
+function marks(text: string): [string, boolean][] {
+  const q = filter.value.trim();
+  if (!q) return [[text, false]];
+  const out: [string, boolean][] = [], low = text.toLowerCase(), ql = q.toLowerCase();
+  let i = 0;
+  for (let j = low.indexOf(ql); j >= 0; j = low.indexOf(ql, i)) { if (j > i) out.push([text.slice(i, j), false]); out.push([text.slice(j, j + q.length), true]); i = j + q.length; }
+  if (i < text.length) out.push([text.slice(i), false]);
+  return out;
+}
 const POD_COLORS = ["var(--series-1)", "var(--series-2)", "var(--series-3, #b46cd6)", "var(--series-4, #d6913a)", "var(--series-5, #3aa79a)"];
 const podColor = new Map<string, string>();
 function split(line: string): [string, string, string] {
@@ -97,21 +117,27 @@ const STATUS: Record<string, string> = { loading: "Connecting…", live: "Live",
       <button :aria-pressed="live" :disabled="previous" @click="live = true"><span class="live-dot" :class="{ on: live && status === 'live' }" />Live</button>
       <button :aria-pressed="!live" @click="live = false">Snapshot</button></div>
     <select v-if="!workload && containers && containers.length > 1" v-model="container" class="select" aria-label="Container"><option v-for="x in containers" :key="x">{{ x }}</option></select>
-    <select v-model.number="tail" class="select" aria-label="Lines"><option v-for="n in (workload ? [10, 50, 200, 500] : [100, 200, 500, 1000, 5000])" :key="n" :value="n">{{ live ? `Start with last ${n}` : `Last ${n} lines` }}</option></select>
+    <select v-if="live" v-model.number="since" class="select" aria-label="Start from"><option v-for="[v, l] in SINCE" :key="v" :value="v">{{ v ? `From the ${l}` : "From the last lines" }}</option></select>
+    <select v-if="!live || !since" v-model.number="tail" class="select" aria-label="Lines"><option v-for="n in (workload ? [10, 50, 200, 500] : [100, 200, 500, 1000, 5000])" :key="n" :value="n">{{ live ? `Start with last ${n}` : `Last ${n} lines` }}</option></select>
+    <select v-if="workload && pods.length > 1" v-model="pod" class="select" aria-label="Pod"><option value="">All pods</option><option v-for="x in pods" :key="x" :value="x">{{ x }}</option></select>
     <label v-if="!workload"><input v-model="previous" type="checkbox"> Previous container</label>
     <label><input v-model="wrap" type="checkbox"> Wrap</label>
+    <label><input v-model="errorsOnly" type="checkbox"> Errors only</label>
     <label class="search sm"><Icon name="search" /><input v-model="filter" class="input" placeholder="Filter lines" aria-label="Filter lines"></label>
     <span style="flex:1" />
-    <span class="hint" :style="{ color: status === 'error' ? 'var(--critical)' : undefined }">{{ STATUS[status] }} · {{ shown.length }}{{ filter ? ` of ${lines.length}` : "" }} lines</span>
+    <span class="hint" :style="{ color: status === 'error' ? 'var(--critical)' : undefined }">{{ STATUS[status] }} · {{ shown.length }}{{ shown.length !== lines.length ? ` of ${lines.length}` : "" }} lines</span>
     <button v-if="live" class="btn" :aria-pressed="paused" @click="paused = !paused"><Icon :name="paused ? 'play' : 'pause'" /><span>{{ paused ? "Resume" : "Pause" }}</span></button>
     <button class="btn" @click="copy"><Icon name="copy" /><span>{{ copied ? "Copied" : "Copy" }}</span></button>
     <button class="btn" title="Download" aria-label="Download logs" @click="download"><Icon name="upload" style="transform:rotate(180deg)" /></button>
     <button class="btn" @click="lines = []">Clear</button>
     <button class="btn" @click="reload"><Icon name="refresh" /><span>Reload</span></button>
   </div>
-  <pre ref="pre" class="logs" :class="{ wrap }" tabindex="0" :aria-label="label || 'Logs'" aria-live="off" @scroll="onScroll"><template v-if="error && !lines.length">{{ error }}</template><template v-else-if="!lines.length">{{ status === "loading" ? "Loading logs…" : live ? "Waiting for new log lines…" : "(no log output)" }}</template><template v-else v-for="(l, i) in shown" :key="i"><template v-if="workload"><span class="log-pod" :style="{ color: split(l)[1] }">{{ split(l)[0] ? split(l)[0] + " " : "" }}</span>{{ split(l)[2] }}
-</template><template v-else>{{ l }}
-</template></template></pre>
+  <pre ref="pre" class="logs" :class="{ wrap }" tabindex="0" :aria-label="label || 'Logs'" aria-live="off" @scroll="onScroll"><template v-if="error && !lines.length">{{ error }}</template><template v-else-if="!lines.length">{{ status === "loading" ? "Loading logs…" : live ? "Waiting for new log lines…" : "(no log output)" }}</template><template v-else v-for="(l, i) in shown" :key="i"><span v-if="workload" class="log-pod" :style="{ color: split(l)[1] }">{{ split(l)[0] ? split(l)[0] + " " : "" }}</span><template v-for="(m, k) in marks(workload ? split(l)[2] : l)" :key="k"><mark v-if="m[1]" class="log-hit">{{ m[0] }}</mark><template v-else>{{ m[0] }}</template></template>
+</template></pre>
   <div v-if="error && lines.length" class="hint" style="color:var(--critical);margin-top:6px">{{ error }}</div>
   <button v-if="!stick && lines.length" class="btn sm" style="margin-top:6px" @click="stick = true; pre && (pre.scrollTop = pre.scrollHeight)">↓ Jump to latest</button>
 </template>
+
+<style scoped>
+.log-hit { background: color-mix(in srgb, var(--warning) 45%, transparent); color: inherit; border-radius: 2px; }
+</style>

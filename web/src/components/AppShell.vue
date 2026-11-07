@@ -18,6 +18,7 @@ const PodShell = defineAsyncComponent(() => import("./PodShell.vue"));
 import ActionDialog from "./ActionDialog.vue";
 import Badge from "./Badge.vue";
 import Icon from "./Icon.vue";
+import GlobalSearch from "./GlobalSearch.vue";
 import MenuPopover from "./MenuPopover.vue";
 import PanelHost from "@/panels/PanelHost.vue";
 import Toasts from "./Toasts.vue";
@@ -246,6 +247,7 @@ const canApply = computed(() => navItem.value?.cluster && s.can("apply.yaml") &&
         </div>
         <Badge v-if="health" :level="health.level" :label="health.label" lg />
         <div class="spacer" />
+        <GlobalSearch v-if="s.me" />
         <span v-if="live" class="updated" aria-live="polite">{{ updated }}</span>
         <button v-if="live" class="btn icon-only ghost" :aria-pressed="onHaproxy ? h.paused : c.paused" :title="(onHaproxy ? h.paused : c.paused) ? 'Resume auto-refresh' : 'Pause auto-refresh'"
                 @click="togglePauseAny"><Icon :name="(onHaproxy ? h.paused : c.paused) ? 'play' : 'pause'" /></button>

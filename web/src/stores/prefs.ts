@@ -11,7 +11,7 @@ interface Prefs {
   theme: "system" | "light" | "dark";
   refresh: number;
   start: string;
-  range: "5m" | "15m" | "1h";
+  range: "5m" | "15m" | "1h" | "6h" | "24h" | "7d";
   pages: Record<string, PageState>;
   map: { ns: string; rs: boolean; config: boolean; q: string };
   hxDash: HxDash;

@@ -15,14 +15,19 @@ import { useSession } from "@/stores/session";
 import type { PanelRef } from "@/stores/ui";
 import EventsList from "./EventsList.vue";
 import OpenLink from "./OpenLink.vue";
+import CronJobRuns from "./CronJobRuns.vue";
+import NamespaceQuotas from "./NamespaceQuotas.vue";
 import PanelHead from "./PanelHead.vue";
+import RevisionsTab from "./RevisionsTab.vue";
+import ServiceHaproxy from "./ServiceHaproxy.vue";
 
 const props = defineProps<{ r: PanelRef }>();
 const s = useSession();
 const tab = ref(props.r.tab || "overview");
 const LOG_KINDS: Record<string, string> = { Deployment: "deployments", StatefulSet: "statefulsets", DaemonSet: "daemonsets", Job: "jobs" };
 const logPath = computed(() => (LOG_KINDS[props.r.kind] && s.can("logs.view") ? `${LOG_KINDS[props.r.kind]}/${props.r.namespace}/${props.r.name}/logs` : ""));
-const tabs = computed(() => [["overview", "Overview"], ["yaml", "YAML"], ["events", `Events${d.value ? ` · ${d.value.events.length}` : ""}`], ...(logPath.value ? [["logs", "Logs"]] : [])]);
+const tabs = computed(() => [["overview", "Overview"], ...(props.r.kind === "Deployment" ? [["revisions", "Revisions"]] : []), ["yaml", "YAML"],
+  ["events", `Events${d.value ? ` · ${d.value.events.length}` : ""}`], ...(logPath.value ? [["logs", "Logs"]] : [])]);
 const d = ref<any>(null), error = ref("");
 async function load() {
   d.value = null; error.value = "";
@@ -104,6 +109,7 @@ async function copyYaml() { try { await navigator.clipboard.writeText(d.value.ya
       <pre class="logs" style="max-height:none;white-space:pre">{{ d.yaml }}</pre>
     </template>
     <EventsList v-else-if="tab === 'events'" :events="d.events" />
+    <RevisionsTab v-else-if="tab === 'revisions'" :namespace="r.namespace!" :name="r.name" />
     <div v-else-if="tab === 'logs' && logPath"><p class="hint" style="margin:0 0 10px">Live logs from every pod of this {{ r.kind }}, each line tagged with its pod.</p>
       <LogViewer :path="logPath" workload :label="`${r.namespace}-${r.name}`" /></div>
     <template v-else>
@@ -208,6 +214,9 @@ async function copyYaml() { try { await navigator.clipboard.writeText(d.value.ya
             <td><a v-if="p.nodePort" class="ext-link" :href="`http://${host}:${p.nodePort}`" target="_blank" rel="noopener">{{ p.nodePort }}<Icon name="external" /></a><span v-else>–</span></td></tr>
         </tbody></table></div>
       </div>
+      <ServiceHaproxy v-if="r.kind === 'Service'" :namespace="r.namespace!" :name="r.name" />
+      <CronJobRuns v-if="r.kind === 'CronJob'" :namespace="r.namespace!" :name="r.name" />
+      <NamespaceQuotas v-if="r.kind === 'Namespace'" :namespace="r.name" />
       <div v-if="r.kind === 'Node'">
         <h3 class="section-title">Capacity</h3>
         <div class="table-wrap card" style="box-shadow:none"><table class="data"><thead><tr><th>Resource</th><th>Capacity</th><th>Allocatable</th></tr></thead><tbody>

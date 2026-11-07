@@ -10,7 +10,7 @@ onMounted(async () => {
     const h = await agent(useSession().current!.id).get(`deployments/${props.model.namespace}/${props.model.name}/history`);
     history.value = h;
     const older = h.filter((r: any) => !r.current);
-    if (older.length) props.model.revision = older[0].revision;
+    if (older.length && !older.some((r: any) => r.revision === props.model.revision)) props.model.revision = older[0].revision;
   } catch (e: any) { error.value = e.message; }
 });
 </script>

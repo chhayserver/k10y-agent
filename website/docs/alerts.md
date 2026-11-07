@@ -22,7 +22,7 @@ Open **Alerts → New rule** (permission `alerts.manage`). Empty pages offer thr
 
 | Rule type | Fires when |
 |---|---|
-| **Cluster problems** | Anything on the Overview's problem list: crash loops, failing image pulls, OOM kills, pods pending too long, unavailable replicas, failed jobs, NotReady nodes, node pressure. Filter by kind, and include or skip namespaces. |
+| **Cluster problems** | Anything on the Overview's problem list: crash loops, failing image pulls, OOM kills, pods pending too long, unavailable replicas, failed jobs and CronJobs, stuck rollouts, PVCs pending or lost, TLS certificates expiring within 14 days, NotReady nodes, node pressure. Filter by kind, and include or skip namespaces. |
 | **CPU / memory threshold** | CPU or memory reaches a percentage on **any node** or for the **whole cluster**. |
 | **Cluster unreachable** | The hub can't reach the cluster's agent. |
 

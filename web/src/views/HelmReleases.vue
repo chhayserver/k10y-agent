@@ -1,0 +1,130 @@
+<script setup lang="ts">
+// Helm releases, read from Helm's own release records: chart and version, status, history; values and the
+// rendered manifest (secret-looking values masked, needs secrets.view); compare two revisions; rollback command.
+import { computed, onMounted, reactive, ref, watch } from "vue";
+import { agent } from "@/api/client";
+import Badge from "@/components/Badge.vue";
+import DataTable from "@/components/DataTable.vue";
+import EmptyState from "@/components/EmptyState.vue";
+import Icon from "@/components/Icon.vue";
+import Modal from "@/components/Modal.vue";
+import Skeleton from "@/components/Skeleton.vue";
+import Toolbar from "@/components/Toolbar.vue";
+import { diffLines, type DiffLine } from "@/lib/diff";
+import { fmt } from "@/lib/format";
+import { useFiltered } from "@/lib/list";
+import { page } from "@/stores/prefs";
+import { useSession } from "@/stores/session";
+import { toast } from "@/stores/ui";
+
+const s = useSession(), state = page("helm", { key: "name", dir: 1 });
+const list = ref<any[] | null>(null), error = ref("");
+const api = () => agent(s.current!.id);
+async function load() { try { list.value = await api().get("helm/releases"); error.value = ""; } catch (e: any) { error.value = e.message; } }
+onMounted(load);
+watch(() => s.current?.id, load);
+const LEVEL: Record<string, string> = { deployed: "good", superseded: "neutral", failed: "critical", "pending-install": "warning", "pending-upgrade": "warning", "pending-rollback": "warning", uninstalling: "warning" };
+const { rows, all, count } = useFiltered(() => list.value || undefined, state, (x: any) => `${x.name} ${x.namespace} ${x.chart} ${x.app_version}`,
+  (x, f) => f === "all" || (f === "problems" ? x.status !== "deployed" : true));
+const columns = [{ key: "name", label: "Release", cls: "primary" }, { key: "namespace", label: "Namespace" }, { key: "chart", label: "Chart" },
+  { key: "app_version", label: "App version" }, { key: "status", label: "Status" }, { key: "revision", label: "Revision", num: true },
+  { key: "updated", label: "Updated", sort: (x: any) => x.updated || "" }];
+
+// --- one release -------------------------------------------------------------------------
+const rel = reactive({ open: false, item: null as any, history: [] as any[], busy: false, err: "", shown: 0, view: "values" as "values" | "manifest" | "compare",
+  data: {} as Record<number, any>, a: 0, b: 0 });
+const canValues = computed(() => s.can("secrets.view"));
+async function open(x: any) {
+  Object.assign(rel, { open: true, item: x, history: [], err: "", shown: x.revision, view: "values", data: {}, a: 0, b: 0 });
+  try {
+    rel.history = await api().get(`helm/releases/${x.namespace}/${x.name}`);
+    rel.b = rel.history[0]?.revision || 0; rel.a = rel.history[1]?.revision || rel.b;
+    if (canValues.value) await revision(x.revision);
+  } catch (e: any) { rel.err = e.message; }
+}
+async function revision(n: number) {
+  rel.shown = n;
+  if (rel.data[n] || !canValues.value) return;
+  rel.busy = true;
+  try { rel.data[n] = await api().get(`helm/releases/${rel.item.namespace}/${rel.item.name}/revisions/${n}`); }
+  catch (e: any) { rel.err = e.message; } finally { rel.busy = false; }
+}
+async function compare() {
+  rel.view = "compare";
+  await Promise.all([revision(rel.a), revision(rel.b)]);
+  rel.shown = rel.b;
+}
+const what = ref<"values" | "manifest">("manifest");
+const diff = computed<DiffLine[]>(() => {
+  const A = rel.data[rel.a], B = rel.data[rel.b];
+  return A && B ? diffLines(A[what.value] || "", B[what.value] || "").filter((l, i, arr) => l.op !== " " || arr.slice(Math.max(0, i - 3), i + 4).some((x) => x.op !== " ")) : [];
+});
+const rollbackCmd = (n: number) => `helm rollback ${rel.item?.name} ${n} -n ${rel.item?.namespace}`;
+async function copy(text: string) { try { await navigator.clipboard.writeText(text); toast(true, "Copied"); } catch { toast(false, "Copy failed"); } }
+</script>
+
+<template>
+  <Toolbar :state="state" placeholder="Search releases, charts or versions" :namespaces="all.map((x: any) => x.namespace)" :filters="[['all', 'All'], ['problems', 'Not deployed']]" :count="count" />
+  <div v-if="error" class="banner show"><Icon name="crit" /><span class="msg">{{ error }}</span></div>
+  <section class="card flush"><div class="card-body table-wrap">
+    <Skeleton v-if="!list && !error" :rows="5" />
+    <DataTable v-else-if="list" v-model:sort="state.sort" :rows="rows" :columns="columns" clickable
+      :empty-title="all.length ? 'No matching releases' : 'No Helm releases in this cluster'" empty-icon="tag" @row="open">
+      <template #namespace="{ row }"><span class="ns">{{ row.namespace }}</span></template>
+      <template #chart="{ row }"><span class="mono">{{ row.chart }}</span> <span class="dim">{{ row.chart_version }}</span></template>
+      <template #status="{ row }"><Badge :level="LEVEL[row.status] || 'neutral'" :label="row.status || 'unknown'" /></template>
+      <template #revision="{ row }">{{ row.revision }} <span class="dim">/ {{ row.revisions }}</span></template>
+      <template #updated="{ row }"><span class="dim">{{ row.updated ? fmt.ago(row.updated) : "–" }}</span></template>
+    </DataTable>
+  </div></section>
+  <p class="hint" style="margin-top:12px">Read from Helm's own release records (Secrets labelled <code>owner=helm</code>). Values and manifests need <b>secrets.view</b>, and anything that looks like a password, token or key is masked.</p>
+
+  <Modal :open="rel.open" :title="rel.item ? `${rel.item.name} · ${rel.item.namespace}` : ''" wide @close="rel.open = false">
+    <template v-if="rel.item">
+      <div class="hr-head"><span class="mono">{{ rel.item.chart }} {{ rel.item.chart_version }}</span><span class="dim">app {{ rel.item.app_version || "–" }}</span>
+        <Badge :level="LEVEL[rel.item.status] || 'neutral'" :label="rel.item.status" /></div>
+      <div v-if="rel.err" class="test-result show err"><Icon name="crit" /><span>{{ rel.err }}</span></div>
+      <div class="table-wrap card" style="box-shadow:none"><table class="data"><thead><tr><th>Revision</th><th>Status</th><th>Chart</th><th>App</th><th>Updated</th><th>Description</th><th /></tr></thead>
+        <tbody><tr v-for="h in rel.history" :key="h.revision" :class="{ 'hr-sel': rel.view !== 'compare' && rel.shown === h.revision }">
+          <td class="num">{{ h.revision }}</td><td><Badge :level="LEVEL[h.status] || 'neutral'" :label="h.status" /></td>
+          <td class="mono">{{ h.chart_version }}</td><td>{{ h.app_version || "–" }}</td><td class="dim">{{ h.updated ? fmt.ago(h.updated) : "–" }}</td>
+          <td class="hr-desc">{{ h.description }}</td>
+          <td class="actions"><button v-if="canValues" class="btn ghost sm" type="button" @click="rel.view = rel.view === 'compare' ? 'values' : rel.view; revision(h.revision)">View</button>
+            <button v-if="h.revision !== rel.item.revision" class="btn ghost sm" type="button" :title="rollbackCmd(h.revision)" @click="copy(rollbackCmd(h.revision))">Roll back…</button></td></tr></tbody></table></div>
+
+      <template v-if="canValues">
+        <div class="hr-tabs">
+          <div class="segmented sm" role="group">
+            <button type="button" :aria-pressed="rel.view === 'values'" @click="rel.view = 'values'">Values</button>
+            <button type="button" :aria-pressed="rel.view === 'manifest'" @click="rel.view = 'manifest'">Manifest</button>
+            <button type="button" :aria-pressed="rel.view === 'compare'" :disabled="rel.history.length < 2" @click="compare">Compare revisions</button></div>
+          <template v-if="rel.view === 'compare'">
+            <select v-model.number="rel.a" class="select sm" aria-label="From revision" @change="compare"><option v-for="h in rel.history" :key="h.revision" :value="h.revision">#{{ h.revision }}</option></select>
+            <span class="hint">→</span>
+            <select v-model.number="rel.b" class="select sm" aria-label="To revision" @change="compare"><option v-for="h in rel.history" :key="h.revision" :value="h.revision">#{{ h.revision }}</option></select>
+            <div class="segmented sm" role="group"><button type="button" :aria-pressed="what === 'manifest'" @click="what = 'manifest'">Manifest</button><button type="button" :aria-pressed="what === 'values'" @click="what = 'values'">Values</button></div></template>
+          <span v-else class="hint">Revision #{{ rel.shown }}</span>
+        </div>
+        <p v-if="rel.busy" class="hint">Loading…</p>
+        <template v-else-if="rel.view === 'compare'">
+          <div class="ye-diff hx-diff" role="region" aria-label="Difference between revisions">
+            <div v-if="!diff.length" class="ye-gap" style="padding-left:12px">No differences</div>
+            <div v-for="(l, i) in diff" :key="i" class="ye-line hx-line" :class="{ add: l.op === '+', del: l.op === '-' }"><span class="ye-op">{{ l.op === "-" ? "−" : l.op === "+" ? "+" : "" }}</span><span class="ye-t">{{ l.text }}</span></div>
+          </div></template>
+        <pre v-else-if="rel.data[rel.shown]" class="logs hr-pre">{{ rel.data[rel.shown][rel.view] || (rel.view === "values" ? "# no values set: the chart's defaults are used" : "") }}</pre>
+      </template>
+      <p v-else class="hint" style="margin:0">Values and manifests need the <b>secrets.view</b> permission.</p>
+      <p class="hint" style="margin:0"><b>Roll back…</b> copies the <code>helm rollback</code> command: k10y only reads Helm's records, so Helm hooks and its history stay consistent.</p>
+    </template>
+    <template #actions><span style="flex:1" /><button class="btn" type="button" @click="rel.open = false">Close</button></template>
+  </Modal>
+</template>
+
+<style scoped>
+.hr-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.hr-tabs { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.hr-pre { max-height: 420px; white-space: pre; }
+.hr-desc { white-space: normal; min-width: 160px; }
+tr.hr-sel td { background: var(--surface-active); }
+.select.sm { height: 30px; width: auto; padding: 0 8px; font-size: 13px; }
+</style>

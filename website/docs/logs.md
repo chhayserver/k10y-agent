@@ -24,3 +24,9 @@ For a **Deployment, StatefulSet, DaemonSet or Job**, open its details panel and 
 <Shot src="/shots/logs.png" alt="Live logs of all pods of a deployment, tagged by pod" url="k10y / lab / deployments / web / logs" />
 
 Up to 20 pods are followed at once. A stream ends after 30 minutes and then reconnects by itself.
+
+On a workload you can also:
+- **Pick one pod** or keep **All pods**.
+- **Start from** the last 15 minutes, hour or 6 hours instead of the last *N* lines.
+- **Errors only:** show only lines that look like errors (error, exception, fatal, panic, traceback…).
+- See your filter text **highlighted** in each line, and **Download** what you see.

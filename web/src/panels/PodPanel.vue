@@ -12,12 +12,14 @@ import { useSession } from "@/stores/session";
 import { openDetail, openShell, type PanelRef } from "@/stores/ui";
 import EventsList from "./EventsList.vue";
 import PanelHead from "./PanelHead.vue";
+import { RANGES, isLong, useLongHistory } from "@/lib/k8sHistory";
 
 const props = defineProps<{ r: PanelRef }>();
 const s = useSession(), c = useCluster();
 const pod = computed(() => c.data?.pods.find((p: any) => p.namespace === props.r.namespace && p.name === props.r.name));
 const events = computed(() => (c.data?.events || []).filter((e: any) => e.namespace === props.r.namespace && e.object === `Pod/${props.r.name}`).slice(0, 10));
-const RANGES = { "5m": 5 * 60e3, "15m": 15 * 60e3, "1h": 60 * 60e3 } as const;
+const long = useLongHistory(() => s.current?.id, () => prefs.range, "pod", () => ({ namespace: props.r.namespace || "", name: props.r.name }));
+const pts = computed(() => (isLong(prefs.range) ? long.value || [] : metrics.value?.points || []));
 
 // live usage
 const metrics = ref<any>(null);
@@ -68,9 +70,9 @@ const canDelete = computed(() => s.can("pods.delete") && c.control);
           <div class="segmented sm" role="group" aria-label="Time range"><button v-for="(_, k) in RANGES" :key="k" :aria-pressed="prefs.range === k" @click="prefs.range = k">{{ k }}</button></div></div>
         <div class="two-col" style="margin:0;gap:12px">
           <div><div class="hint" style="margin-bottom:4px">CPU</div>
-            <LineChart :height="170" :series="[{ label: 'CPU', color: 'var(--series-1)', points: (metrics?.points || []).map((p: any) => [p[0], p[1]]) }]" :y-fmt="millis" :refs="cpuRefs" :range="RANGES[prefs.range]" area empty-sub="No samples for this pod yet." aria-label="Pod CPU usage" /></div>
+            <LineChart :height="170" :series="[{ label: 'CPU', color: 'var(--series-1)', points: pts.map((p: any) => [p[0], p[1]]) }]" :y-fmt="millis" :refs="cpuRefs" :range="RANGES[prefs.range]" area empty-sub="No samples for this pod yet." aria-label="Pod CPU usage" /></div>
           <div><div class="hint" style="margin-bottom:4px">Memory</div>
-            <LineChart :height="170" :series="[{ label: 'Memory', color: 'var(--series-2)', points: (metrics?.points || []).map((p: any) => [p[0], p[2] / 2 ** 20]) }]" :y-fmt="mib" :refs="memRefs" :range="RANGES[prefs.range]" area empty-sub="No samples for this pod yet." aria-label="Pod memory usage" /></div>
+            <LineChart :height="170" :series="[{ label: 'Memory', color: 'var(--series-2)', points: pts.map((p: any) => [p[0], p[2] / 2 ** 20]) }]" :y-fmt="mib" :refs="memRefs" :range="RANGES[prefs.range]" area empty-sub="No samples for this pod yet." aria-label="Pod memory usage" /></div>
         </div>
       </div>
       <div v-if="canLogs">

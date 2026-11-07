@@ -80,7 +80,7 @@ function duration(e: any) {
 const detail = ref<any>(null);
 
 // rule editor
-const KINDS = ["Pod", "Deployment", "StatefulSet", "DaemonSet", "Job", "Node"];
+const KINDS = ["Pod", "Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "PersistentVolumeClaim", "Certificate", "Node"];
 const blank = () => ({ open: false, id: 0, name: "", enabled: true, type: "problems", cluster_id: null as number | null, severity: "warning",
   for_minutes: 2, repeat_minutes: 0, notify_resolved: true, ai_summary: false, channel_ids: [] as number[],
   kinds: [] as string[], namespaces: "", exclude: "kube-system", metric: "memory", scope: "node", threshold: 90, busy: false, msg: "",
