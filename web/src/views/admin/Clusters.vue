@@ -15,12 +15,14 @@ const s = useSession(), state = page("manage-clusters", { key: "name", dir: 1 })
 const list = ref<any[] | null>(null);
 async function load() { list.value = await hub.get("/clusters"); }
 onMounted(load);
-const edit = reactive({ open: false, id: 0, name: "", url: "https://", token: "", verify_tls: false, test: null as null | { ok: boolean; text: string }, busy: false });
-function openNew() { Object.assign(edit, { open: true, id: 0, name: "", url: "https://", token: "", verify_tls: false, test: null }); }
+const edit = reactive({ open: false, id: 0, name: "", url: "", token: "", verify_tls: false, test: null as null | { ok: boolean; text: string }, busy: false });
+function openNew() { Object.assign(edit, { open: true, id: 0, name: "", url: "", token: "", verify_tls: false, test: null }); }
 function openEdit(c: any) { Object.assign(edit, { open: true, id: c.id, name: c.name, url: c.url, token: "", verify_tls: c.verify_tls, test: null }); }
 async function test() {
   edit.busy = true; edit.test = null;
-  try { const i = await hub.post("/clusters/test", { url: edit.url, token: edit.token || null, verify_tls: edit.verify_tls, cluster_id: edit.id || null }); edit.test = { ok: true, text: `Connected to ${i.cluster} · ${i.kubernetes_version} · agent v${i.agent_version}${i.control_enabled ? "" : " · read-only"}` }; if (!edit.name) edit.name = i.cluster; return true; }
+  try { const i = await hub.post("/clusters/test", { url: edit.url, token: edit.token || null, verify_tls: edit.verify_tls, cluster_id: edit.id || null }); const switched = i.url && i.url !== edit.url.trim().replace(/\/+$/, "") ? ` · using ${i.url}` : "";
+    if (i.url) edit.url = i.url;
+    edit.test = { ok: true, text: `Connected to ${i.cluster} · ${i.kubernetes_version} · agent v${i.agent_version}${i.control_enabled ? "" : " · read-only"}${switched}` }; if (!edit.name) edit.name = i.cluster; return true; }
   catch (e: any) { edit.test = { ok: false, text: e.message }; return false; } finally { edit.busy = false; }
 }
 async function save() {
@@ -51,7 +53,8 @@ const columns = [{ key: "name", label: "Name", cls: "primary" }, { key: "url", l
     </DataTable>
   </div></section>
   <Modal :open="edit.open" :title="edit.id ? `Edit ${edit.name}` : 'Add cluster'" @close="edit.open = false">
-    <div class="form-row"><label class="lbl">Agent URL</label><input v-model="edit.url" class="input" style="font-family:var(--mono)" placeholder="https://10.0.0.5:30800" autocomplete="off"></div>
+    <div class="form-row"><label class="lbl">Agent address</label><input v-model="edit.url" class="input" style="font-family:var(--mono)" placeholder="10.0.0.5:30800" autocomplete="off">
+      <span class="hint">A node's IP and the agent's NodePort (30800 by default), or any URL that reaches the agent. The agent serves <b>HTTPS</b> itself, also through a NodePort, so <code>https://</code> is added for you (and <code>http://</code> is switched when the agent speaks TLS).</span></div>
     <div class="form-row"><label class="lbl">API token {{ edit.id ? "(leave empty to keep)" : "" }}</label><PasswordInput v-model="edit.token" autocomplete="off" mono />
       <span class="hint">kubectl -n k10y get secret k10y-agent -o jsonpath='{.data.api-token}' | base64 -d</span></div>
     <div class="form-row"><label class="lbl">Display name</label><input v-model="edit.name" class="input" placeholder="defaults to the agent's cluster name"></div>

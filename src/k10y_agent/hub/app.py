@@ -6,13 +6,14 @@ proxies API calls to the agents over HTTPS, checking the user's permissions firs
 
 import asyncio
 import json
+import re
 import logging
 import ssl
 import time
 import secrets as pysecrets
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -664,15 +665,18 @@ def delete_role(role_id: int, request: Request, p: Principal = Depends(require("
 
 # --- clusters -------------------------------------------------------------------------
 
+AGENT_URL = r"^(https?://)?[^\s/]+(/\S*)?$"     # "https://10.0.0.5:30800", or just "10.0.0.5:30800"
+
+
 class ClusterBody(BaseModel):
     name: str = Field(min_length=1, max_length=64)
-    url: str = Field(min_length=8, max_length=300, pattern=r"^https?://")
+    url: str = Field(min_length=3, max_length=300, pattern=AGENT_URL)
     token: Optional[str] = Field(None, max_length=512, description="Omit to keep the stored token.")
     verify_tls: bool = False
 
 
 class ClusterTestBody(BaseModel):
-    url: str = Field(min_length=8, max_length=300, pattern=r"^https?://")
+    url: str = Field(min_length=3, max_length=300, pattern=AGENT_URL)
     token: Optional[str] = Field(None, max_length=512)
     verify_tls: bool = False
     cluster_id: Optional[int] = None
@@ -713,16 +717,39 @@ def test_cluster(body: ClusterTestBody, p: Principal = Depends(require("clusters
     if not token and body.cluster_id:
         c = s.get(Cluster, body.cluster_id)
         token = crypto().decrypt(c.token_encrypted) if c else ""
-    try:
-        r = httpx.get(body.url.rstrip("/") + "/api/v1/info", headers={"Authorization": f"Bearer {token or ''}"},
-                      verify=body.verify_tls, timeout=httpx.Timeout(10.0, connect=6.0))
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"Cannot reach the agent: {e}")
-    if r.status_code == 401:
-        raise HTTPException(status_code=400, detail="The agent rejected this token.")
-    if r.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"Agent answered HTTP {r.status_code}")
-    return r.json()
+    url, info = probe_agent(body.url, token or "", body.verify_tls)
+    return {**info, "url": url}
+
+
+def agent_url(url: str) -> str:
+    """Saved form of an agent URL: no trailing slash, https:// when no scheme was given (the agent serves HTTPS)."""
+    url = url.strip().rstrip("/")
+    return url if re.match(r"^https?://", url) else f"https://{url}"
+
+
+def probe_agent(url: str, token: str, verify: bool) -> Tuple[str, dict]:
+    """Find how to talk to an agent. The agent serves HTTPS itself (self-signed by default), also behind a NodePort,
+    so an address without a scheme is tried with https:// first, and a plain http:// address that turns out to
+    speak TLS is switched to https://. Returns the working URL and the agent's info."""
+    url = url.strip().rstrip("/")
+    bare = re.sub(r"^https?://", "", url)
+    tries = [f"https://{bare}", f"http://{bare}"] if not re.match(r"^https?://", url) \
+        else [url, f"https://{bare}"] if url.startswith("http://") else [url]
+    errors = []
+    for candidate in tries:
+        try:
+            r = httpx.get(candidate + "/api/v1/info", headers={"Authorization": f"Bearer {token}"},
+                          verify=verify, timeout=httpx.Timeout(10.0, connect=6.0))
+        except httpx.HTTPError as e:
+            errors.append(f"{candidate}: {e}")
+            continue
+        if r.status_code == 401:
+            raise HTTPException(status_code=400, detail="The agent rejected this token.")
+        if r.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"Agent at {candidate} answered HTTP {r.status_code}")
+        return candidate, r.json()
+    raise HTTPException(status_code=502, detail="Cannot reach the agent. Tried " + "; ".join(errors)
+                        + ". The agent serves HTTPS on its port, also through a NodePort, e.g. https://10.0.0.5:30800.")
 
 
 @api.post("/clusters")
@@ -732,7 +759,7 @@ def create_cluster(body: ClusterBody, request: Request, p: Principal = Depends(r
         raise HTTPException(status_code=400, detail="token is required")
     if s.execute(select(Cluster).where(func.lower(Cluster.name) == body.name.lower())).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="A cluster with that name already exists.")
-    c = Cluster(name=body.name, url=body.url.rstrip("/"), token_encrypted=crypto().encrypt(body.token),
+    c = Cluster(name=body.name, url=agent_url(body.url), token_encrypted=crypto().encrypt(body.token),
                 verify_tls=body.verify_tls)
     s.add(c)
     s.commit()
@@ -746,7 +773,7 @@ def update_cluster(cluster_id: int, body: ClusterBody, request: Request, p: Prin
     c = s.get(Cluster, cluster_id)
     if c is None:
         raise HTTPException(status_code=404, detail="cluster not found")
-    c.name, c.url, c.verify_tls = body.name, body.url.rstrip("/"), body.verify_tls
+    c.name, c.url, c.verify_tls = body.name, agent_url(body.url), body.verify_tls
     if body.token:
         c.token_encrypted = crypto().encrypt(body.token)
     s.commit()

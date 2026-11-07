@@ -135,3 +135,28 @@ def test_pod_shell_relays_both_ways(client, monkeypatch):
         ws.send_text('{"type": "input", "data": "echo hi\\n"}')
         assert "hello-42" in ws.receive_text()
     assert sent == ['{"type": "input", "data": "echo hi\\n"}']
+
+
+def test_agent_address_without_scheme_or_with_http_finds_https(monkeypatch):
+    """The agent serves HTTPS itself (also through a NodePort): a bare address or an http:// one reaches it."""
+    import httpx
+    import pytest
+    from fastapi import HTTPException
+    calls = []
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        if url.startswith("http://"):
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response.")   # plain HTTP to a TLS port
+        return httpx.Response(200, json={"cluster": "edge"}, request=httpx.Request("GET", url))
+    monkeypatch.setattr(hub.httpx, "get", fake_get)
+    assert hub.probe_agent("192.168.64.2:30800", "t", False) == ("https://192.168.64.2:30800", {"cluster": "edge"})
+    assert calls == ["https://192.168.64.2:30800/api/v1/info"]
+    calls.clear()
+    assert hub.probe_agent("http://192.168.64.2:30800/", "t", False)[0] == "https://192.168.64.2:30800"
+    assert calls == ["http://192.168.64.2:30800/api/v1/info", "https://192.168.64.2:30800/api/v1/info"]
+    monkeypatch.setattr(hub.httpx, "get", lambda url, **kw: (_ for _ in ()).throw(httpx.ConnectError("refused")))
+    with pytest.raises(HTTPException) as e:
+        hub.probe_agent("10.9.9.9:30800", "t", False)
+    assert "NodePort" in e.value.detail and "https://10.9.9.9:30800" in e.value.detail
+    assert hub.agent_url("10.0.0.5:30800/") == "https://10.0.0.5:30800" and hub.agent_url("http://a:8080") == "http://a:8080"

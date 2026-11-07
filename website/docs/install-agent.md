@@ -35,7 +35,11 @@ kubectl -n k10y rollout restart deploy/k10y-agent
 kubectl -n k10y get secret k10y-agent -o jsonpath='{.data.api-token}' | base64 -d; echo
 ```
 
-Then [connect the cluster](./clusters) in the hub.
+Then [connect the cluster](./clusters) in the hub. As the **agent address**, enter a node's IP and the NodePort, e.g. `192.168.64.2:30800`.
+
+::: tip HTTPS, also through a NodePort
+The agent serves **HTTPS** itself on its port (with a self-signed certificate), so the token travels encrypted. A NodePort only opens that same port on every node; it stays HTTPS. You don't have to type the scheme: k10y adds `https://`, and if you type `http://` for an agent that speaks TLS, it switches to `https://` for you. Leave **Verify the agent's TLS certificate** off for the self-signed certificate.
+:::
 
 ## What the agent can access
 

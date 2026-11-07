@@ -6,6 +6,10 @@ title: Changelog
 
 Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached to the [GitHub release](https://github.com/chhayserver/k10y-agent/releases).
 
+## Unreleased
+
+- **Add cluster: just type the address.** Enter `192.168.64.2:30800` without a scheme; k10y finds how the agent answers. The agent serves HTTPS itself, also through a NodePort, so `https://` is added for you, and an `http://` address is switched to `https://` when the agent speaks TLS (before, it failed with "Server disconnected").
+
 ## 2.5.0 <Badge type="tip" text="latest" />
 
 - **HAProxy permissions per instance:** a role can now be assigned on **one HAProxy instance** (like one cluster), so someone can operate `lb-edge-1` without seeing or touching the others. Lists, pages, buttons, alerts and group changes all follow it.
