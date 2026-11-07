@@ -90,7 +90,7 @@ class HAProxyK8sSync(Base):
 class HAProxySample(Base):
     """One-minute averages of the live samples, kept for a week for the longer chart ranges."""
     __tablename__ = "haproxy_samples"
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     instance_id: Mapped[int] = mapped_column(Integer, index=True)
     t: Mapped[int] = mapped_column(BigInteger, index=True)             # epoch ms, start of the minute
     data: Mapped[Any] = mapped_column(JSON)

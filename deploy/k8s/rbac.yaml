@@ -17,11 +17,13 @@ metadata:
   name: k10y-agent-read
 rules:
   - apiGroups: [""]
-    resources: [nodes, namespaces, pods, pods/log, events, services, persistentvolumeclaims, persistentvolumes, configmaps]
+    resources: [nodes, namespaces, pods, pods/log, events, services, persistentvolumeclaims, persistentvolumes, configmaps,
+                resourcequotas, limitranges]
     verbs: [get, list, watch]
   # Secrets page and map. Kubernetes cannot grant "metadata only", so this permission
   # technically allows reading values; the agent API only ever returns names, type
-  # and key names. Remove this rule to hide Secrets entirely.
+  # and key names. It also reads Helm's release records and the expiry date of Ingress
+  # TLS certificates (never their keys). Remove this rule to hide Secrets entirely.
   - apiGroups: [""]
     resources: [secrets]
     verbs: [list]
@@ -39,6 +41,10 @@ rules:
     verbs: [get, list, watch]
   - apiGroups: [metrics.k8s.io]
     resources: [nodes, pods]
+    verbs: [get, list]
+  # TLS certificate expiry for cert-manager users (ignored when cert-manager isn't installed).
+  - apiGroups: [cert-manager.io]
+    resources: [certificates]
     verbs: [get, list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

@@ -25,7 +25,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .. import __version__, ai
-from . import alerts, haproxy, haproxy_monitor
+from . import alerts, haproxy, haproxy_monitor, k8s_insights
 from ..config import Settings
 from .db import (AuditEntry, Cluster, Database, Role, RoleAssignment, SessionRow, Setting, User, UserPreference, get_setting,
                  utcnow)
@@ -134,6 +134,7 @@ def _startup() -> None:
     if settings.alerts_enabled:
         alert_engine().start()
     haproxy_mon().start()
+    k8s_history().start()
     if settings.syslog_port:
         try:
             rx = haproxy_monitor.SyslogReceiver(settings.syslog_port)
@@ -1230,6 +1231,66 @@ def _alert_diagnose(c: Cluster, resource: str) -> str:
     return result.get("summary", "")
 
 
+def k8s_history() -> k8s_insights.K8sHistory:
+    if "k8s_history" not in state:
+        state["k8s_history"] = k8s_insights.K8sHistory(state["db"].session, _agent_get)
+    return state["k8s_history"]
+
+
+def _haproxy_search(p: Principal, q: str) -> list:
+    """HAProxy instances, frontends, backends and servers whose name contains q (from the monitor's latest stats)."""
+    needle, out, mon = q.strip().lower(), [], haproxy_mon()
+    with state["db"].session() as s:
+        instances = [i for i in s.execute(select(haproxy.HAProxyInstance)).scalars() if p.can("haproxy.view", haproxy_id=i.id)]
+    for inst in instances:
+        base = {"system": "haproxy", "haproxy_id": inst.id, "instance": inst.name}
+        if needle in inst.name.lower():
+            out.append({**base, "kind": "HAProxy", "namespace": None, "name": inst.name, "status": None})
+        for it in (mon.latest.get(inst.id) or {}).get("stats") or []:
+            kind, name = it.get("type"), it.get("name") or ""
+            if kind in ("frontend", "backend", "server") and needle in name.lower():
+                out.append({**base, "kind": f"HAProxy {kind}", "namespace": it.get("backend_name") if kind == "server" else None,
+                            "name": name, "status": (it.get("stats") or {}).get("status")})
+    return out
+
+
+def _service_haproxy(p: Principal, s: Session, c: Cluster, namespace: str, name: str) -> list:
+    """HAProxy backends that send traffic to this Service: linked with a Kubernetes sync, or whose servers are the
+    Service's node ports or pod IPs. With the frontends using them and their live numbers."""
+    from types import SimpleNamespace
+    mon = haproxy_mon()
+    synced = {(x.instance_id, x.backend) for x in s.execute(select(haproxy.HAProxyK8sSync).where(
+        haproxy.HAProxyK8sSync.cluster_id == c.id, haproxy.HAProxyK8sSync.namespace == namespace,
+        haproxy.HAProxyK8sSync.service == name)).scalars()}
+    targets = set()
+    for mode in ("nodeport", "pods"):
+        try:
+            targets |= set(mon.desired_servers(s, SimpleNamespace(cluster_id=c.id, namespace=namespace, service=name, port="", mode=mode)).values())
+        except Exception:
+            pass
+    out = []
+    for inst in s.execute(select(haproxy.HAProxyInstance).order_by(haproxy.HAProxyInstance.name)).scalars():
+        if not p.can("haproxy.view", haproxy_id=inst.id):
+            continue
+        try:
+            with haproxy.DataPlane(inst.url, inst.username, crypto().decrypt(inst.password_encrypted), inst.verify_tls) as dp:
+                ov = haproxy.overview(dp)
+        except haproxy.DataPlaneError:
+            continue
+        pts = mon.series(inst.id)
+        last = pts[-1][1] if pts else {}
+        for b in ov["backends"]:
+            hits = [sv for sv in b["servers"] if (sv["address"], int(sv["port"] or 0)) in targets]
+            if (inst.id, b["name"]) not in synced and not hits:
+                continue
+            live = (last.get("b") or {}).get(b["name"]) or {}
+            out.append({"haproxy_id": inst.id, "instance": inst.name, "backend": b["name"], "frontends": b["used_by"],
+                        "via": "Kubernetes sync" if (inst.id, b["name"]) in synced else "same addresses",
+                        "servers": [{"name": sv["name"], "address": sv["address"], "port": sv["port"], "state": sv["state"]} for sv in b["servers"]],
+                        "live": {"rate": live.get("rq") or live.get("req") or 0, "error_pct": live.get("e5_pct") or 0, "rtime_ms": live.get("rtime") or 0}})
+    return out
+
+
 def haproxy_mon() -> haproxy_monitor.HAProxyMonitor:
     if "haproxy_monitor" not in state:
         state["haproxy_monitor"] = haproxy_monitor.HAProxyMonitor(state["db"].session, lambda v: crypto().decrypt(v), _agent_get)
@@ -1260,6 +1321,7 @@ class _EngineRef(dict):
 
 
 app.include_router(alerts.build_router(db_session, current, require, audit, crypto, _EngineRef()))
+app.include_router(k8s_insights.build_router(db_session, current, _agent_get, _service_haproxy, _haproxy_search))
 app.include_router(haproxy.build_router(db_session, require, audit, crypto, monitor=lambda: state.get("haproxy_monitor") or (haproxy_mon() if "db" in state else None),
                                         syslog=lambda: state.get("syslog"), can_cluster=lambda p, perm, cid: p.can(perm, cid),
                                         ai_config=lambda s: HubAIStore(s).load()))

@@ -18,7 +18,7 @@ from kubernetes.client.rest import ApiException
 from kubernetes.config.config_exception import ConfigException
 from pydantic import BaseModel, Field
 
-from . import __version__
+from . import insights, __version__
 from .collectors import Collector
 from .config import Settings
 from . import ai, logstream, podexec
@@ -241,7 +241,7 @@ def list_secrets(namespace: Optional[str] = None) -> list:
 
 @api.get("/metrics/history")
 def metrics(
-    scope: str = Query("cluster", pattern="^(cluster|nodes|pod)$"),
+    scope: str = Query("cluster", pattern="^(cluster|nodes|pod|snapshot)$"),
     since: int = Query(0, ge=0, description="Only points newer than this epoch-ms timestamp."),
     namespace: Optional[str] = None,
     name: Optional[str] = None,
@@ -481,6 +481,62 @@ def workload_logs_stream(
 @api.get("/deployments/{namespace}/{name}/history")
 def deployment_history(namespace: str, name: str) -> list:
     return get_controller().history(namespace, name)
+
+
+# --- insights: Helm, certificates, CronJob runs, quotas, revisions, search (all read-only) ----------
+
+def _found(fn):
+    try:
+        return fn()
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@api.get("/deployments/{namespace}/{name}/revisions")
+def deployment_revisions(namespace: str, name: str) -> list:
+    """Every revision with its change cause and pod template, to compare two revisions."""
+    return insights.revision_details(get_collector(), namespace, name)
+
+
+@api.get("/helm/releases")
+def helm_releases(namespace: Optional[str] = None) -> list:
+    return insights.helm_releases(get_collector(), namespace)
+
+
+@api.get("/helm/releases/{namespace}/{name}")
+def helm_history(namespace: str, name: str) -> list:
+    return _found(lambda: insights.helm_history(get_collector(), namespace, name))
+
+
+@api.get("/helm/releases/{namespace}/{name}/revisions/{revision}")
+def helm_revision(namespace: str, name: str, revision: int) -> dict:
+    """Values (secret-looking keys masked) and rendered manifest (Secret data masked). The hub asks secrets.view."""
+    return _found(lambda: insights.helm_revision(get_collector(), namespace, name, revision))
+
+
+@api.get("/certificates")
+def certificates(fresh: bool = False) -> list:
+    return insights.certificates(get_collector(), fresh)
+
+
+@api.get("/cronjobs/{namespace}/{name}/runs")
+def cronjob_runs(namespace: str, name: str) -> dict:
+    c = get_collector()
+    cj = next((x for x in c.cronjobs(namespace) if x["name"] == name), None)
+    if cj is None:
+        raise HTTPException(status_code=404, detail=f"CronJob {namespace}/{name} not found")
+    runs = insights.cronjob_runs(c.jobs(namespace), namespace, name)
+    return {"cronjob": cj, "runs": runs, "problem": insights.cronjob_problem(cj, runs)}
+
+
+@api.get("/quotas")
+def quotas(namespace: Optional[str] = None) -> dict:
+    return insights.quotas(get_collector(), namespace)
+
+
+@api.get("/search")
+def search(q: str = Query(..., min_length=2, max_length=100)) -> list:
+    return insights.search(get_collector(), q)
 
 
 @api.get("/audit")

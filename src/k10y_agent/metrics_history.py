@@ -151,4 +151,9 @@ class MetricsHistory:
                     for n, s in self.nodes.items()}}
             if scope == "pod":
                 return {**base, "points": self._since(self.pods.get((namespace or "", name or ""), deque()), since)}
+            if scope == "snapshot":
+                # latest measurement of everything, for the hub's long-term history (it samples every minute)
+                return {**base, "cluster": self.cluster[-1] if self.cluster else None,
+                        "nodes": {n: s[-1] for n, s in self.nodes.items() if s},
+                        "pods": {f"{ns}/{n}": s[-1] for (ns, n), s in self.pods.items() if s}}
         raise ValueError(f"unknown scope {scope!r}")

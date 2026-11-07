@@ -78,6 +78,8 @@ _RULES: List[Tuple[str, re.Pattern, str]] = [(m, re.compile(p), perm) for m, p, 
     ("GET", r"^resource$", "cluster.view"),           # Secret objects re-checked in the hub
     ("GET", r"^audit$", "audit.view"),
     ("GET", r"^ai(/|$)", "__deny__"),                 # AI runs in the hub
+    ("GET", r"^helm/releases/[^/]+/[^/]+/revisions/\d+$", "secrets.view"),   # Helm values and manifests
+    ("GET", r"^search$", "__deny__"),                 # searched through the hub (it hides Secret names when needed)
     ("GET", r".*", "cluster.view"),
     ("POST", r"^(deployments|statefulsets)/[^/]+/[^/]+/scale$", "workloads.scale"),
     ("POST", r"^(deployments|statefulsets|daemonsets)/[^/]+/[^/]+/restart$", "workloads.restart"),

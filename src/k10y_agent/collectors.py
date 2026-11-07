@@ -108,8 +108,20 @@ def pod_info(pod: client.V1Pod) -> Dict[str, Any]:
             if cs.last_state and cs.last_state.terminated and cs.last_state.terminated.reason
         ],
         "pod_ip": pod.status.pod_ip,
+        "owner": _workload_of(pod),
         "age_s": _age_seconds(pod.metadata.creation_timestamp),
     }
+
+
+def _workload_of(pod: client.V1Pod) -> Optional[str]:
+    """The workload a pod belongs to, e.g. "Deployment/web" (a ReplicaSet's name minus its pod-template-hash)."""
+    ref = next((o for o in pod.metadata.owner_references or [] if o.controller), None)
+    if ref is None:
+        return None
+    if ref.kind == "ReplicaSet":
+        h = (pod.metadata.labels or {}).get("pod-template-hash")
+        return f"Deployment/{ref.name[: -len(h) - 1]}" if h and ref.name.endswith(f"-{h}") else f"ReplicaSet/{ref.name}"
+    return f"{ref.kind}/{ref.name}"
 
 
 def pod_problem(info: Dict[str, Any]) -> Optional[str]:
@@ -120,6 +132,8 @@ def pod_problem(info: Dict[str, Any]) -> Optional[str]:
         return "Failed"
     if info["phase"] == "Pending" and (info["age_s"] or 0) > PENDING_GRACE_SECONDS:
         return "Pending for more than 5m"
+    if "OOMKilled" in info["last_termination_reasons"] or info["status"] == "OOMKilled":
+        return "OOMKilled: out of memory (memory limit too low?)"
     if info["restarts"] >= RESTART_WARN_THRESHOLD:
         last = info["last_termination_reasons"]
         return f"{info['restarts']} restarts" + (f" (last: {last[0]})" if last else "")
@@ -139,6 +153,8 @@ def deployment_info(dep: client.V1Deployment) -> Dict[str, Any]:
         "containers": [{"name": c.name, "image": c.image} for c in dep.spec.template.spec.containers],
         "revision": (dep.metadata.annotations or {}).get("deployment.kubernetes.io/revision"),
         "paused": bool(dep.spec.paused),
+        # a rollout that gave up: Progressing=False (usually ProgressDeadlineExceeded)
+        "stuck": next((f"rollout stuck: {c.reason}" for c in st.conditions or [] if c.type == "Progressing" and c.status == "False"), None),
         "age_s": _age_seconds(dep.metadata.creation_timestamp),
     }
 
@@ -619,7 +635,9 @@ class Collector:
                     {"kind": "Pod", "namespace": p["namespace"], "name": p["name"], "reason": p["problem"]}
                 )
         for d in deployments:
-            if d["ready"] < d["desired"]:
+            if d.get("stuck"):
+                problems.append({"kind": "Deployment", "namespace": d["namespace"], "name": d["name"], "reason": d["stuck"]})
+            elif d["ready"] < d["desired"]:
                 problems.append(
                     {
                         "kind": "Deployment",
@@ -636,10 +654,24 @@ class Collector:
             if d["ready"] < d["desired"]:
                 problems.append({"kind": "DaemonSet", "namespace": d["namespace"], "name": d["name"],
                                  "reason": f"{d['ready']}/{d['desired']} pods ready"})
-        for j in self.jobs():
-            if j["status"] == "Failed":
+        jobs = self.jobs()
+        for j in jobs:
+            if j["status"] == "Failed" and not (j.get("owner") or "").startswith("CronJob/"):
                 problems.append({"kind": "Job", "namespace": j["namespace"], "name": j["name"],
                                  "reason": f"Job failed{': ' + j['failure_reason'] if j['failure_reason'] else ''}"})
+        from . import insights
+        for cj in self.cronjobs():
+            why = insights.cronjob_problem(cj, insights.cronjob_runs(jobs, cj["namespace"], cj["name"]))
+            if why:
+                problems.append({"kind": "CronJob", "namespace": cj["namespace"], "name": cj["name"], "reason": why})
+        for pvc in self.persistentvolumeclaims():
+            if pvc["status"] == "Lost" or (pvc["status"] == "Pending" and (pvc["age_s"] or 0) > PENDING_GRACE_SECONDS):
+                problems.append({"kind": "PersistentVolumeClaim", "namespace": pvc["namespace"], "name": pvc["name"],
+                                 "reason": "volume lost" if pvc["status"] == "Lost" else "volume not bound for more than 5m"})
+        try:
+            problems += insights.certificate_problems(self)
+        except Exception:      # certificate checks must never break the summary
+            pass
 
         if any(p["kind"] == "Node" and p["reason"] == "NotReady" for p in problems):
             health = "critical"
