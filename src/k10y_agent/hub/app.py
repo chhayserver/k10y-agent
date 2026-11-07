@@ -11,6 +11,7 @@ import logging
 import ssl
 import time
 import secrets as pysecrets
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -40,7 +41,16 @@ COOKIE = "k10y_session"
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 AGENT_TIMEOUT = httpx.Timeout(30.0, connect=8.0)
 
-app = FastAPI(title="k10y hub", version=__version__)
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    _startup()
+    try:
+        yield
+    finally:
+        _shutdown()
+
+
+app = FastAPI(title="k10y hub", version=__version__, lifespan=_lifespan)
 api = APIRouter(prefix="/api/hub")
 state: Dict[str, Any] = {}
 limiter = LoginLimiter()
@@ -127,7 +137,6 @@ def init(database_url: Optional[str] = None, secret: Optional[str] = None, data_
                 log.warning("=" * 70)
 
 
-@app.on_event("startup")
 def _startup() -> None:
     if "db" not in state:
         init()
@@ -144,12 +153,10 @@ def _startup() -> None:
             log.warning("HAProxy log receiver disabled: cannot listen on udp/%s: %s", settings.syslog_port, e)
 
 
-@app.on_event("shutdown")
 def _shutdown() -> None:
-    if "engine" in state:
-        state["engine"].stop()
-    if "haproxy_monitor" in state:
-        state["haproxy_monitor"].stop()
+    for key in ("engine", "haproxy_monitor", "k8s_history"):
+        if key in state:
+            state[key].stop()
 
 
 def db_session():
