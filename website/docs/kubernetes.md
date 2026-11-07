@@ -24,6 +24,8 @@ kubectl apply -f https://github.com/chhayserver/k10y-agent/releases/latest/downl
 kubectl -n k10y set env deploy/k10y-agent K10Y_HELM_ENABLED=true
 ```
 
+**Edit values…** (needs `apply.yaml` and `secrets.view`, and Helm turned on) upgrades a release with changed values, using the chart it already runs: edit the values, **Dry run** to see exactly which rendered objects change, then **Upgrade**. Values shown as `••••••` keep their real value. Helm doesn't keep subcharts in its release records, so charts with dependencies can't be upgraded this way; use Helm with the chart's source for those.
+
 Without it, the button is **Copy rollback command** and gives you `helm rollback <release> <revision> -n <namespace>` to run yourself.
 
 ## Certificates
@@ -39,6 +41,19 @@ A CronJob's details panel shows its recent runs (start, duration, result). The p
 **Storage** shows how full each PersistentVolumeClaim is (a bar, orange from 80%, red from 90%; hover for bytes and inodes). The problem list, and so [alerts](./alerts), warn when a volume is **90% full** or out of inodes. Change the threshold with `K10Y_VOLUME_FULL_PERCENT` on the agent.
 
 The agent reads this from each node's kubelet (`/stats/summary`), with the read-only `nodes/stats` permission (not `nodes/proxy`), checking the kubelet's certificate against the cluster CA. Usage is only known while a pod has the volume mounted. If your kubelets use certificates not signed by the cluster CA, set `K10Y_KUBELET_INSECURE=true`.
+
+Usage is only known for volumes the kubelet measures: CSI volumes (AWS EBS, GCE PD, Azure Disk, Longhorn, Ceph, …) and emptyDir. `hostPath`-based volumes, such as k3s's default `local-path`, show no usage.
+
+## Port-forward (databases, Redis, any TCP)
+
+Reach a pod's or Service's TCP port from your computer, through the hub, without kubectl access to the cluster:
+
+```bash
+k10y hub login https://k10y.example.com:8443          # once, with an API token (My settings → API tokens)
+k10y port-forward lab svc/postgres 15432:5432 -n shop  # then connect to localhost:15432
+```
+
+A Service's panel has **Forward** next to each TCP port, which copies this command. It needs the `pods.portforward` permission (Admin and Kubernetes admin have it) and a control-enabled agent; protected namespaces are refused. A Service is forwarded to one of its ready pods. Every connection is in the activity log with its duration and bytes.
 
 ## Open a Service in the browser
 
@@ -71,5 +86,7 @@ The hub samples every cluster each minute and keeps 5-minute points for 7 days. 
 A Service's details panel shows which HAProxy backends send traffic to it: backends synced from the Service, and servers whose address matches its node ports or endpoints. Click one to open it on the HAProxy pages.
 
 ## Permissions the agent needs
+
+**Agent outdated?** All clusters, **Administration → Clusters** and the sidebar say when a cluster's agent is older than the hub, and hovering shows which features that costs and the update command.
 
 These features use the agent's read-only RBAC: ResourceQuotas and LimitRanges, cert-manager `certificates`, and `nodes/stats` for volume usage. **Open** uses `services/proxy` from the control role. Re-apply `install.yaml` (or `install-readonly.yaml`) when you [upgrade](./upgrading) the agent to pick them up.

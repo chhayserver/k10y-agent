@@ -1,6 +1,6 @@
 # CLI
 
-The `k10y` command-line tool talks to agents directly, using each cluster's API token. It's handy for scripts and for people who live in the terminal.
+The `k10y` command-line tool talks to agents directly, using each cluster's API token, and to the hub with your API token for [port-forward](#through-the-hub). It's handy for scripts and for people who live in the terminal.
 
 ## Install
 
@@ -54,3 +54,14 @@ Use `-C <cluster>` to target a cluster other than the current one.
 ::: tip CLI vs. hub
 The CLI uses the agent's token, which gives full access to that agent, so it bypasses the hub's roles. Its actions are written to the agent's own log with your local username (`cli:<user>`), not to the hub's audit log. For teams, prefer the hub, and keep agent tokens with a few administrators.
 :::
+
+## Through the hub
+
+Some commands go through the hub, so your roles and the activity log apply. Sign in once with an [API token](./sessions#api-tokens):
+
+```bash
+k10y hub login https://k10y.example.com:8443 --token k10y_…   # -k for a self-signed certificate; asks for the token if omitted
+k10y port-forward lab svc/postgres 15432:5432 -n shop          # or pod/NAME; LOCAL:REMOTE or just PORT
+```
+
+`port-forward` listens on `127.0.0.1` (change with `--address`) until Ctrl+C. Each connection is checked against your `pods.portforward` permission and recorded in the hub's activity log.

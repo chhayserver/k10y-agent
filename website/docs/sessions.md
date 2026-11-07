@@ -34,6 +34,32 @@ At sign-in you enter your password, then the code. A code works only once. **Tur
 
 **Lost phone and no recovery codes?** An admin opens the user in **Administration → Users** and clicks **Reset two-factor**. If it's required, the user sets it up again at the next sign-in. Every enrolment, reset and use of a recovery code is in the activity log.
 
+## Single sign-on
+
+People can sign in with **Google, Microsoft Entra ID, Keycloak, Okta, Authentik** or any OpenID Connect provider: their sign-in page shows **Sign in with …** buttons.
+
+Set it up in **System settings → Single sign-on → Add provider** (needs `settings.manage`):
+
+1. At the provider, create an app (a "client") of type web application. Register the **redirect URL** k10y shows, for example `https://k10y.example.com/api/hub/auth/sso/callback`. Set `K10Y_PUBLIC_URL` on the hub if people reach it under another address.
+2. In k10y, enter the **issuer URL** (e.g. `https://accounts.google.com`, `https://login.microsoftonline.com/<tenant>/v2.0`, `https://keycloak.example.com/realms/<realm>`), the **client ID** and **client secret**.
+3. Optionally **map groups to roles**: "members of `k8s-ops` get Kubernetes operator on everything", "members of `lb-admins` get HAProxy admin on `lb-edge-1`". Groups come from the `groups` claim (or another, e.g. `realm_access.roles` for Keycloak roles).
+
+How it works:
+- k10y uses the authorization code flow with PKCE and checks the ID token's signature, issuer, audience, expiry and nonce.
+- A person's k10y account is found by their provider ID, then by username; with **Create k10y accounts at first sign-in**, new people get an account automatically (otherwise an admin adds them first).
+- At every sign-in, the roles from group mappings are replaced by what the person's groups give today. Roles you give by hand in **Users** stay. Users from single sign-on are marked **SSO** in the user list.
+- Two-factor login is left to the provider, so k10y's own two-factor requirement doesn't apply to these users.
+- Password sign-in still works for local accounts (keep at least one admin with a password).
+
+## API tokens
+
+Scripts, CI pipelines and the [CLI](./cli#through-the-hub) can use the hub's API with a personal **API token** instead of a password: **My settings → API tokens → New token**.
+
+- A token acts as you. **Limit to a role** to give it less: with *Kubernetes viewer* it can only read, whatever you can do yourself.
+- Choose when it expires (30 days, 90 days, 1 year or never). It's shown **once**; k10y keeps only a hash.
+- Send it as `Authorization: Bearer k10y_…` to `/api/hub/…`. Tokens can't create tokens or change your account settings.
+- Everything a token does is in the activity log under your name, with the token's name. The list shows when each token was last used and from where; **Revoke** stops it at once. Admins see and can revoke anyone's tokens in **Users**.
+
 ## For admins
 
 On **Administration → Users** you see each user's **last activity** and number of **active sessions**:

@@ -72,3 +72,20 @@ docker compose logs -f hub        # hub logs
 docker compose stop / start       # stop or start, keeping data
 docker compose down               # remove containers; data stays in ./data
 ```
+
+## Run the hub in Kubernetes
+
+The hub can also run in a cluster, with the **k10y-hub** Helm chart:
+
+```bash
+helm install k10y-hub oci://ghcr.io/chhayserver/charts/k10y-hub -n k10y-hub --create-namespace \
+  --set publicUrl=https://k10y.example.com
+kubectl -n k10y-hub get secret k10y-hub-secrets -o jsonpath='{.data.admin-password}' | base64 -d; echo   # first password
+kubectl -n k10y-hub port-forward svc/k10y-hub 8443:8443                                                  # or use an Ingress
+```
+
+- **Database:** a bundled PostgreSQL (one replica with a 5 Gi volume) by default. For your own, set `postgresql.enabled=false` and `externalDatabase.url` (or `externalDatabase.existingSecret` with key `url`).
+- **Secrets:** the encryption key, the PostgreSQL password and the first admin password are generated once and kept across upgrades, in the Secret `k10y-hub-secrets` (kept even if you uninstall). **Back up its `secret-key`**: it decrypts the agent tokens and keys k10y stores.
+- **Reaching it:** `service.type` (ClusterIP, NodePort or LoadBalancer), or `ingress.enabled=true` with `ingress.host` and `ingress.tlsSecret`. The hub serves HTTPS with a self-signed certificate; behind an Ingress that ends TLS you can set `tls=false`.
+- One replica (it keeps live state in memory), a 1 Gi volume for its certificate and exported files, and the HAProxy log receiver on UDP 5514 (`syslogPort`).
+- Backups: back up the PostgreSQL volume or database with your usual tools (the Docker Compose backup container isn't part of the chart).

@@ -314,6 +314,7 @@ The agent serves no web page. Interactive API docs are at `https://<agent>:30800
 make build                  # Docker image (builds the Vue app, then the Python package)
 make test                   # unit tests inside the image
 make e2e-image && make e2e K10Y_E2E_USER=… K10Y_E2E_PASSWORD=…   # browser tests against a running hub (read-only)
+make release VERSION=2.8.0  # bump every version, the changelog and the installers; then commit and push the tag v2.8.0
 make hub-up / hub-logs / hub-down
 make load && make deploy    # RKE2 in the Lima VM (VM=rke2); make load-k3d for k3d
 make push                   # multi-arch (amd64 + arm64) to docker.io/k10y/k10y-agent:$(TAG) and :latest
@@ -341,6 +342,14 @@ tests/                 unit tests
 
 Lab used during development: **lab** is RKE2 v1.36 in a Lima Ubuntu VM on macOS (`vzNAT`, node IP
 pinned). **edge** is k3d with NodePort 30800 mapped to `localhost:30801`.
+
+## Releasing
+
+1. Write the changes under `## Unreleased` in `website/changelog.md`.
+2. `make release VERSION=X.Y.Z`, review, then `git commit -am "Release X.Y.Z" && git tag -a vX.Y.Z -m "k10y X.Y.Z" && git push origin main vX.Y.Z`.
+3. GitHub Actions (`.github/workflows/release.yml`) checks the versions, runs the tests, builds and pushes the multi-arch image, pushes the Helm charts to `oci://ghcr.io/chhayserver/charts`, creates the GitHub release with the install files and deploys the website. It needs the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (and `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` for the website).
+
+Every pull request runs CI (tests, type check, website and image builds, a Trivy scan, and browser tests against a kind cluster), CodeQL, and Dependabot keeps dependencies current.
 
 ## Roadmap
 

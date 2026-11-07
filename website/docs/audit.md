@@ -23,6 +23,20 @@ Read-only views (opening pages, reading logs) are not recorded.
 
 Search by user, action, target or message. Show **All**, only **Changes**, or only **Failed** entries, for all clusters or the current one.
 
+## Download
+
+**Download** on the Activity page saves the last 90 days you can see (all clusters, or the current one) as CSV. The API also gives JSON: `GET /api/hub/audit/export?format=json&days=30`.
+
+## Export to a SIEM or log system
+
+**System settings → Activity log export** (needs `settings.manage`) copies every entry as it's written, including shells and port-forwards, to any of:
+
+- **Webhook:** JSON batches (`{"entries": [...]}`) POSTed every few seconds, for Splunk HEC, Elastic, Datadog or your own service. With a signing secret, `X-K10y-Signature: sha256=<hex>` is the HMAC-SHA256 of the body.
+- **Syslog:** RFC 5424 lines with the entry as JSON, over UDP, TCP or TLS (rsyslog, syslog-ng, most SIEMs).
+- **Files:** one JSON line per entry in `/data/audit/audit-YYYY-MM-DD.jsonl` inside the hub (in `./data/hub/audit` with Docker Compose), with old files removed after the days you choose.
+
+**Save & send test** sends one test entry to every destination you turned on and shows any error. Each entry has `time`, `user`, `cluster`, `action`, `target`, `ok`, `dry_run`, `message`, `params`, `client_ip` and `source: "k10y"`.
+
 ## Retention
 
-Entries are kept until you delete them from the database, and they're included in the [backups](./backups). Each agent also keeps a small local log of its own actions.
+**Keep in k10y** sets how long entries stay in the database: forever (the default), 90 or 180 days, 1 or 2 years. Older entries are removed once an hour; exported copies aren't affected. Entries are included in the [backups](./backups). Each agent also keeps a small local log of its own actions.

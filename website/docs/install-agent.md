@@ -16,6 +16,15 @@ kubectl apply -f https://github.com/chhayserver/k10y-agent/releases/latest/downl
 kubectl apply -f https://github.com/chhayserver/k10y-agent/releases/latest/download/install-readonly.yaml
 ```
 
+Or with **Helm**:
+
+```bash
+helm install k10y-agent oci://ghcr.io/chhayserver/charts/k10y-agent -n k10y --create-namespace \
+  --set clusterName=prod-eu            # control: false for read-only; helm: true for Helm rollback/upgrade
+```
+
+The chart is generated from the same files as `install.yaml`, so it grants exactly the same permissions. Its values: `image`, `clusterName`, `control`, `protectedNamespaces`, `helm`, `service` (NodePort 30800 by default), `resources`, `extraEnv`, `nodeSelector`, `tolerations`, `affinity`. Use either the chart or `install.yaml` on a cluster, not both.
+
 Both create, in namespace `k10y`:
 - a ServiceAccount with read access (and, for `install.yaml`, the opt-in control role);
 - the agent Deployment (one pod, non-root, read-only filesystem);

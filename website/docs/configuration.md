@@ -47,6 +47,7 @@ Set in the agent's Deployment (`install.yaml`).
 | `K10Y_HELM_ENABLED` | `false` | Roll back Helm releases from the hub. Also needs `rbac-helm.yaml` and a control-enabled agent. |
 | `K10Y_VOLUME_FULL_PERCENT` | `90` | Warn when a PersistentVolumeClaim is this full (percent of bytes or inodes). |
 | `K10Y_KUBELET_INSECURE` | `false` | Don't verify the kubelets' certificates when reading volume usage (only if they aren't signed by the cluster CA). |
+| `K10Y_SSO_ALLOW_HTTP` | `false` | Hub: allow single sign-on providers on plain `http://` (only for testing). |
 | `K10Y_TLS` | `true` in the installer | Serve HTTPS |
 | `K10Y_CORS_ORIGINS` | empty | Browser origins allowed to call the agent directly. Leave empty: browsers go through the hub. |
 | `K10Y_METRICS_POLL_S` | `5` | How often metrics-server is checked |

@@ -6,6 +6,19 @@ title: Changelog
 
 Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached (plus the optional `rbac-helm.yaml` from 2.7) to the [GitHub release](https://github.com/chhayserver/k10y-agent/releases).
 
+## Unreleased
+
+- **Single sign-on (OpenID Connect):** Google, Microsoft Entra ID, Keycloak, Okta and others, with groups mapped to roles and accounts created at first sign-in.
+- **API tokens** for scripts, CI and the CLI: act as you, optionally limited to a role, audited, revocable.
+- **Port-forward for TCP** (databases, Redis…) through the hub: `k10y hub login` and `k10y port-forward`, with the new `pods.portforward` permission.
+- **Helm upgrade with edited values** (dry run with the exact diff; masked values keep their real value).
+- **Activity log export** to a webhook, syslog (UDP/TCP/TLS) or daily files, **retention**, and **CSV/JSON download**.
+- **Helm charts** for the agent and for the hub (bundled PostgreSQL or your own), at `oci://ghcr.io/chhayserver/charts`.
+- **"Agent outdated" badge** on the cluster pages, with what's missing and how to update.
+- **Smaller image** (about 490 MB instead of 594 MB) and Helm 3.22.1 (no known critical vulnerabilities).
+- **Automatic releases** from a tag, **security scanning** (Dependabot, CodeQL, Trivy) and **browser tests in CI**.
+- **Agent RBAC:** `pods/portforward` in the control role. Re-apply `install.yaml` when upgrading.
+
 ## 2.7.1 <Badge type="tip" text="latest" />
 
 - **New website address:** the docs and website moved to **https://k10y-agents.pages.dev** (the old k10y.pages.dev no longer works). Links in the dashboard point there.
