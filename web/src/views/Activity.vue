@@ -31,6 +31,7 @@ const columns = [
     <div class="segmented" role="group" aria-label="Scope"><button :aria-pressed="scope === 'all'" @click="scope = 'all'; load()">All clusters</button>
       <button :aria-pressed="scope === 'current'" :disabled="!s.current" @click="scope = 'current'; load()">{{ s.current?.name || "Current" }}</button></div>
     <button class="btn" @click="load">Reload</button>
+    <a class="btn" :href="`/api/hub/audit/export?format=csv&days=90${scope === 'current' && s.current ? `&cluster_id=${s.current.id}` : ''}`" download title="The last 90 days you can see, as CSV">Download</a>
   </Toolbar>
   <div v-if="error" class="banner show">{{ error }}</div>
   <section class="card flush"><div class="card-body table-wrap">

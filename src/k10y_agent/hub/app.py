@@ -13,7 +13,7 @@ import ssl
 import time
 import secrets as pysecrets
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote, urlsplit
@@ -27,7 +27,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .. import __version__, ai
-from . import alerts, haproxy, haproxy_monitor, k8s_insights, sso
+from . import alerts, audit_export, haproxy, haproxy_monitor, k8s_insights, sso
 from ..config import Settings
 from .db import (ApiToken, AuditEntry, Cluster, Database, Role, RoleAssignment, SessionRow, Setting, User, UserPreference, get_setting,
                  utcnow)
@@ -146,6 +146,7 @@ def _startup() -> None:
         alert_engine().start()
     haproxy_mon().start()
     k8s_history().start()
+    audit_exporter().start()
     if settings.syslog_port:
         try:
             rx = haproxy_monitor.SyslogReceiver(settings.syslog_port)
@@ -156,7 +157,7 @@ def _startup() -> None:
 
 
 def _shutdown() -> None:
-    for key in ("engine", "haproxy_monitor", "k8s_history"):
+    for key in ("engine", "haproxy_monitor", "k8s_history", "audit_export"):
         if key in state:
             state[key].stop()
 
@@ -1290,7 +1291,17 @@ async def _proxy_stream(c: Cluster, url: str, request: Request, headers: Dict[st
 @api.get("/audit")
 def list_audit(p: Principal = Depends(current), s: Session = Depends(db_session), cluster_id: Optional[int] = None,
                limit: int = 300, target: Optional[str] = Query(None, max_length=300, description="Only entries about this object (substring).")) -> list:
-    q = select(AuditEntry).order_by(AuditEntry.id.desc()).limit(min(max(limit, 1), 1000))
+    return visible_audit(p, s, cluster_id, min(max(limit, 1), 1000), target)
+
+
+def visible_audit(p: Principal, s: Session, cluster_id: Optional[int], limit: Optional[int], target: Optional[str] = None,
+                  since: Optional[datetime] = None) -> list:
+    """Activity entries this user may see, newest first."""
+    q = select(AuditEntry).order_by(AuditEntry.id.desc())
+    if limit:
+        q = q.limit(limit)
+    if since is not None:
+        q = q.where(AuditEntry.time >= since)
     if target:
         q = q.where(AuditEntry.target.contains(target))
     all_ids = [c.id for c in s.execute(select(Cluster)).scalars()]
@@ -1368,6 +1379,104 @@ class DiagnoseBody(BaseModel):
     kind: Optional[str] = Field(None, max_length=40)
     name: Optional[str] = Field(None, max_length=253)
     question: str = Field("", max_length=2000)
+
+
+def audit_exporter() -> audit_export.Exporter:
+    if "audit_export" not in state:
+        state["audit_export"] = audit_export.Exporter(state["db"].session, lambda v: crypto().decrypt(v), settings.data_dir)
+        state["audit_export"].listen()
+    return state["audit_export"]
+
+
+class AuditExportBody(BaseModel):
+    retention_days: int = Field(0, ge=0, le=3650)
+    webhook_enabled: bool = False
+    webhook_url: str = Field("", max_length=500)
+    webhook_secret: Optional[str] = Field(None, max_length=500)     # omit to keep the stored one
+    syslog_enabled: bool = False
+    syslog_host: str = Field("", max_length=253)
+    syslog_port: int = Field(514, ge=1, le=65535)
+    syslog_protocol: str = Field("udp", pattern="^(udp|tcp|tls)$")
+    file_enabled: bool = False
+    file_keep_days: int = Field(30, ge=0, le=3650)
+
+
+def _export_view(cfg: Dict[str, Any]) -> dict:
+    ex = state.get("audit_export")
+    return {"retention_days": cfg["retention_days"], "webhook_enabled": cfg["webhook"]["enabled"], "webhook_url": cfg["webhook"]["url"],
+            "webhook_secret_set": bool(cfg["webhook"].get("secret")), "syslog_enabled": cfg["syslog"]["enabled"],
+            "syslog_host": cfg["syslog"]["host"], "syslog_port": cfg["syslog"]["port"], "syslog_protocol": cfg["syslog"]["protocol"],
+            "file_enabled": cfg["file"]["enabled"], "file_keep_days": cfg["file"]["keep_days"],
+            "file_folder": str(Path(settings.data_dir) / "audit"), "sent": ex.sent if ex else 0, "error": ex.last_error if ex else ""}
+
+
+@api.get("/settings/audit-export")
+def get_audit_export(p: Principal = Depends(require("settings.manage"))) -> dict:
+    return _export_view(audit_exporter().config(fresh=True))
+
+
+@api.put("/settings/audit-export")
+def put_audit_export(body: AuditExportBody, request: Request, p: Principal = Depends(require("settings.manage")),
+                     s: Session = Depends(db_session)) -> dict:
+    if body.webhook_enabled and not re.match(r"^https?://\S+$", body.webhook_url):
+        raise HTTPException(status_code=400, detail="The webhook URL must start with https:// (or http://).")
+    if body.syslog_enabled and not body.syslog_host:
+        raise HTTPException(status_code=400, detail="Enter the syslog server.")
+    old = audit_exporter().config(fresh=True)
+    value = {"retention_days": body.retention_days,
+             "webhook": {"enabled": body.webhook_enabled, "url": body.webhook_url,
+                         "secret": crypto().encrypt(body.webhook_secret) if body.webhook_secret else old["webhook"].get("secret", "")},
+             "syslog": {"enabled": body.syslog_enabled, "host": body.syslog_host, "port": body.syslog_port, "protocol": body.syslog_protocol},
+             "file": {"enabled": body.file_enabled, "keep_days": body.file_keep_days}}
+    row = s.get(Setting, audit_export.SETTING)
+    if row:
+        row.value = value
+    else:
+        s.add(Setting(key=audit_export.SETTING, value=value))
+    s.commit()
+    cfg = audit_exporter().config(fresh=True)
+    audit(s, request, p, "settings-audit-export", "activity log export",
+          message=f"retention {body.retention_days or 'forever'} days; webhook {'on' if body.webhook_enabled else 'off'}, "
+                  f"syslog {'on' if body.syslog_enabled else 'off'}, files {'on' if body.file_enabled else 'off'}")
+    return _export_view(cfg)
+
+
+@api.post("/settings/audit-export/test")
+def test_audit_export(p: Principal = Depends(require("settings.manage"))) -> dict:
+    """Send one test entry to every enabled destination now, and say what happened."""
+    ex = audit_exporter()
+    cfg = ex.config(fresh=True)
+    if not ex.enabled():
+        raise HTTPException(status_code=400, detail="Turn on at least one destination and save first.")
+    entry = {"id": 0, "time": utcnow().isoformat(), "user": p.user.username, "cluster": None, "action": "audit-export-test",
+             "target": "activity log export", "ok": True, "dry_run": False, "message": "test entry from k10y", "params": {},
+             "client_ip": "", "source": "k10y"}
+    try:
+        ex.send(cfg, [entry])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "message": "Test entry sent."}
+
+
+@api.get("/audit/export")
+def export_audit(p: Principal = Depends(current), s: Session = Depends(db_session), format: str = Query("csv", pattern="^(csv|json)$"),
+                 cluster_id: Optional[int] = None, days: int = Query(30, ge=1, le=3650)) -> Response:
+    """Download the activity log you can see (last `days` days, newest first) as CSV or JSON."""
+    import csv
+    import io
+    rows = visible_audit(p, s, cluster_id, None, since=utcnow() - timedelta(days=days))
+    stamp = utcnow().strftime("%Y%m%d-%H%M")
+    if format == "json":
+        return Response(json.dumps(rows, default=str, indent=1), media_type="application/json",
+                        headers={"Content-Disposition": f'attachment; filename="k10y-activity-{stamp}.json"'})
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["time", "user", "cluster", "action", "target", "result", "dry_run", "message", "client_ip", "params"])
+    for r in rows:
+        w.writerow([r["time"], r["username"], r["cluster"], r["action"], r["target"], "ok" if r["ok"] else "failed", r["dry_run"],
+                    r["message"], r["client_ip"], json.dumps(r["params"] or {}, default=str)])
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="k10y-activity-{stamp}.csv"'})
 
 
 @api.get("/settings/security")
