@@ -6,6 +6,10 @@ title: Changelog
 
 Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached (plus the optional `rbac-helm.yaml` from 2.7) to the [GitHub release](https://github.com/chhayserver/k10y-agent/releases).
 
+## Unreleased
+
+- **Nginx, the third system** (read-only first): connect each Nginx with the k10y agent next to it (the `k10y/k10y-nginx` image for Docker Compose, or `install-nginx-agent.sh` on a server). See sites with their routes, upstreams with k10y's own server checks, live requests, 5xx and response time per site, route and upstream server (from the access log), logs, certificates and the full config. Nginx viewer, operator and admin roles per instance, Nginx alerts, and an Nginx lab (`make nginx-lab-up`).
+
 ## 2.8.0 <Badge type="tip" text="latest" />
 
 - **Single sign-on (OpenID Connect):** Google, Microsoft Entra ID, Keycloak, Okta and others, with groups mapped to roles and accounts created at first sign-in.

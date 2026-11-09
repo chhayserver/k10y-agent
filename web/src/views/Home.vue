@@ -11,12 +11,28 @@ import { backendHealth, hx, num, type HxOverview } from "@/lib/haproxy";
 import { SYSTEMS, to } from "@/lib/nav";
 import { fleet, fleetLevel, refreshFleet } from "@/stores/fleet";
 import { useHaproxy } from "@/stores/haproxy";
+import { useNginx } from "@/stores/nginx";
 import { useSession } from "@/stores/session";
 import { rememberSystem } from "@/stores/ui";
 
 const s = useSession(), h = useHaproxy(), router = useRouter();
 const systems = computed(() => SYSTEMS.filter((x) => x.visible(s)));
 const has = (id: string) => systems.value.some((x) => x.id === id);
+
+// Nginx: each agent's summary
+const webs = ref<{ inst: any; sum?: any; error?: string }[] | null>(null);
+async function loadWebs() {
+  if (!has("nginx")) return;
+  try {
+    const list = await hub.get<any[]>("/nginx");
+    webs.value = await Promise.all(list.map(async (inst) => {
+      try { return { inst, sum: await hub.get(`/nginx/${inst.id}/summary`) }; } catch (e: any) { return { inst, error: e.message }; }
+    }));
+  } catch { webs.value = []; }
+}
+const ngx = useNginx();
+const webLevel = (x: any) => (!x.sum ? "critical" : x.sum.problems.some((p: any) => ["upstream_down", "not_running"].includes(p.kind)) ? "critical" : x.sum.problems.length ? "warning" : "good");
+function openWeb(id: number) { ngx.select(id); rememberSystem("nginx"); router.push(to("nginx-overview")); }
 
 // HAProxy: one overview per instance
 const lbs = ref<{ inst: any; data?: HxOverview; error?: string }[] | null>(null);
@@ -63,8 +79,8 @@ const levelText: Record<string, string> = { good: "Healthy", warning: "Degraded"
 
 let timer = 0;
 onMounted(() => {
-  refreshFleet(); loadLbs(); loadFeeds();
-  timer = window.setInterval(() => { if (!document.hidden) { loadLbs(); loadFeeds(); } }, 30000);
+  refreshFleet(); loadLbs(); loadWebs(); loadFeeds();
+  timer = window.setInterval(() => { if (!document.hidden) { loadLbs(); loadWebs(); loadFeeds(); } }, 30000);
 });
 onBeforeUnmount(() => clearInterval(timer));
 </script>
@@ -107,6 +123,23 @@ onBeforeUnmount(() => clearInterval(timer));
           <div class="meta"><Badge v-if="x.data" :level="lbSummary(x.data).level" :label="lbSummary(x.data).problems ? `${lbSummary(x.data).problems} problems` : 'Healthy'" />
             <Badge v-else level="critical" label="Unreachable" />
             <div v-if="x.data" style="margin-top:4px">{{ num(lbSummary(x.data).rate) }} req/s</div></div>
+        </li>
+      </ul>
+    </section>
+
+    <section v-if="has('nginx')" class="card flush sys-card">
+      <div class="card-head"><h2><span class="sys-ic"><Icon name="nginx" /></span>Nginx</h2><span class="hint">{{ webs ? fmt.plural(webs.length, "instance") : "" }}</span></div>
+      <div v-if="!webs" class="card-body"><span class="hint">Loading…</span></div>
+      <EmptyState v-else-if="!webs.length" title="No Nginx connected yet" sub="Add one under Administration → Nginx instances." icon="nginx" />
+      <ul v-else class="sys-rows">
+        <li v-for="x in webs" :key="x.inst.id" @click="openWeb(x.inst.id)">
+          <span class="hdot" :class="webLevel(x)" />
+          <div style="min-width:0"><div class="main-line">{{ x.inst.name }}</div>
+            <div class="sub-line"><template v-if="x.sum">{{ x.sum.sites }} sites · {{ x.sum.upstreams }} upstreams · {{ x.sum.servers }} servers</template>
+              <template v-else>{{ x.error }}</template></div></div>
+          <div class="meta"><Badge v-if="x.sum" :level="webLevel(x)" :label="x.sum.problems.length ? `${x.sum.problems.length} problems` : 'Healthy'" />
+            <Badge v-else level="critical" label="Unreachable" />
+            <div v-if="x.sum" style="margin-top:4px">{{ x.sum.req == null ? "–" : num(x.sum.req) }} req/s</div></div>
         </li>
       </ul>
     </section>

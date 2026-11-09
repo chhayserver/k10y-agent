@@ -51,6 +51,7 @@ export default defineConfig({
           { text: "Alerts and Telegram", link: "/docs/alerts" },
           { text: "AI assistant", link: "/docs/ai" },
           { text: "HAProxy", link: "/docs/haproxy" },
+          { text: "Nginx", link: "/docs/nginx" },
         ] },
         { text: "Administration", items: [
           { text: "Users, roles and permissions", link: "/docs/users-roles" },

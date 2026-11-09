@@ -38,11 +38,21 @@ for chart in k10y-agent k10y-hub; do
   cp "dist/charts/$chart-$V.tgz" "dist/charts/$chart.tgz"   # stable name for .../releases/latest/download/
 done
 
+step "Nginx agent: Python wheel and install script"
+docker run --rm -v "$PWD:/w:ro" -v "$PWD/dist:/out" python:3.12-slim sh -c \
+  "cp -r /w /src && cd /src && rm -rf src/k10y_agent/web && pip -q wheel --no-deps -w /out ." >/dev/null
+cp deploy/nginx/install.sh dist/install-nginx-agent.sh
+
+step "Nginx image (k10y/k10y-nginx, amd64 + arm64)"
+docker buildx build --platform "$(sed -n 's/^PLATFORMS *?= *//p' Makefile)" -f deploy/nginx/Dockerfile \
+  --label org.opencontainers.image.version="$V" -t "docker.io/k10y/k10y-nginx:$V" -t docker.io/k10y/k10y-nginx:latest --push .
+
 step "GitHub release"
 docker run --rm -v "$PWD:/w" -w /w --entrypoint python "k10y/k10y-agent:$V" scripts/release.py notes "$V" > dist/notes.md
 gh release create "v$V" -R "$REPO" --title "k10y $V" --latest --notes-file dist/notes.md \
   deploy/install/install.yaml deploy/install/install-readonly.yaml deploy/install/rbac-helm.yaml docker-compose.yml \
-  dist/charts/k10y-agent.tgz dist/charts/k10y-hub.tgz "dist/charts/k10y-agent-$V.tgz" "dist/charts/k10y-hub-$V.tgz"
+  dist/charts/k10y-agent.tgz dist/charts/k10y-hub.tgz "dist/charts/k10y-agent-$V.tgz" "dist/charts/k10y-hub-$V.tgz" \
+  "dist/k10y_agent-$V-py3-none-any.whl" dist/install-nginx-agent.sh
 
 step "Website"
 make site-deploy

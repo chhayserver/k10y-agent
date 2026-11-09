@@ -19,7 +19,10 @@ const events = ref<any[] | null>(null), engine = ref<any>(null), rules = ref<any
 const tab = ref<"events" | "rules">("events");
 const silences = ref<any[]>([]);
 
-async function loadHx() { if (canHx.value) try { hxInstances.value = await hub.get("/haproxy"); } catch { /* no access */ } }
+async function loadHx() {
+  if (canHx.value) try { hxInstances.value = await hub.get("/haproxy"); } catch { /* no access */ }
+  if (canNg.value) try { ngInstances.value = await hub.get("/nginx"); } catch { /* no access */ }
+}
 onMounted(loadHx);
 async function load() {
   try {
@@ -57,7 +60,15 @@ const rows = computed(() => {
 });
 const firing = computed(() => (events.value || []).filter((e) => e.state === "firing").length);
 const clusterName = (id: number | null) => (id == null ? "All clusters" : s.clusters.find((c: any) => c.id === id)?.name || `#${id}`);
-const TYPE_LABEL: Record<string, string> = { problems: "Cluster problems", resource: "CPU / memory threshold", unreachable: "Cluster unreachable", haproxy: "HAProxy" };
+const TYPE_LABEL: Record<string, string> = { problems: "Cluster problems", resource: "CPU / memory threshold", unreachable: "Cluster unreachable", haproxy: "HAProxy", nginx: "Nginx" };
+const NG_COND: Record<string, { label: string; unit?: string; def?: number; hint: string }> = {
+  server_down: { label: "An upstream server doesn't answer", hint: "k10y's check (TCP connect every 10 s) fails for a server that isn't marked down." },
+  upstream_down: { label: "An upstream has no server answering", hint: "None of an upstream's servers (backups aside) answers: its sites are failing." },
+  error_rate: { label: "Server errors (5xx) above", unit: "% of responses", def: 5, hint: "Share of 5xx responses over the last 10 seconds, from the access log, at 1 request/s or more." },
+  cert_expiry: { label: "Certificate expiring", unit: "days or less", def: 14, hint: "A certificate a site uses expires soon (or has expired)." },
+  problems: { label: "Nginx stopped or config unreadable", hint: "Nginx isn't running, or its configuration can't be read." },
+  unreachable: { label: "Agent unreachable", hint: "The hub can't reach the k10y agent next to this Nginx." },
+};
 const HX_COND: Record<string, { label: string; unit?: string; def?: number; hint: string }> = {
   server_down: { label: "A server is down", hint: "A server's health check fails." },
   backend_down: { label: "A backend has no server up", hint: "Every server of a backend is down or out of rotation: its frontend is failing." },
@@ -68,6 +79,8 @@ const HX_COND: Record<string, { label: string; unit?: string; def?: number; hint
 };
 const hxInstances = ref<any[]>([]);
 const canHx = computed(() => s.canGlobal("haproxy.view"));
+const ngInstances = ref<any[]>([]);
+const canNg = computed(() => s.canGlobal("nginx.view"));
 function describe(r: any) {
   const p = r.params || {};
   if (r.type === "resource") return `${p.metric === "cpu" ? "CPU" : "Memory"} ≥ ${p.threshold}% on ${p.scope === "cluster" ? "the cluster" : "any node"}`;
@@ -76,6 +89,11 @@ function describe(r: any) {
     if (p.namespaces?.length) bits.push(`in ${p.namespaces.join(", ")}`);
     if (p.exclude_namespaces?.length) bits.push(`except ${p.exclude_namespaces.join(", ")}`);
     return bits.join(" ");
+  }
+  if (r.type === "nginx") {
+    const c = NG_COND[p.condition] || { label: p.condition };
+    const where = p.instance_id ? ngInstances.value.find((i) => i.id === p.instance_id)?.name || "one instance" : "any Nginx";
+    return `${c.label}${c.unit ? ` ${p.threshold} ${c.unit}` : ""} · ${where}`;
   }
   if (r.type === "haproxy") {
     const c = HX_COND[p.condition] || { label: p.condition };
@@ -102,7 +120,7 @@ const KINDS = ["Pod", "Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob"
 const blank = () => ({ open: false, id: 0, name: "", enabled: true, type: "problems", cluster_id: null as number | null, severity: "warning",
   for_minutes: 2, repeat_minutes: 0, notify_resolved: true, ai_summary: false, channel_ids: [] as number[],
   kinds: [] as string[], namespaces: "", exclude: "kube-system", metric: "memory", scope: "node", threshold: 90, busy: false, msg: "",
-  hx_condition: "server_down", hx_instance: null as number | null });
+  hx_condition: "server_down", hx_instance: null as number | null, ng_condition: "server_down", ng_instance: null as number | null });
 const edit = reactive(blank());
 const list = (v: string) => v.split(",").map((x) => x.trim()).filter(Boolean);
 function openNew() { Object.assign(edit, blank(), { open: true, channel_ids: channels.value.map((c) => c.id) }); }
@@ -111,14 +129,15 @@ function openEdit(r: any) {
   const p = r.params || {};
   Object.assign(edit, blank(), r, { open: true, kinds: p.kinds || [], namespaces: (p.namespaces || []).join(", "), exclude: (p.exclude_namespaces || []).join(", "),
     metric: p.metric || "memory", scope: p.scope || "node", threshold: p.threshold ?? 90, channel_ids: [...(r.channel_ids || [])],
-    hx_condition: p.condition || "server_down", hx_instance: p.instance_id ?? null });
+    hx_condition: p.condition || "server_down", hx_instance: p.instance_id ?? null, ng_condition: p.condition || "server_down", ng_instance: p.instance_id ?? null });
 }
 async function save() {
   edit.busy = true; edit.msg = "";
   const params = edit.type === "problems" ? { kinds: edit.kinds, namespaces: list(edit.namespaces), exclude_namespaces: list(edit.exclude) }
     : edit.type === "resource" ? { metric: edit.metric, scope: edit.scope, threshold: Number(edit.threshold) }
-    : edit.type === "haproxy" ? { condition: edit.hx_condition, threshold: Number(edit.threshold), instance_id: edit.hx_instance } : {};
-  if (edit.type === "haproxy") edit.cluster_id = null;
+    : edit.type === "haproxy" ? { condition: edit.hx_condition, threshold: Number(edit.threshold), instance_id: edit.hx_instance }
+    : edit.type === "nginx" ? { condition: edit.ng_condition, threshold: Number(edit.threshold), instance_id: edit.ng_instance } : {};
+  if (edit.type === "haproxy" || edit.type === "nginx") edit.cluster_id = null;
   const body = { name: edit.name, enabled: edit.enabled, type: edit.type, params, cluster_id: edit.cluster_id, severity: edit.severity,
     for_minutes: Number(edit.for_minutes), repeat_minutes: Number(edit.repeat_minutes), notify_resolved: edit.notify_resolved, ai_summary: edit.ai_summary, channel_ids: edit.channel_ids };
   try {
@@ -190,7 +209,7 @@ function addPreset(kind: "problems" | "memory" | "unreachable") {
       <DataTable v-else v-model:sort="rstate.sort" :rows="rules" :columns="ruleColumns" :row-key="(r) => String(r.id)" :clickable="canManage" @row="openEdit">
         <template #enabled="{ row }"><Badge :level="row.enabled ? 'good' : 'neutral'" :label="row.enabled ? 'Enabled' : 'Paused'" /></template>
         <template #type="{ row }"><div><div>{{ TYPE_LABEL[row.type] }}</div><div class="dim" style="font-size:12px">{{ describe(row) }} · for {{ row.for_minutes }} min</div></div></template>
-        <template #cluster_id="{ row }">{{ row.type === 'haproxy' ? 'HAProxy' : clusterName(row.cluster_id) }}</template>
+        <template #cluster_id="{ row }">{{ row.type === 'haproxy' ? 'HAProxy' : row.type === 'nginx' ? 'Nginx' : clusterName(row.cluster_id) }}</template>
         <template #severity="{ row }"><Badge :level="SEV[row.severity]" :label="row.severity" /></template>
         <template #channel_ids="{ row }"><span v-if="!row.channel_ids.length" class="dim">History only</span>
           <span v-for="id in row.channel_ids" :key="id" class="chip">{{ channels.find((c) => c.id === id)?.name || "removed" }}</span>
@@ -243,7 +262,7 @@ function addPreset(kind: "problems" | "memory" | "unreachable") {
   <Modal :open="edit.open" :title="edit.id ? `Edit rule ${edit.name}` : 'New alert rule'" wide @close="edit.open = false">
     <div class="form-row"><label class="lbl">Name</label><input v-model="edit.name" class="input" placeholder="e.g. Broken pods in production"></div>
     <div class="form-row"><label class="lbl">Watch for</label>
-      <div class="segmented" role="group"><button v-for="(l, t) in TYPE_LABEL" v-show="t !== 'haproxy' || canHx" :key="t" type="button" :aria-pressed="edit.type === t" @click="edit.type = String(t)">{{ l }}</button></div></div>
+      <div class="segmented" role="group"><button v-for="(l, t) in TYPE_LABEL" v-show="(t !== 'haproxy' || canHx) && (t !== 'nginx' || canNg)" :key="t" type="button" :aria-pressed="edit.type === t" @click="edit.type = String(t)">{{ l }}</button></div></div>
     <template v-if="edit.type === 'problems'">
       <div class="form-row"><label class="lbl">Kinds (none selected = all)</label><div style="display:flex;gap:6px;flex-wrap:wrap">
         <label v-for="k in KINDS" :key="k" class="pill"><input v-model="edit.kinds" type="checkbox" :value="k"> {{ k }}</label></div>
@@ -267,9 +286,20 @@ function addPreset(kind: "problems" | "memory" | "unreachable") {
           <input v-model.number="edit.threshold" class="input" type="number" min="0"></div>
       </div>
     </template>
+    <template v-else-if="edit.type === 'nginx'">
+      <div class="two-col">
+        <div class="form-row"><label class="lbl">Condition</label><select v-model="edit.ng_condition" class="select"
+          @change="edit.threshold = NG_COND[edit.ng_condition].def ?? edit.threshold"><option v-for="(c, k) in NG_COND" :key="k" :value="k">{{ c.label }}</option></select>
+          <span class="hint">{{ NG_COND[edit.ng_condition].hint }}</span></div>
+        <div class="form-row"><label class="lbl">Nginx</label><select v-model="edit.ng_instance" class="select"><option :value="null">Any Nginx</option>
+          <option v-for="i in ngInstances" :key="i.id" :value="i.id">{{ i.name }}</option></select></div>
+        <div v-if="NG_COND[edit.ng_condition].unit" class="form-row"><label class="lbl">Threshold ({{ NG_COND[edit.ng_condition].unit }})</label>
+          <input v-model.number="edit.threshold" class="input" type="number" min="0"></div>
+      </div>
+    </template>
     <p v-else class="hint">Fires when the hub cannot reach the cluster's agent.</p>
     <div class="two-col">
-      <div v-if="edit.type !== 'haproxy'" class="form-row"><label class="lbl">Clusters</label><select v-model="edit.cluster_id" class="select"><option :value="null">All clusters</option>
+      <div v-if="edit.type !== 'haproxy' && edit.type !== 'nginx'" class="form-row"><label class="lbl">Clusters</label><select v-model="edit.cluster_id" class="select"><option :value="null">All clusters</option>
         <option v-for="c in s.clusters" :key="c.id" :value="c.id">{{ c.name }}</option></select></div>
       <div class="form-row"><label class="lbl">Severity</label><select v-model="edit.severity" class="select"><option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option></select></div>
       <div class="form-row"><label class="lbl">Hold time (minutes)</label><input v-model.number="edit.for_minutes" class="input" type="number" min="0" max="1440"><span class="hint">Must stay true this long before it fires.</span></div>

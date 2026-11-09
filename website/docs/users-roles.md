@@ -56,6 +56,15 @@ Notes:
 - The **first** IP block on an instance adds the blocklist to every frontend, which is a config change, so it needs `haproxy.configure` once. After that, `haproxy.operate` is enough.
 - Changing several instances of a group at once needs `haproxy.configure` on each of them. "Compare configs" only shows the members you can configure.
 
+### Nginx (assign on one Nginx instance, or on everything)
+
+| Permission | Allows |
+|---|---|
+| `nginx.view` | See sites, routes, upstreams, live numbers, logs and certificates (not the raw config) |
+| `nginx.operate` | Drain and maintenance of upstream servers, block and unblock IPs |
+| `nginx.configure` | Change Nginx's config; read and edit the raw config (it can contain passwords) |
+| `nginx.manage` | Add, edit and remove Nginx instances and their agent tokens |
+
 ### Hub (assign on everything)
 
 | Permission | Allows |
