@@ -1,6 +1,7 @@
 # HAProxy
 
-k10y can monitor and manage **HAProxy** load balancers next to your Kubernetes clusters:
+k10y can monitor and manage **HAProxy** load balancers next to your Kubernetes clusters. For step-by-step tasks
+(deploy without downtime, canary, maintenance page, block an IP…), see [HAProxy how-to guides](./haproxy-guides).
 
 - **See** every frontend, backend and server, with live health, sessions, request rates and errors.
 - **Control** servers instantly: drain one before a deploy, put it in maintenance, bring it back. No reload needed.
@@ -16,11 +17,13 @@ k10y talks to HAProxy through the official **HAProxy Data Plane API v3**. It's i
 
 ## Connect an HAProxy
 
-You need the `clusters.manage` permission. Open **HAProxy → Add HAProxy** and enter:
+You need the `haproxy.manage` permission. Open **Administration → HAProxy instances → Add HAProxy** (or **Add HAProxy** in the instance switcher) and enter:
 
 - **Name:** how it appears in k10y, e.g. `edge-lb-1`.
 - **Data Plane API URL:** e.g. `http://10.0.0.20:5555`.
 - **Username and password** of a Data Plane API user.
+- **Group** (optional): instances in the same group can get the same change at once (see [Groups](#groups-several-haproxy-at-once)).
+- **Log tag:** what this HAProxy puts in its syslog lines (defaults to the name), for the Logs page.
 - **Verify TLS:** for `https://` URLs with a certificate the hub trusts.
 
 Click **Test connection**. You'll see the API version and how many frontends, backends and servers it found. The password is stored encrypted in the hub's database.
@@ -214,7 +217,7 @@ Every change goes through the same review:
 
 <Shot src="/shots/haproxy-change.png" alt="Reviewing an HAProxy change: one route added, validated by HAProxy" url="k10y / haproxy / frontends" />
 
-Forms only change what you changed. Routing rules that are more complex than path or host matches are kept as they are, and can be edited on the **Config** tab.
+Forms only change what you changed. Routing rules that are more complex than path or host matches are kept as they are, and can be edited on the **Raw config** page.
 
 ## Certificates
 
@@ -268,7 +271,7 @@ Alert rules of type **HAProxy** (Alerts → New rule):
 | Certificate expiring | A certificate expires within N days |
 | HAProxy unreachable | The hub can't reach the Data Plane API |
 
-They notify through the same Telegram channels as cluster alerts.
+They notify through the same channels as every other alert: Telegram, Slack, email or a webhook.
 
 ## Troubleshooting
 
@@ -281,7 +284,7 @@ The Data Plane API (seen in v3.2.18) can crash when it receives two configuratio
 
 ## Raw configuration
 
-**Config → Edit** opens the whole `haproxy.cfg` for anything the forms don't cover, such as TLS certificates, ACLs, stick tables or global tuning. **Review change** shows the diff and the validation result before you apply. Reading the raw config needs `haproxy.configure` too, because it can contain passwords.
+**Raw config → Edit** opens the whole `haproxy.cfg` for anything the forms don't cover, such as TLS certificates, ACLs, stick tables or global tuning. **Review change** shows the diff and the validation result before you apply. Reading the raw config needs `haproxy.configure` too, because it can contain passwords.
 
 
 ### When HAProxy rejects a change
@@ -292,12 +295,13 @@ Every change, from the forms or the raw editor, is checked by HAProxy itself bef
 
 | Permission | Allows |
 |---|---|
-| `haproxy.view` | All HAProxy pages (except the raw config) |
-| `haproxy.operate` | Drain, maintenance, back in service |
-| `haproxy.configure` | Add, edit and remove frontends, backends and servers; read and edit the raw config |
-| `clusters.manage` | Connect, edit and remove HAProxy instances (Administration → HAProxy instances) |
+| `haproxy.view` | All HAProxy pages (except the raw config): frontends, backends, servers, live numbers, charts, topology, logs, certificates, stick tables, blocked IPs, config history |
+| `haproxy.operate` | Drain, maintenance and back in service, rolling deploys, block and unblock IPs, unblock rate-limited clients (all instant, no reload) |
+| `haproxy.configure` | Change the config: frontends, routes, backends, servers, maintenance pages, certificates, Kubernetes sync, copy and group sync, restore versions; read and edit the raw config |
+| `haproxy.manage` | Add, edit and remove HAProxy instances and their Data Plane API logins |
+| `ai.use` | The HAProxy AI assistant on that instance |
 
-These are global permissions: assign the role on **all clusters**. On new installs, Viewer includes `haproxy.view` and Operator includes `haproxy.view` and `haproxy.operate`.
+Roles can be given on **all of HAProxy** or on **one HAProxy instance** (Administration → Users): someone can then operate `lb-edge-1` without seeing the others. Built-in roles: **HAProxy viewer**, **HAProxy operator** (also `ai.use`) and **HAProxy admin** (everything, including `haproxy.manage` and `ai.use`).
 
 Every runtime action, preview (as a dry run) and applied change is in the [audit log](./audit).
 

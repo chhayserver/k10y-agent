@@ -1,6 +1,6 @@
 # Kubernetes insights
 
-Beyond lists of resources, k10y reads what Kubernetes and Helm already record and turns it into answers. Everything here is read-only.
+Beyond lists of resources, k10y reads what Kubernetes and Helm already record and turns it into answers. Everything here is read-only. For step-by-step tasks (deploy, roll back, drain a node, port-forward, right-size…), see the [Kubernetes how-to guides](./kubernetes-guides).
 
 ## Search everything
 

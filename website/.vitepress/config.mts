@@ -43,14 +43,22 @@ export default defineConfig({
         ] },
         { text: "Using k10y", items: [
           { text: "Dashboard tour", link: "/docs/dashboard" },
-          { text: "Logs and live logs", link: "/docs/logs" },
+          { text: "Alerts and notifications", link: "/docs/alerts" },
+          { text: "AI assistant", link: "/docs/ai" },
+        ] },
+        { text: "Kubernetes", items: [
+          { text: "How-to guides", link: "/docs/kubernetes-guides" },
           { text: "Kubernetes insights", link: "/docs/kubernetes" },
           { text: "Actions and safety", link: "/docs/actions" },
+          { text: "Logs and live logs", link: "/docs/logs" },
           { text: "Edit YAML", link: "/docs/edit-yaml" },
           { text: "Pod shell", link: "/docs/shell" },
-          { text: "Alerts and Telegram", link: "/docs/alerts" },
-          { text: "AI assistant", link: "/docs/ai" },
-          { text: "HAProxy", link: "/docs/haproxy" },
+        ] },
+        { text: "HAProxy", items: [
+          { text: "How-to guides", link: "/docs/haproxy-guides" },
+          { text: "HAProxy reference", link: "/docs/haproxy" },
+        ] },
+        { text: "Nginx", items: [
           { text: "Nginx", link: "/docs/nginx" },
         ] },
         { text: "Administration", items: [
