@@ -1,0 +1,19 @@
+# Nginx test lab: k10y-nginx in front of five small apps. make nginx-lab-up
+#   http://localhost:8189      shop (3 servers) and /api (2 servers)
+#   https://localhost:9443     the k10y agent (token: docker exec k10y-nginx-lab-nginx-1 cat /var/lib/k10y/token)
+services:
+  nginx:
+    image: k10y/k10y-nginx:${TAG:-dev}
+    ports: ["8189:80", "9443:9443"]
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./conf.d:/etc/nginx/conf.d
+      - agent:/var/lib/k10y
+    depends_on: [shop1, shop2, shop3, api1, api2]
+  shop1: {image: "traefik/whoami:v1.10", command: ["--name", "shop1"]}
+  shop2: {image: "traefik/whoami:v1.10", command: ["--name", "shop2"]}
+  shop3: {image: "traefik/whoami:v1.10", command: ["--name", "shop3"]}
+  api1: {image: "traefik/whoami:v1.10", command: ["--name", "api1"]}
+  api2: {image: "traefik/whoami:v1.10", command: ["--name", "api2"]}
+volumes:
+  agent:

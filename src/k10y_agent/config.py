@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="K10Y_")
 
     # "agent": talks to its cluster and serves the cluster API.
+    # "nginx": runs next to Nginx and serves the Nginx API (config, live numbers, logs).
     # "hub": central server: web UI, login, users/roles, clusters, audit, alerts (PostgreSQL);
     #        proxies to agents.
     mode: str = "agent"
@@ -37,6 +38,11 @@ class Settings(BaseSettings):
     # When api_token is empty: read the token from this Secret in the agent's own namespace,
     # creating it with a random token on first start (used by install.yaml).
     token_secret: str = ""
+    # Nginx mode: the file to read the token from (created on first start), and where Nginx is.
+    token_file: str = ""
+    nginx_conf: str = "/etc/nginx/nginx.conf"
+    nginx_bin: str = "nginx"
+    nginx_status_url: str = ""       # stub_status URL; found in the config when empty
     # Used only when not running in-cluster.
     kubeconfig: Optional[str] = None
     host: str = "0.0.0.0"

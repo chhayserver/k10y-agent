@@ -10,3 +10,4 @@ web/node_modules
 web/dist
 src/k10y_agent/web
 data
+!deploy/nginx

@@ -34,7 +34,15 @@ server = [
     "argon2-cffi>=23",
     "pyjwt>=2.10",             # single sign-on: verifying OpenID Connect ID tokens
 ]
-dev = ["pytest>=8"]
+# The Nginx agent (K10Y_MODE=nginx), on a server or in the k10y/k10y-nginx image.
+nginx = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pydantic-settings>=2",
+    "cryptography>=42",
+    "crossplane>=0.5.8",       # parse and build nginx.conf (by NGINX Inc., Apache-2.0)
+]
+dev = ["pytest>=8", "crossplane>=0.5.8"]
 
 [project.scripts]
 k10y = "k10y_agent.cli:app"

@@ -22,6 +22,16 @@ test:             ## Run unit tests inside the image
 	docker run --rm --entrypoint sh -e K10Y_AUDIT_PATH=/tmp/audit.jsonl -v $(CURDIR)/tests:/tests $(IMAGE):$(TAG) \
 	  -c "pip install --quiet --user pytest httpx && python -m pytest -q /tests"
 
+.PHONY: nginx-build nginx-lab-up nginx-lab-down
+nginx-build:      ## Build k10y/k10y-nginx (Nginx + the k10y agent in Nginx mode)
+	docker build -f deploy/nginx/Dockerfile -t k10y/k10y-nginx:$(or $(NGINX_TAG),dev) .
+
+nginx-lab-up: nginx-build  ## Nginx test lab: k10y-nginx in front of five small apps (localhost:8189, agent on 9443)
+	docker compose -f deploy/nginx-lab/docker-compose.yml -p k10y-nginx-lab up -d
+
+nginx-lab-down:   ## Stop the Nginx test lab
+	docker compose -f deploy/nginx-lab/docker-compose.yml -p k10y-nginx-lab down -v
+
 .PHONY: release
 release:          ## Prepare a release: make release VERSION=2.8.0 (versions, changelog, installers, charts)
 	@test -n "$(VERSION)" || (echo "usage: make release VERSION=2.8.0" && exit 1)

@@ -15,10 +15,10 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
     settings = Settings()
-    if settings.mode not in ("agent", "hub"):
-        raise SystemExit(f"K10Y_MODE={settings.mode!r} is not supported (use agent or hub). "
+    if settings.mode not in ("agent", "hub", "nginx"):
+        raise SystemExit(f"K10Y_MODE={settings.mode!r} is not supported (use agent, hub or nginx). "
                          "The standalone dashboard was replaced by the k10y hub in 2.0; see the README.")
-    app = "k10y_agent.hub.app:app" if settings.mode == "hub" else "k10y_agent.api:app"
+    app = {"hub": "k10y_agent.hub.app:app", "nginx": "k10y_agent.nginx.app:app"}.get(settings.mode, "k10y_agent.api:app")
     ssl = {}
     if settings.tls:
         cert, key = settings.tls_cert, settings.tls_key
