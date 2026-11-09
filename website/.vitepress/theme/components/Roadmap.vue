@@ -9,7 +9,8 @@ const columns: { id: string; title: string; hint: string; items: Item[] }[] = [
     { t: "Helm upgrade to a new chart version", d: "Upgrade a release to a newer chart from its repository, not only with new values.", area: "Control" },
   ] },
   { id: "planned", title: "Planned", hint: "Agreed, not started", items: [
-    { t: "Edit Nginx from k10y", d: "Sites, routes and upstreams from forms, checked with nginx -t and reloaded, with history and restore; then drain and maintenance of upstream servers, IP blocks, rate limits and certificates.", area: "Systems" },
+    { t: "Operate Nginx upstreams", d: "Drain and maintenance of upstream servers, weights and rolling deploys, like HAProxy.", area: "Systems" },
+    { t: "Nginx security", d: "IP blocklist, rate limits, TLS certificates (upload and Let's Encrypt) and a maintenance page.", area: "Systems" },
     { t: "More systems in the hub", d: "Databases (PostgreSQL, MySQL) and Redis, each with its own pages but the same login, roles, audit and alerts.", area: "Systems" },
   ] },
   { id: "exploring", title: "Exploring", hint: "Ideas we're researching. Tell us if you need them", items: [
@@ -24,6 +25,7 @@ const columns: { id: string; title: string; hint: string; items: Item[] }[] = [
 ];
 
 const shipped: { v: string; date: string; items: string[] }[] = [
+  { v: "2.10", date: "Nov 2026", items: ["Change Nginx from k10y: sites, routes, upstreams and any file, reviewed with nginx -t (errors by line)", "Your comments and layout stay as written", "Nginx config history and restore", "Kubernetes and HAProxy how-to guides in the docs"] },
   { v: "2.9", date: "Nov 2026", items: ["Nginx as the third system: sites, routes, upstreams, live numbers per route and server, logs, certificates, raw config", "k10y/k10y-nginx image and a server install script for the Nginx agent", "Nginx roles per instance and Nginx alerts"] },
   { v: "2.8", date: "Nov 2026", items: ["Single sign-on (OpenID Connect) with groups mapped to roles", "API tokens for scripts and CI", "Port-forward for databases and any TCP", "Helm upgrade with edited values", "Activity log export (webhook, syslog, files) and retention", "Helm charts for the agent and the hub", "Agent outdated badge", "Smaller image, security scanning, browser tests in CI"] },
   { v: "2.7", date: "Nov 2026", items: ["Two-factor login with recovery codes, required for admins or everyone", "Slack, email and signed webhook alerts", "Acknowledge and silence alerts", "Full-volume alerts and volume usage", "Helm rollback from the hub (opt-in)", "Open a Service in the browser, sandboxed", "Live traffic per server on the HAProxy topology", "Config errors shown by line", "Browser tests in the repo", "CI on every pull request"] },

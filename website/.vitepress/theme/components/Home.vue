@@ -100,7 +100,7 @@ const security = [
     <section class="hero">
       <div class="hero-grid" aria-hidden="true" /><div class="hero-glow" aria-hidden="true" />
       <div class="wrap">
-        <a class="pill" :href="withBase('/changelog')"><span class="dot" />New: Nginx, the third system: monitor and change it safely <span aria-hidden="true">→</span></a>
+        <a class="pill" :href="withBase('/changelog')"><span class="dot" />New in 2.10: change Nginx from k10y, checked with nginx -t <span aria-hidden="true">→</span></a>
         <h1>All your DevOps tools.<br><span class="grad">One calm place.</span></h1>
         <p class="lead">k10y-agent brings the tools you run your infrastructure with into one open-source control room. Kubernetes clusters, HAProxy load balancers and Nginx today, more systems next. Monitor, troubleshoot and safely change all of them with one login, one set of roles, one audit log and one alert pipeline.</p>
         <div class="ctas">

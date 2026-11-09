@@ -2,8 +2,8 @@ apiVersion: v2
 name: k10y-agent
 description: 'k10y agent: lets a k10y hub monitor and operate this Kubernetes cluster'
 type: application
-version: 2.9.0
-appVersion: 2.9.0
+version: 2.10.0
+appVersion: 2.10.0
 home: https://k10y-agents.pages.dev
 sources:
 - https://github.com/chhayserver/k10y-agent
