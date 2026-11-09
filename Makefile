@@ -1,5 +1,5 @@
 IMAGE        ?= k10y/k10y-agent
-TAG          ?= 2.8.0
+TAG          ?= 2.9.0
 VM           ?= rke2
 CLUSTER_NAME ?= lab
 KUBECONFIG   ?= $(HOME)/.kube/rke2.yaml
@@ -20,7 +20,7 @@ build:            ## Build the agent image with Docker
 
 test:             ## Run unit tests inside the image
 	docker run --rm --entrypoint sh -e K10Y_AUDIT_PATH=/tmp/audit.jsonl -v $(CURDIR)/tests:/tests $(IMAGE):$(TAG) \
-	  -c "pip install --quiet --user pytest httpx && python -m pytest -q /tests"
+	  -c "pip install --quiet --user pytest httpx crossplane && python -m pytest -q /tests"
 
 .PHONY: nginx-build nginx-lab-up nginx-lab-down
 nginx-build:      ## Build k10y/k10y-nginx (Nginx + the k10y agent in Nginx mode)

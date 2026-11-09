@@ -9,7 +9,8 @@ const columns: { id: string; title: string; hint: string; items: Item[] }[] = [
     { t: "Helm upgrade to a new chart version", d: "Upgrade a release to a newer chart from its repository, not only with new values.", area: "Control" },
   ] },
   { id: "planned", title: "Planned", hint: "Agreed, not started", items: [
-    { t: "More systems in the hub", d: "Nginx first, then databases (PostgreSQL, MySQL) and Redis, each with its own pages but the same login, roles, audit and alerts.", area: "Systems" },
+    { t: "Edit Nginx from k10y", d: "Sites, routes and upstreams from forms, checked with nginx -t and reloaded, with history and restore; then drain and maintenance of upstream servers, IP blocks, rate limits and certificates.", area: "Systems" },
+    { t: "More systems in the hub", d: "Databases (PostgreSQL, MySQL) and Redis, each with its own pages but the same login, roles, audit and alerts.", area: "Systems" },
   ] },
   { id: "exploring", title: "Exploring", hint: "Ideas we're researching. Tell us if you need them", items: [
     { t: "CI/CD pipelines", d: "See and re-run GitLab and Jenkins pipelines next to the clusters they deploy to.", area: "Systems" },
@@ -23,6 +24,7 @@ const columns: { id: string; title: string; hint: string; items: Item[] }[] = [
 ];
 
 const shipped: { v: string; date: string; items: string[] }[] = [
+  { v: "2.9", date: "Nov 2026", items: ["Nginx as the third system: sites, routes, upstreams, live numbers per route and server, logs, certificates, raw config", "k10y/k10y-nginx image and a server install script for the Nginx agent", "Nginx roles per instance and Nginx alerts"] },
   { v: "2.8", date: "Nov 2026", items: ["Single sign-on (OpenID Connect) with groups mapped to roles", "API tokens for scripts and CI", "Port-forward for databases and any TCP", "Helm upgrade with edited values", "Activity log export (webhook, syslog, files) and retention", "Helm charts for the agent and the hub", "Agent outdated badge", "Smaller image, security scanning, browser tests in CI"] },
   { v: "2.7", date: "Nov 2026", items: ["Two-factor login with recovery codes, required for admins or everyone", "Slack, email and signed webhook alerts", "Acknowledge and silence alerts", "Full-volume alerts and volume usage", "Helm rollback from the hub (opt-in)", "Open a Service in the browser, sandboxed", "Live traffic per server on the HAProxy topology", "Config errors shown by line", "Browser tests in the repo", "CI on every pull request"] },
   { v: "2.6", date: "Nov 2026", items: ["Search everything (Ctrl/⌘ K) across clusters and HAProxy", "Rollout history with diff, who changed it, roll back to any revision", "Helm releases: history, values, manifest, compare", "Workload logs: pick a pod, time range, errors only", "Alerts for OOMKilled, stuck rollouts, CronJobs, PVCs, expiring TLS", "Certificates page, CronJob runs, namespace quotas", "Right-sizing and 7-day Kubernetes history", "Service → HAProxy link", "Protected namespaces set in the hub", "Add cluster with just node:port"] },

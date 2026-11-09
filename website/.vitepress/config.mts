@@ -4,7 +4,7 @@ const repo = "https://github.com/chhayserver/k10y-agent";
 
 export default defineConfig({
   title: "k10y-agent",
-  description: "All your DevOps tools in one place: Kubernetes clusters and HAProxy load balancers today, with one login, roles, audit, alerts and an AI assistant.",
+  description: "All your DevOps tools in one place: Kubernetes clusters, HAProxy load balancers and Nginx today, with one login, roles, audit, alerts and an AI assistant.",
   lang: "en-US",
   cleanUrls: true,
   lastUpdated: true,
@@ -14,7 +14,7 @@ export default defineConfig({
     ["meta", { name: "theme-color", content: "#2b2a8f" }],
     ["meta", { name: "author", content: "Kang Kimchhay" }],
     ["meta", { property: "og:title", content: "k10y-agent: all your DevOps tools, one calm place" }],
-    ["meta", { property: "og:description", content: "Open-source control room for Kubernetes and HAProxy (more systems coming): one login, roles, audit, alerts, live logs and AI." }],
+    ["meta", { property: "og:description", content: "Open-source control room for Kubernetes, HAProxy and Nginx (more systems coming): one login, roles, audit, alerts, live logs and AI." }],
     ["meta", { property: "og:image", content: "/shots/overview.png" }],
   ],
   themeConfig: {
@@ -72,7 +72,7 @@ export default defineConfig({
     editLink: { pattern: `${repo}/edit/main/website/:path`, text: "Edit this page on GitHub" },
     outline: { level: [2, 3] },
     footer: {
-      message: "Free and open source under the AGPL-3.0 license. Created and maintained by Kang Kimchhay. Kubernetes is a trademark of The Linux Foundation and HAProxy of HAProxy Technologies; k10y is not affiliated with either.",
+      message: "Free and open source under the AGPL-3.0 license. Created and maintained by Kang Kimchhay. Kubernetes is a trademark of The Linux Foundation, HAProxy of HAProxy Technologies and NGINX of F5, Inc.; k10y is not affiliated with any of them.",
       copyright: "© 2026 Kang Kimchhay",
     },
   },

@@ -5,8 +5,8 @@ build-backend = "hatchling.build"
 [project]
 authors = [{ name = "Kang Kimchhay" }]
 name = "k10y-agent"
-version = "2.8.0"
-description = "All your DevOps tools in one place: control room for Kubernetes clusters and HAProxy load balancers (agent, hub, web dashboard, CLI)."
+version = "2.9.0"
+description = "All your DevOps tools in one place: control room for Kubernetes clusters, HAProxy load balancers and Nginx (agents, hub, web dashboard, CLI)."
 readme = "README.md"
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]

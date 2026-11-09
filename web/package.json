@@ -2,7 +2,7 @@
   "name": "k10y-web",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "2.8.0",
+  "version": "2.9.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
