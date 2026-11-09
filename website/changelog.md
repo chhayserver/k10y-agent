@@ -6,6 +6,11 @@ title: Changelog
 
 Every release is a multi-arch image on Docker Hub (`k10y/k10y-agent`, amd64 and arm64) with `install.yaml`, `install-readonly.yaml` and `docker-compose.yml` attached (plus the optional `rbac-helm.yaml` from 2.7) to the [GitHub release](https://github.com/chhayserver/k10y-agent/releases).
 
+## Unreleased
+
+- **Change Nginx from k10y:** add sites (app or API, static website, redirect; HTTPS), routes and upstreams from forms, edit any file in Raw config, and restore earlier versions from Config history. Every change is reviewed first (diff and `nginx -t`, with errors by file, line and text), applied with a graceful reload, and put back if anything fails. k10y changes only the block you edit, so your comments and layout stay as written.
+- The Nginx lab runs on a copy of its config (`deploy/nginx-lab/.run`), so changes made through k10y don't touch the repository.
+
 ## 2.9.0 <Badge type="tip" text="latest" />
 
 - **Nginx, the third system** (read-only first): connect each Nginx with the k10y agent next to it (the `k10y/k10y-nginx` image for Docker Compose, or `install-nginx-agent.sh` on a server). See sites with their routes, upstreams with k10y's own server checks, live requests, 5xx and response time per site, route and upstream server (from the access log), logs, certificates and the full config. Nginx viewer, operator and admin roles per instance, Nginx alerts, and an Nginx lab (`make nginx-lab-up`).

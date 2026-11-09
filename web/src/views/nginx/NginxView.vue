@@ -10,12 +10,13 @@ import { useNginx } from "@/stores/nginx";
 import { useSession } from "@/stores/session";
 import NgCertificates from "./NgCertificates.vue";
 import NgConfig from "./NgConfig.vue";
+import NgHistory from "./NgHistory.vue";
 import NgLogs from "./NgLogs.vue";
 import NgOverview from "./NgOverview.vue";
 import NgSites from "./NgSites.vue";
 import NgUpstreams from "./NgUpstreams.vue";
 
-type Tab = "overview" | "sites" | "upstreams" | "logs" | "certificates" | "config";
+type Tab = "overview" | "sites" | "upstreams" | "logs" | "certificates" | "history" | "config";
 defineProps<{ tab: Tab }>();
 const s = useSession(), n = useNginx();
 const canAdd = computed(() => s.canAll("nginx.manage"));
@@ -45,6 +46,7 @@ onBeforeUnmount(() => clearInterval(timer));
     <NgUpstreams v-else-if="tab === 'upstreams'" :focus="focus" />
     <NgLogs v-else-if="tab === 'logs'" />
     <NgCertificates v-else-if="tab === 'certificates'" />
+    <NgHistory v-else-if="tab === 'history'" />
     <NgConfig v-else-if="tab === 'config'" />
   </template>
 </template>

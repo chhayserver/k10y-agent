@@ -74,6 +74,7 @@ export const NAV: NavItem[] = [
   { id: "nginx-upstreams", label: "Upstreams", icon: "nodes", section: "Web server", system: N, slug: "upstreams", tab: "upstreams", global: "nginx.view" },
   { id: "nginx-logs", label: "Logs", icon: "events", section: "Traffic & security", system: N, slug: "logs", tab: "logs", global: "nginx.view" },
   { id: "nginx-certificates", label: "Certificates", icon: "lock", section: "Traffic & security", system: N, slug: "certificates", tab: "certificates", global: "nginx.view" },
+  { id: "nginx-history", label: "Config history", icon: "rollback", section: "Configuration", system: N, slug: "history", tab: "history", global: "nginx.view" },
   { id: "nginx-config", label: "Raw config", icon: "file", section: "Configuration", system: N, slug: "config", tab: "config", global: "nginx.configure" },
 
   { id: "alerts", label: "Alerts", icon: "bell", section: "Hub" },

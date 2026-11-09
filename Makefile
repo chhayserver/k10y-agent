@@ -27,10 +27,12 @@ nginx-build:      ## Build k10y/k10y-nginx (Nginx + the k10y agent in Nginx mode
 	docker build -f deploy/nginx/Dockerfile -t k10y/k10y-nginx:$(or $(NGINX_TAG),dev) .
 
 nginx-lab-up: nginx-build  ## Nginx test lab: k10y-nginx in front of five small apps (localhost:8189, agent on 9443)
+	@test -d deploy/nginx-lab/.run || (mkdir -p deploy/nginx-lab/.run && cp -R deploy/nginx-lab/nginx.conf deploy/nginx-lab/conf.d deploy/nginx-lab/.run/)
 	docker compose -f deploy/nginx-lab/docker-compose.yml -p k10y-nginx-lab up -d
 
-nginx-lab-down:   ## Stop the Nginx test lab
+nginx-lab-down:   ## Stop the Nginx test lab (and forget the changes made to its config)
 	docker compose -f deploy/nginx-lab/docker-compose.yml -p k10y-nginx-lab down -v
+	rm -rf deploy/nginx-lab/.run
 
 .PHONY: release
 release:          ## Prepare a release: make release VERSION=2.8.0 (versions, changelog, installers, charts)

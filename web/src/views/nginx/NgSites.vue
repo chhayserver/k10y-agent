@@ -5,9 +5,30 @@ import Badge from "@/components/Badge.vue";
 import Icon from "@/components/Icon.vue";
 import { KIND, listenText, locationText, rate, siteName, upstreamHealth, type NgLocation, type NgSite } from "@/lib/nginx";
 import { useNginx } from "@/stores/nginx";
+import { useSession } from "@/stores/session";
+import NgChangeDialog from "./NgChangeDialog.vue";
+import NgRouteForm from "./NgRouteForm.vue";
+import NgSiteForm from "./NgSiteForm.vue";
+import type { NgOp } from "@/lib/nginx";
 
 const props = defineProps<{ focus?: string }>();
-const n = useNginx();
+const n = useNginx(), s = useSession();
+const canConfigure = computed(() => s.canNg("nginx.configure", n.currentId));
+// forms -> review dialog
+const route = reactive({ open: false, site: null as NgSite | null, loc: null as NgLocation | null });
+const siteForm = reactive({ open: false, site: null as NgSite | null });
+const review = reactive({ open: false, title: "", ops: [] as NgOp[], danger: false });
+function ask(title: string, ops: NgOp[], danger = false) { Object.assign(review, { open: true, title, ops, danger }); }
+function routeSubmit(data: any) {
+  route.open = false;
+  ask(route.loc ? `Change route ${route.loc.path}` : `Add route ${data.path}`,
+    [route.loc ? { kind: "location", op: "update", id: route.loc.id, data } : { kind: "location", op: "create", site: route.site!.id, data }]);
+}
+function siteSubmit(data: any) {
+  siteForm.open = false;
+  ask(siteForm.site ? `Change ${siteName(siteForm.site)}` : `Add site ${data.server_names.join(", ")}`,
+    [siteForm.site ? { kind: "site", op: "update", id: siteForm.site.id, data } : { kind: "site", op: "create", data }]);
+}
 const f = reactive({ q: "", type: "all" });
 const d = computed(() => n.data!);
 const last = computed(() => n.last);
@@ -37,6 +58,8 @@ onMounted(async () => {
       <button v-for="[v, l] in [['all', 'All'], ['proxy', 'Proxy'], ['static', 'Static'], ['redirect', 'Redirect'], ['tcp', 'TCP'], ['tls', 'TLS'], ['errors', 'Errors']]" :key="v"
         type="button" :aria-pressed="f.type === v" @click="f.type = v">{{ l }}</button></div>
     <span class="result-count">{{ sites.length }} of {{ d.config.sites.length }}</span>
+    <span class="grow" />
+    <button v-if="canConfigure" class="btn primary" type="button" @click="Object.assign(siteForm, { open: true, site: null })"><Icon name="globe" /><span>Add site</span></button>
   </div>
   <p v-if="!sites.length" class="hint">No site matches.</p>
   <section v-for="s in sites" :id="`site-${s.id}`" :key="s.id" class="card ng-site" :class="{ focus: focus === s.id }">
@@ -50,8 +73,12 @@ onMounted(async () => {
         <span :class="{ bad: (nums(s.id, 'sites')?.e5_pct ?? 0) >= 5 }"><b>{{ (nums(s.id, "sites")?.e5_pct ?? 0).toFixed(1) }}%</b> 5xx</span>
         <span><b>{{ Math.round(nums(s.id, "sites")?.p95 ?? 0) }}</b> ms p95</span></div>
     </div>
+    <div v-if="canConfigure && s.context === 'http'" class="ng-actions">
+      <button class="btn sm" type="button" @click="Object.assign(route, { open: true, site: s, loc: null })">Add route</button>
+      <button class="btn ghost sm" type="button" @click="Object.assign(siteForm, { open: true, site: s })">Names and ports</button>
+      <button class="btn ghost sm" style="color:var(--critical)" type="button" @click="ask(`Remove ${siteName(s)}`, [{ kind: 'site', op: 'delete', id: s.id }], true)">Remove site</button></div>
     <div class="card-body table-wrap" style="padding-top:0">
-      <table v-if="s.context === 'http'" class="data"><thead><tr><th>Route</th><th>Does</th><th>Goes to</th><th>Extras</th><th class="num">Req/s</th><th class="num">5xx</th><th class="num">p95</th></tr></thead>
+      <table v-if="s.context === 'http'" class="data"><thead><tr><th>Route</th><th>Does</th><th>Goes to</th><th>Extras</th><th class="num">Req/s</th><th class="num">5xx</th><th class="num">p95</th><th v-if="canConfigure"><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
           <tr v-if="s.return && !s.locations.length"><td class="mono">(all)</td><td>{{ KIND.redirect }}</td><td class="mono">return {{ s.return }}</td><td /><td class="num">–</td><td class="num">–</td><td class="num">–</td></tr>
           <tr v-for="l in flat(s.locations)" :key="l.id">
@@ -64,11 +91,17 @@ onMounted(async () => {
               <span v-if="l.auth_basic" class="pill-tag">password</span><span v-if="l.rewrites.length" class="pill-tag" :title="l.rewrites.join('; ')">rewrite</span></td>
             <td class="num">{{ rate(nums(l.id, "locations")?.req ?? 0) }}</td>
             <td class="num" :class="{ bad: (nums(l.id, 'locations')?.e5_pct ?? 0) >= 5 }">{{ (nums(l.id, "locations")?.e5_pct ?? 0).toFixed(1) }}%</td>
-            <td class="num">{{ Math.round(nums(l.id, "locations")?.p95 ?? 0) }} ms</td></tr>
+            <td class="num">{{ Math.round(nums(l.id, "locations")?.p95 ?? 0) }} ms</td>
+            <td v-if="canConfigure" class="actions"><template v-if="l.match !== 'named'">
+              <button class="btn ghost sm" type="button" @click="Object.assign(route, { open: true, site: s, loc: l })">Edit</button>
+              <button class="btn ghost sm" style="color:var(--critical)" type="button" @click="ask(`Remove route ${l.path}`, [{ kind: 'location', op: 'delete', id: l.id }], true)">Remove</button></template></td></tr>
         </tbody></table>
       <p v-else class="hint" style="margin:0">TCP/UDP (stream): forwards every connection to <span class="mono">{{ s.proxy_pass || "–" }}</span>.</p>
     </div>
   </section>
+  <NgRouteForm :open="route.open" :route="route.loc" :upstreams="d.config.upstreams" :site-name="route.site ? siteName(route.site) : ''" @close="route.open = false" @submit="routeSubmit" />
+  <NgSiteForm :open="siteForm.open" :site="siteForm.site" :upstreams="d.config.upstreams" @close="siteForm.open = false" @submit="siteSubmit" />
+  <NgChangeDialog :open="review.open" :title="review.title" :ops="review.ops" :danger="review.danger" @close="review.open = false" @done="review.open = false" />
 </template>
 
 <style scoped>
@@ -80,4 +113,5 @@ onMounted(async () => {
 .ng-nums b { color: var(--text); font-weight: 650; }
 .bad, .bad b { color: var(--critical) !important; }
 .ng-target { white-space: normal; overflow-wrap: anywhere; }
+.ng-actions { display: flex; gap: 6px; padding: 0 16px 10px; flex-wrap: wrap; }
 </style>

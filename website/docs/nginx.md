@@ -10,8 +10,7 @@ Nginx doesn't have a management API, so a small **k10y agent runs next to it**: 
 its own token.
 
 ::: tip Coming next
-This first part is read-only. Editing sites and upstreams from forms (checked with `nginx -t`, then reloaded),
-draining upstream servers, IP blocking, rate limits and certificates come in the next releases.
+Draining upstream servers and rolling deploys, IP blocking, rate limits and certificates come in the next releases.
 :::
 
 ## Connect an Nginx
@@ -86,6 +85,25 @@ adds open connections.
 k10y's upstream check is a TCP connection to each server every 10 seconds. Nginx itself marks a server failed
 only after real requests fail (`max_fails`), so k10y often sees a problem first.
 
+## Change the configuration
+
+With `nginx.configure` on an instance:
+
+- **Sites → Add site:** start from what it's for: an **app or API** (to an existing upstream, or a new one with its servers), a **static website** (a folder) or a **redirect** of a domain. Optionally HTTPS with a certificate and key file, and a redirect from http://.
+- On each site: **Add route**, **Edit** or **Remove** a route (proxy with WebSocket and timeout, redirect, static files, fixed answer, and an optional IP allow-list), **Names and ports**, **Remove site**.
+- **Upstreams → Add upstream / Edit:** balancing (round robin, least connections, client IP, hash, random), servers with weight, max fails, fail timeout, backup and down, and keepalive.
+- **Raw config → Edit a file…** for anything else.
+
+Every change opens a review first: the exact **diff**, and **`nginx -t`'s verdict**. If Nginx refuses it, each problem is shown with its **file, line and text**, and nothing changes. **Apply** writes the files, checks them again and reloads Nginx gracefully; if the check or the reload fails, the old files are put back.
+
+How k10y edits your files:
+- It changes **only the block** being edited (a route, an upstream, a site's `server_name` and `listen` lines) and leaves the rest of the file exactly as written: your comments, spacing and order. New blocks use the file's own indentation.
+- New sites and upstreams go to a new file in `conf.d/` (or `sites-enabled/`) named after them.
+- A form manages the directives it shows. If a route or upstream has others (for example `proxy_buffering`), the form says so: saving it would replace them, so edit the file in Raw config instead.
+- One change at a time per Nginx.
+
+**Config history** lists every change applied through k10y (version, time, who, what, files) with its diff. **Restore** puts the files back as they were before a version, through the same review. Changes made by hand on the server aren't listed, but they're visible in Raw config.
+
 ## Permissions
 
 Roles can be given on **all of Nginx** or on **one Nginx instance** (Administration → Users).
@@ -94,7 +112,7 @@ Roles can be given on **all of Nginx** or on **one Nginx instance** (Administrat
 |---|---|
 | `nginx.view` | See sites, routes, upstreams, live numbers, logs and certificates |
 | `nginx.operate` | Drain and maintenance of upstream servers, block IPs (coming next) |
-| `nginx.configure` | Change the config, read the raw config |
+| `nginx.configure` | Add, change and remove sites, routes and upstreams; edit any config file; restore old versions; read the raw config |
 | `nginx.manage` | Add, edit and remove Nginx instances |
 
 Built-in roles: **Nginx viewer**, **Nginx operator** and **Nginx admin** (Admin has everything).

@@ -6,9 +6,22 @@ import Icon from "@/components/Icon.vue";
 import { fmt } from "@/lib/format";
 import { rate, serverKey, serverState, siteName, upstreamHealth } from "@/lib/nginx";
 import { useNginx } from "@/stores/nginx";
+import { useSession } from "@/stores/session";
+import type { NgOp, NgUpstream } from "@/lib/nginx";
+import NgChangeDialog from "./NgChangeDialog.vue";
+import NgUpstreamForm from "./NgUpstreamForm.vue";
 
 const props = defineProps<{ focus?: string }>();
-const n = useNginx();
+const n = useNginx(), s = useSession();
+const canConfigure = computed(() => s.canNg("nginx.configure", n.currentId));
+const form = reactive({ open: false, up: null as NgUpstream | null });
+const review = reactive({ open: false, title: "", ops: [] as NgOp[], danger: false });
+function ask(title: string, ops: NgOp[], danger = false) { Object.assign(review, { open: true, title, ops, danger }); }
+function submit(data: any) {
+  form.open = false;
+  ask(form.up ? `Change upstream ${form.up.name}` : `Add upstream ${data.name}`,
+    [form.up ? { kind: "upstream", op: "update", id: form.up.id, data } : { kind: "upstream", op: "create", data }]);
+}
 const f = reactive({ q: "", only: "all" });
 const d = computed(() => n.data!);
 const last = computed(() => n.last);
@@ -35,6 +48,8 @@ onMounted(async () => {
     <div class="segmented" role="group"><button type="button" :aria-pressed="f.only === 'all'" @click="f.only = 'all'">All</button>
       <button type="button" :aria-pressed="f.only === 'problems'" @click="f.only = 'problems'">Problems</button></div>
     <span class="result-count">{{ list.length }} of {{ d.config.upstreams.length }}</span>
+    <span class="grow" />
+    <button v-if="canConfigure" class="btn primary" type="button" @click="Object.assign(form, { open: true, up: null })"><Icon name="nodes" /><span>Add upstream</span></button>
   </div>
   <p v-if="!d.config.upstreams.length" class="hint">This Nginx has no upstream blocks. Sites that proxy straight to an address show it on the Sites page.</p>
   <section v-for="u in list" :id="`up-${u.name}`" :key="u.id" class="card ng-up" :class="{ focus: focus === u.name }">
@@ -43,6 +58,9 @@ onMounted(async () => {
         <div class="dim" style="font-size:12.5px;margin-top:4px">{{ METHOD[u.method] || u.method }}{{ u.method_args ? ` (${u.method_args})` : "" }}
           <template v-if="u.keepalive"> · keepalive {{ u.keepalive }}</template><template v-if="u.used_by.length"> · used by {{ usedBy(u.used_by) }}</template></div></div>
       <Badge :level="upstreamHealth(u, d.health).level" :label="upstreamHealth(u, d.health).label" lg />
+      <template v-if="canConfigure && u.context === 'http'">
+        <button class="btn sm" type="button" @click="Object.assign(form, { open: true, up: u })">Edit</button>
+        <button v-if="!u.used_by.length" class="btn ghost sm" style="color:var(--critical)" type="button" @click="ask(`Remove upstream ${u.name}`, [{ kind: 'upstream', op: 'delete', id: u.id }], true)">Remove</button></template>
       <div class="ng-nums"><span><b>{{ rate(last?.upstreams?.[u.name]?.req ?? 0) }}</b> req/s</span>
         <span :class="{ bad: (last?.upstreams?.[u.name]?.e5_pct ?? 0) >= 5 }"><b>{{ (last?.upstreams?.[u.name]?.e5_pct ?? 0).toFixed(1) }}%</b> 5xx</span></div>
     </div>
@@ -61,6 +79,8 @@ onMounted(async () => {
       <p class="hint" style="margin:8px 0 0">The check is k10y's own TCP connect every 10 seconds; Nginx itself marks a server failed only after real requests fail (<code>max_fails</code>).</p>
     </div>
   </section>
+  <NgUpstreamForm :open="form.open" :upstream="form.up" @close="form.open = false" @submit="submit" />
+  <NgChangeDialog :open="review.open" :title="review.title" :ops="review.ops" :danger="review.danger" @close="review.open = false" @done="review.open = false" />
 </template>
 
 <style scoped>

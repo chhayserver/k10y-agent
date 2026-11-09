@@ -12,6 +12,10 @@ import crossplane
 Directive = Dict[str, Any]
 
 LB_METHODS = ("least_conn", "ip_hash", "hash", "random", "least_time")
+# What k10y's route and upstream forms write; anything else in a block is listed as "other" so a form can warn.
+FORM_LOCATION = {"proxy_pass", "proxy_set_header", "proxy_http_version", "proxy_read_timeout", "return", "root", "alias",
+                 "try_files", "allow", "deny", "location"}
+FORM_UPSTREAM = {"server", "keepalive", *LB_METHODS}
 
 
 def parse(conf: str) -> Dict[str, Any]:
@@ -104,6 +108,8 @@ def location(d: Directive) -> Dict[str, Any]:
             "allow": [" ".join(x["args"]) for x in every(block, "allow")], "deny": [" ".join(x["args"]) for x in every(block, "deny")],
             "limit_req": arg(block, "limit_req"), "auth_basic": arg(block, "auth_basic"),
             "websocket": any(x["args"][:2] == ["Upgrade", "$http_upgrade"] for x in every(block, "proxy_set_header")),
+            "timeout": arg(block, "proxy_read_timeout"),
+            "other": sorted({x["directive"] for x in block if x["directive"] not in FORM_LOCATION}),
             "locations": [location(x) for x in every(block, "location")]}
 
 
@@ -149,7 +155,7 @@ def upstream(d: Directive, context: str) -> Dict[str, Any]:
     m = first(block, method) if method != "round_robin" else None
     return {"id": ref(d), "file": d["file"], "line": d["line"], "context": context, "name": d["args"][0] if d["args"] else "",
             "method": method, "method_args": " ".join(m["args"]) if m else "", "keepalive": arg(block, "keepalive"),
-            "servers": servers}
+            "servers": servers, "other": sorted({x["directive"] for x in block if x["directive"] not in FORM_UPSTREAM})}
 
 
 def model(conf: str) -> Dict[str, Any]:

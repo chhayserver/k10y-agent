@@ -7,6 +7,7 @@ export interface NgLocation {
   id: string; file: string; line: number; match: string; path: string; modifier: string; kind: string; proxy_pass: string | null;
   upstream: string | null; upstream_known?: boolean; return: string | null; root: string | null; alias: string | null; try_files: string | null;
   rewrites: string[]; allow: string[]; deny: string[]; limit_req: string | null; auth_basic: string | null; websocket: boolean; locations: NgLocation[];
+  timeout?: string | null; other?: string[];
 }
 export interface NgSite {
   id: string; file: string; line: number; context: "http" | "stream"; server_names: string[]; listen: NgListen[]; ssl: boolean;
@@ -16,7 +17,7 @@ export interface NgSite {
 export interface NgServer { id: string; line: number; address: string; host: string; port: number | null; weight: number; backup: boolean; down: boolean;
   max_fails: string | null; fail_timeout: string | null; max_conns: string | null }
 export interface NgUpstream { id: string; file: string; line: number; context: string; name: string; method: string; method_args: string;
-  keepalive: string | null; servers: NgServer[]; used_by: string[] }
+  keepalive: string | null; servers: NgServer[]; used_by: string[]; other?: string[] }
 export interface NgConfig { conf: string; files: string[]; errors: { file: string; line: number; message: string }[]; sites: NgSite[]; upstreams: NgUpstream[];
   access_logs: { path: string; format: string }[]; error_logs: string[]; log_formats: Record<string, string> }
 export interface NgGroup { req: number; e5_pct: number; e4_pct: number; p95: number }
@@ -41,7 +42,16 @@ export const ng = {
   errors: (id: number) => hub.get<{ lines: any[] }>(`/nginx/${id}/errors`),
   certificates: (id: number) => hub.get<any[]>(`/nginx/${id}/certificates`),
   raw: (id: number) => hub.get<{ text: string; check: string }>(`/nginx/${id}/config/raw`),
+  file: (id: number, path: string) => hub.get<{ path: string; text: string }>(`/nginx/${id}/files`, { path }),
+  change: (id: number, ops: NgOp[], apply: boolean, note = "") => hub.post<NgResult>(`/nginx/${id}/changes`, { ops, apply, note }, 90000),
+  history: (id: number) => hub.get<any[]>(`/nginx/${id}/history`),
+  version: (id: number, v: number) => hub.get<any>(`/nginx/${id}/history/${v}`),
+  restore: (id: number, v: number, apply: boolean) => hub.post<NgResult>(`/nginx/${id}/history/${v}/restore`, { apply }, 90000),
 };
+
+export interface NgOp { kind: "site" | "location" | "upstream" | "file"; op: "create" | "update" | "delete"; id?: string; site?: string; path?: string; text?: string; data?: any }
+export interface NgError { file: string; line: number; level: string; message: string; text: string }
+export interface NgResult { valid: boolean; applied: boolean; diff: string; errors: NgError[]; check: string; summary: string[]; version?: number }
 
 export const serverKey = (s: NgServer) => `${s.host}:${s.port}`;
 

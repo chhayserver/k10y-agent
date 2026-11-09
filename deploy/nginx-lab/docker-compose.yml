@@ -6,8 +6,9 @@ services:
     image: k10y/k10y-nginx:${TAG:-dev}
     ports: ["8189:80", "9443:9443"]
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf
-      - ./conf.d:/etc/nginx/conf.d
+      # A working copy (make nginx-lab-up creates it), so edits made through k10y don't touch the repo.
+      - ./.run/nginx.conf:/etc/nginx/nginx.conf
+      - ./.run/conf.d:/etc/nginx/conf.d
       - agent:/var/lib/k10y
     depends_on: [shop1, shop2, shop3, api1, api2]
   shop1: {image: "traefik/whoami:v1.10", command: ["--name", "shop1"]}
