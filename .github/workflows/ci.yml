@@ -109,9 +109,11 @@ jobs:
           load: true
           tags: k10y-ci:test
           cache-from: type=gha
-      - uses: helm/kind-action@v1
-        with:
-          install_only: true
+      - name: Install kind (pinned, checksum verified)
+        run: |
+          curl -fsSL --retry 6 --retry-all-errors --retry-delay 5 -o kind https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64
+          curl -fsSL --retry 6 --retry-all-errors --retry-delay 5 https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64.sha256sum | awk '{print $1"  kind"}' | sha256sum -c -
+          sudo install -m 0755 kind /usr/local/bin/kind && kind version
       - run: IMAGE=k10y-ci:test e2e/ci.sh
 
   ci:
