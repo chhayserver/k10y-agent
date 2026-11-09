@@ -44,7 +44,17 @@ HAPROXY_PERMISSIONS: Dict[str, str] = {
                          "the raw config (it can contain passwords)",
     "haproxy.manage": "Add, edit and remove HAProxy instances and their Data Plane API logins",
 }
-GLOBAL_PERMISSIONS: Dict[str, str] = {**HUB_PERMISSIONS, **HAPROXY_PERMISSIONS}
+# Nginx permissions: on everything, or on one Nginx instance (like HAProxy).
+NGINX_PERMISSIONS: Dict[str, str] = {
+    "nginx.view": "See Nginx: sites and their routes, upstreams and server health, live numbers, logs and certificates "
+                  "(not the raw config)",
+    "nginx.operate": "Run Nginx without changing what it serves: drain and maintenance of upstream servers, block and "
+                     "unblock IPs",
+    "nginx.configure": "Change Nginx's config: sites, routes, upstreams, certificates, rate limits; read and edit the raw "
+                       "config (it can contain passwords)",
+    "nginx.manage": "Add, edit and remove Nginx instances and their agent tokens",
+}
+GLOBAL_PERMISSIONS: Dict[str, str] = {**HUB_PERMISSIONS, **HAPROXY_PERMISSIONS, **NGINX_PERMISSIONS}
 ALL_PERMISSIONS = {**CLUSTER_PERMISSIONS, **GLOBAL_PERMISSIONS}
 
 # One set of roles per system, plus Admin for everything. Kubernetes roles are assigned on everything or one
@@ -66,13 +76,19 @@ BUILTIN_ROLES: List[Tuple[str, str, List[str]]] = [
      ["haproxy.view", "haproxy.operate", "ai.use"]),
     ("HAProxy admin", "HAProxy, everything: change the config, manage the connection, AI",
      ["haproxy.view", "haproxy.operate", "haproxy.configure", "haproxy.manage", "ai.use"]),
+    ("Nginx viewer", "Nginx, read-only: sites, routes, upstreams, live numbers, logs and certificates", ["nginx.view"]),
+    ("Nginx operator", "Nginx without config changes: drain and maintenance of upstream servers, block IPs",
+     ["nginx.view", "nginx.operate"]),
+    ("Nginx admin", "Nginx, everything: change the config, manage the connection",
+     ["nginx.view", "nginx.operate", "nginx.configure", "nginx.manage"]),
 ]
 # Built-in roles of older versions, now split per system: old name -> (new name, HAProxy role its users also get).
 SPLIT_ROLES: Dict[str, Tuple[str, str]] = {"Operator": ("Kubernetes operator", "HAProxy operator"),
                                            "Viewer": ("Kubernetes viewer", "HAProxy viewer")}
 # What each built-in role had before HAProxy existed: what an installation from before 2.2 already has.
 # Anything in a definition beyond what an installation has seen is added once on upgrade (see app.init).
-BUILTIN_BASELINE: Dict[str, List[str]] = {name: [p for p in perms if not p.startswith("haproxy.")] for name, _, perms in BUILTIN_ROLES}
+BUILTIN_BASELINE: Dict[str, List[str]] = {name: [p for p in perms if not p.startswith(("haproxy.", "nginx."))]
+                                           for name, _, perms in BUILTIN_ROLES}
 
 # (method, path regex relative to /api/v1/, permission). First match wins.
 _RULES: List[Tuple[str, re.Pattern, str]] = [(m, re.compile(p), perm) for m, p, perm in [

@@ -67,6 +67,7 @@ class RoleAssignment(Base):
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"))
     cluster_id: Mapped[Optional[int]] = mapped_column(ForeignKey("clusters.id", ondelete="CASCADE"), nullable=True)
     haproxy_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)   # haproxy_instances.id
+    nginx_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)     # nginx_instances.id
     source: Mapped[str] = mapped_column(String(16), default="")   # "sso": from the user's groups, replaced at each sign-in
     user: Mapped[User] = relationship(back_populates="assignments")
     role: Mapped[Role] = relationship()
@@ -167,7 +168,9 @@ class Database:
                      ("alert_events", "acked_at", "TIMESTAMP WITH TIME ZONE"),
                      ("users", "sso_provider", "VARCHAR(64)"),
                      ("users", "sso_subject", "VARCHAR(400)"),
-                     ("role_assignments", "source", "VARCHAR(16) DEFAULT ''")]
+                     ("role_assignments", "source", "VARCHAR(16) DEFAULT ''"),
+                     ("role_assignments", "nginx_id", "INTEGER"),
+                     ("alert_events", "nginx_id", "INTEGER")]
 
     def _add_missing_columns(self) -> None:
         insp = inspect(self.engine)

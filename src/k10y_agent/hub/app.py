@@ -27,11 +27,12 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .. import __version__, ai
-from . import alerts, audit_export, haproxy, haproxy_monitor, k8s_insights, sso
+from . import alerts, audit_export, haproxy, haproxy_monitor, k8s_insights, nginx, sso
 from ..config import Settings
 from .db import (ApiToken, AuditEntry, Cluster, Database, Role, RoleAssignment, SessionRow, Setting, User, UserPreference, get_setting,
                  utcnow)
 from .permissions import (ALL_PERMISSIONS, BUILTIN_BASELINE, BUILTIN_ROLES, CLUSTER_PERMISSIONS, SPLIT_ROLES, GLOBAL_PERMISSIONS, HAPROXY_PERMISSIONS, HUB_PERMISSIONS,
+                          NGINX_PERMISSIONS,
                           required_permission)
 from .security import (Crypto, LoginLimiter, check_password_policy, hash_password, new_session_token, token_digest,
                        new_recovery_codes, new_totp_secret, recovery_digest, totp_match, totp_uri,
@@ -178,7 +179,7 @@ class Principal:
                  token_name: Optional[str] = None):
         self.user = user
         self.token_name = token_name   # set when the request came with an API token
-        self.grants = grants  # None = everything, cluster id = one cluster, "hx:<id>" = one HAProxy -> permissions
+        self.grants = grants  # None = everything, cluster id = one cluster, "hx:<id>" / "ng:<id>" = one HAProxy / Nginx
         self.session_id = session_id
 
     def global_perms(self) -> Set[str]:
@@ -195,9 +196,18 @@ class Principal:
     def can_any_haproxy(self, perm: str) -> bool:
         return any(perm in perms for key, perms in self.grants.items() if key is None or (isinstance(key, str) and key.startswith("hx:")))
 
-    def can(self, perm: str, cluster_id: Optional[int] = None, haproxy_id: Optional[int] = None) -> bool:
+    def nginx_perms(self, nginx_id: int) -> Set[str]:
+        """Nginx permissions on one instance: from roles on everything, plus roles on that instance."""
+        return {p for p in self.grants.get(None, set()) | self.grants.get(f"ng:{nginx_id}", set()) if p in NGINX_PERMISSIONS}
+
+    def can_any_nginx(self, perm: str) -> bool:
+        return any(perm in perms for key, perms in self.grants.items() if key is None or (isinstance(key, str) and key.startswith("ng:")))
+
+    def can(self, perm: str, cluster_id: Optional[int] = None, haproxy_id: Optional[int] = None, nginx_id: Optional[int] = None) -> bool:
         if perm in HAPROXY_PERMISSIONS and haproxy_id is not None:
             return perm in self.haproxy_perms(haproxy_id)
+        if perm in NGINX_PERMISSIONS and nginx_id is not None:
+            return perm in self.nginx_perms(nginx_id)
         if perm in GLOBAL_PERMISSIONS or cluster_id is None:
             return perm in self.global_perms()
         return perm in self.cluster_perms(cluster_id)
@@ -209,7 +219,8 @@ class Principal:
 def load_grants(s: Session, user: User) -> Dict[Optional[int], Set[str]]:
     grants: Dict[Optional[int], Set[str]] = {}
     for a in s.execute(select(RoleAssignment).where(RoleAssignment.user_id == user.id)).scalars():
-        grants.setdefault(f"hx:{a.haproxy_id}" if a.haproxy_id else a.cluster_id, set()).update(a.role.permissions or [])
+        key = f"hx:{a.haproxy_id}" if a.haproxy_id else f"ng:{a.nginx_id}" if a.nginx_id else a.cluster_id
+        grants.setdefault(key, set()).update(a.role.permissions or [])
     return grants
 
 
@@ -312,6 +323,9 @@ def require(perm: str):
         iid = request.path_params.get("iid")
         if perm in HAPROXY_PERMISSIONS:
             ok = p.can(perm, haproxy_id=int(iid)) if iid is not None and str(iid).isdigit() else p.can_any_haproxy(perm)
+        elif perm in NGINX_PERMISSIONS:
+            nid = request.path_params.get("nid")
+            ok = p.can(perm, nginx_id=int(nid)) if nid is not None and str(nid).isdigit() else p.can_any_nginx(perm)
         else:
             ok = p.can(perm)
         if not ok:
@@ -367,6 +381,9 @@ def me_payload(s: Session, p: Principal) -> dict:
         "haproxy": [{"id": i.id, "name": i.name, "permissions": sorted(p.haproxy_perms(i.id))}
                     for i in s.execute(select(haproxy.HAProxyInstance).order_by(haproxy.HAProxyInstance.name)).scalars()
                     if "haproxy.view" in p.haproxy_perms(i.id)],
+        "nginx": [{"id": i.id, "name": i.name, "permissions": sorted(p.nginx_perms(i.id))}
+                  for i in s.execute(select(nginx.NginxInstance).order_by(nginx.NginxInstance.name)).scalars()
+                  if "nginx.view" in p.nginx_perms(i.id)],
         "version": __version__,
     }
 
@@ -679,6 +696,7 @@ class AssignmentBody(BaseModel):
     role_id: int
     cluster_id: Optional[int] = None
     haproxy_id: Optional[int] = None      # a role on one HAProxy instance (only its HAProxy permissions count)
+    nginx_id: Optional[int] = None        # a role on one Nginx instance (only its Nginx permissions count)
 
 
 class UserBody(BaseModel):
@@ -703,6 +721,7 @@ def user_view(u: User) -> dict:
             "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
             "sessions": getattr(u, "live_sessions", None), "last_seen_at": getattr(u, "last_seen_at", None),
             "assignments": [{"role_id": a.role_id, "role": a.role.name, "cluster_id": a.cluster_id, "haproxy_id": a.haproxy_id,
+                             "nginx_id": a.nginx_id,
                              "source": a.source or ""} for a in u.assignments]}
 
 
@@ -722,13 +741,15 @@ def _set_assignments(s: Session, user: User, items: List[AssignmentBody]) -> Non
         if a.source != "sso":
             user.assignments.remove(a)
     s.flush()
-    seen = {(a.role_id, a.cluster_id, a.haproxy_id) for a in user.assignments}
+    seen = {(a.role_id, a.cluster_id, a.haproxy_id, a.nginx_id) for a in user.assignments}
     for a in items:
-        if (a.role_id, a.cluster_id, a.haproxy_id) in seen:
+        if (a.role_id, a.cluster_id, a.haproxy_id, a.nginx_id) in seen:
             continue
-        seen.add((a.role_id, a.cluster_id, a.haproxy_id))
-        if a.cluster_id is not None and a.haproxy_id is not None:
-            raise HTTPException(status_code=400, detail="an assignment is for one cluster or one HAProxy, not both")
+        seen.add((a.role_id, a.cluster_id, a.haproxy_id, a.nginx_id))
+        if sum(x is not None for x in (a.cluster_id, a.haproxy_id, a.nginx_id)) > 1:
+            raise HTTPException(status_code=400, detail="an assignment is for one cluster, one HAProxy or one Nginx, not several")
+        if a.nginx_id is not None and s.get(nginx.NginxInstance, a.nginx_id) is None:
+            raise HTTPException(status_code=400, detail=f"unknown Nginx instance {a.nginx_id}")
         if a.haproxy_id is not None and s.get(haproxy.HAProxyInstance, a.haproxy_id) is None:
             raise HTTPException(status_code=400, detail=f"unknown HAProxy instance {a.haproxy_id}")
         role = s.get(Role, a.role_id)
@@ -736,7 +757,7 @@ def _set_assignments(s: Session, user: User, items: List[AssignmentBody]) -> Non
             raise HTTPException(status_code=400, detail=f"unknown role {a.role_id}")
         if a.cluster_id is not None and s.get(Cluster, a.cluster_id) is None:
             raise HTTPException(status_code=400, detail=f"unknown cluster {a.cluster_id}")
-        user.assignments.append(RoleAssignment(role=role, cluster_id=a.cluster_id, haproxy_id=a.haproxy_id))
+        user.assignments.append(RoleAssignment(role=role, cluster_id=a.cluster_id, haproxy_id=a.haproxy_id, nginx_id=a.nginx_id))
 
 
 @api.get("/users")
@@ -1927,7 +1948,8 @@ def _haproxy_targets() -> list:
 def alert_engine() -> alerts.AlertEngine:
     if "engine" not in state:
         state["engine"] = alerts.AlertEngine(state["db"].session, lambda v: crypto().decrypt(v), _agent_get,
-                                             _alert_diagnose, lambda: settings.public_url, _haproxy_targets)
+                                             _alert_diagnose, lambda: settings.public_url, _haproxy_targets,
+                                             lambda: nginx.targets(state["db"].session, lambda v: crypto().decrypt(v)))
     return state["engine"]
 
 
@@ -1940,6 +1962,7 @@ class _EngineRef(dict):
 
 
 app.include_router(alerts.build_router(db_session, current, require, audit, crypto, _EngineRef()))
+app.include_router(nginx.build_router(db_session, require, audit, crypto))
 app.include_router(sso.build_router(db_session, require, audit, crypto, lambda *a: start_session(*a),
                                     lambda: settings.public_url))
 app.include_router(k8s_insights.build_router(db_session, current, _agent_get, _service_haproxy, _haproxy_search))
