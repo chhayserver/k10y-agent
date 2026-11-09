@@ -9,8 +9,8 @@ Nginx doesn't have a management API, so a small **k10y agent runs next to it**: 
 (every included file), follows the access log, checks each upstream server, and answers the hub over HTTPS with
 its own token.
 
-::: tip Coming next
-Draining upstream servers and rolling deploys, IP blocking, rate limits and certificates come in the next releases.
+::: tip Versions
+Monitoring needs agent **2.9** or newer; changing the configuration from k10y needs **2.10** or newer. Draining upstream servers and rolling deploys, IP blocking, rate limits and certificates come in the next releases.
 :::
 
 ## Connect an Nginx
@@ -27,13 +27,14 @@ services:
     ports: ["80:80", "443:443", "9443:9443"]   # 9443: the k10y agent (the hub must reach it)
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf
-      - ./conf.d:/etc/nginx/conf.d
-      - k10y:/var/lib/k10y                   # keeps the agent's token and certificate
+      - ./conf.d:/etc/nginx/conf.d           # no :ro if you want to change it from k10y
+      - k10y:/var/lib/k10y                   # keeps the agent's token, certificate and config history
 volumes:
   k10y:
 ```
 
-The token is created on first start: `docker compose exec nginx cat /var/lib/k10y/token`.
+The token is created on first start: `docker compose exec nginx cat /var/lib/k10y/token`. Only publish port 9443
+where the hub can reach it (for example on a private network), not to the internet.
 
 ### On a server
 
@@ -46,9 +47,25 @@ sudo sh install-nginx-agent.sh
 ```
 
 It installs the agent in `/opt/k10y-nginx`, starts the `k10y-nginx-agent` service on port **9443** and prints the
-token (also in `/etc/k10y/nginx-token`). Settings are in `/etc/k10y/nginx-agent.env`. Run it again to upgrade.
-The service runs as root (to read every config file and log, and later to reload Nginx) with the rest of the
-system read-only.
+token (also in `/etc/k10y/nginx-token`). Settings are in `/etc/k10y/nginx-agent.env`. Open port 9443 in the
+server's firewall **for the hub only**, for example `sudo ufw allow from <hub-ip> to any port 9443 proto tcp`.
+
+The service runs as root (to read every config file and log, and to reload Nginx) with the rest of the system
+read-only except `/etc/nginx`, `/var/log/nginx` and its own folders. If Nginx is reloaded through systemd on your
+server, set `K10Y_NGINX_RELOAD_CMD=systemctl reload nginx` in the settings file.
+
+| Setting (`/etc/k10y/nginx-agent.env`) | Default | |
+|---|---|---|
+| `K10Y_PORT` | `9443` | The agent's HTTPS port |
+| `K10Y_NGINX_CONF` | `/etc/nginx/nginx.conf` | The main configuration file |
+| `K10Y_NGINX_BIN` | `nginx` | The Nginx program |
+| `K10Y_NGINX_RELOAD_CMD` | `nginx -s reload` | How to reload after a change |
+| `K10Y_NGINX_STATUS_URL` | found in the config | A `stub_status` URL, for open connections |
+| `K10Y_NGINX_DATA_DIR` | `/var/lib/k10y-nginx` | Config history |
+| `K10Y_TOKEN_FILE` | `/etc/k10y/nginx-token` | The agent's token (created on first start) |
+
+**Upgrade:** run the install script again (`--version X.Y.Z` for a given version). **Remove:**
+`sudo systemctl disable --now k10y-nginx-agent && sudo rm -rf /opt/k10y-nginx /etc/k10y/nginx-* /var/lib/k10y-nginx /etc/systemd/system/k10y-nginx-agent.service`.
 
 ### In the hub
 
@@ -68,7 +85,8 @@ access_log /var/log/nginx/k10y-access.log k10y;
 ```
 
 The Overview has a **Copy log_format** button. With the standard `combined` format you get totals and routes,
-but not sites or upstream servers. A `stub_status` location (for example `location /nginx_status { stub_status; allow 127.0.0.1; deny all; }`)
+but not sites or upstream servers. In the official Docker image `access.log` is linked to stdout, so log to
+another file name (like `k10y-access.log` above). You can keep your existing `access_log` lines too. A `stub_status` location (for example `location /nginx_status { stub_status; allow 127.0.0.1; deny all; }`)
 adds open connections.
 
 ## Pages
@@ -123,8 +141,23 @@ Rules of type **Nginx**: an upstream server doesn't answer, an upstream has no s
 threshold, a certificate expiring, Nginx stopped or its config unreadable, or the agent unreachable. For all
 instances or one.
 
+## Troubleshooting
+
+| What you see | What to do |
+|---|---|
+| **Test** says it can't reach the agent | Is the agent running (`systemctl status k10y-nginx-agent`, or the container)? Is port 9443 open from the hub? Use the address the hub can reach. |
+| `agent answered 401` | The token is wrong: copy it again from `/etc/k10y/nginx-token` (or `/var/lib/k10y/token` in Docker). |
+| A certificate error | The agent's certificate is self-signed: leave **Verify the agent's TLS certificate** off. |
+| Requests/s stays at 0 | The agent reads access logs that are files: check the Overview's log format note and that `access_log` points to a file. |
+| No numbers per site or server | Use k10y's `log_format` (above). |
+| Connections shows "–" | Add a `stub_status` location on a plain-HTTP port, or set `K10Y_NGINX_STATUS_URL`. |
+| A change is refused | The review shows the file, line and text Nginx complained about. Nothing was changed. |
+| `Nginx isn't running` | Start Nginx; on Docker, check `docker compose logs nginx`. |
+
 ## Try it: the Nginx lab
 
 `make nginx-lab-up` starts `k10y/k10y-nginx` in front of five small apps on `http://localhost:8189` (shop on
 three servers with least connections, one a backup; `/api/` on two), with the agent on `https://localhost:9443`.
-The token: `docker exec k10y-nginx-lab-nginx-1 cat /var/lib/k10y/token`. `make nginx-lab-down` removes it.
+The token: `docker exec k10y-nginx-lab-nginx-1 cat /var/lib/k10y/token`. The lab runs on a copy of its config in
+`deploy/nginx-lab/.run`, so changes you make through k10y don't touch the repository. `make nginx-lab-down` removes
+the lab and that copy.

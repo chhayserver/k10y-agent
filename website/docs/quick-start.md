@@ -67,5 +67,7 @@ Click **Test connection**, then **Add cluster**. Open **Overview** and you'll se
 ## What's next
 
 - [Invite your team](./users-roles) and give them roles.
-- [Set up alerts](./alerts) to Telegram.
+- [Set up alerts](./alerts) to Telegram, Slack, email or a webhook.
 - [Add more clusters](./clusters): repeat steps 3 and 4.
+- [Connect HAProxy](./haproxy) and [Nginx](./nginx).
+- Turn on [two-factor login or single sign-on](./sessions).

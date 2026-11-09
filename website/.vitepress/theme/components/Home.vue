@@ -7,7 +7,7 @@ const repo = "https://github.com/chhayserver/k10y-agent";
 // Hero: real screenshots of the product, switchable like n8n's workflow tabs.
 const demos = [
   { id: "home", label: "All systems", icon: "M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z", img: "/shots/home.png", url: "k10y / home",
-    text: "Every cluster and load balancer on one screen: health, problems, firing alerts." },
+    text: "Every cluster, load balancer and web server on one screen: health, problems, firing alerts." },
   { id: "overview", label: "Kubernetes", icon: "M3 12h4l3-8 4 16 3-8h4", img: "/shots/overview.png", url: "k10y / kubernetes / lab / overview",
     text: "Health, problems, CPU and memory for every cluster, updated live." },
   { id: "haproxy", label: "HAProxy", icon: "M9 2.5h6v5H9zM2.5 16.5h6v5h-6zM9 16.5h6v5H9zM15.5 16.5h6v5h-6zM12 7.5v9M5.5 16.5V14h13v2.5", img: "/shots/haproxy-overview.png", url: "k10y / haproxy / lab-lb / overview",
@@ -17,9 +17,9 @@ const demos = [
   { id: "shell", label: "Pod shell", icon: "M4 17l6-5-6-5M12 19h8", img: "/shots/shell.png", url: "k10y / kubernetes / pods / shell",
     text: "Open a terminal in any container from the browser. Every session is audited." },
   { id: "yaml", label: "Safe changes", icon: "M8 6l-6 6 6 6M16 6l6 6-6 6", img: "/shots/yaml.png", url: "k10y / kubernetes / configmaps / app-config",
-    text: "Review a diff and dry run before anything changes, in Kubernetes and HAProxy alike." },
+    text: "Review a diff and dry run before anything changes, in Kubernetes, HAProxy and Nginx alike." },
   { id: "alerts", label: "Alerts", icon: "M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0", img: "/shots/alert-rule.png", url: "k10y / alerts / rules",
-    text: "One alert pipeline for every system: broken pods, down servers, expiring certificates, to Telegram." },
+    text: "One alert pipeline for every system: broken pods, down servers, expiring certificates, to Telegram, Slack, email or a webhook." },
 ];
 const active = ref(0);
 let timer = 0, userPicked = false;
@@ -31,30 +31,32 @@ onBeforeUnmount(() => clearInterval(timer));
 
 const install = [
   { title: "1 · Start the hub", note: "Docker Compose: hub + PostgreSQL + automatic backups", cmd: `curl -LO ${repo}/releases/latest/download/docker-compose.yml\nmake hub-up   # or: create .env, then docker compose up -d` },
-  { title: "2 · Add each cluster", note: "One manifest; the agent creates its own API token", cmd: `kubectl apply -f ${repo}/releases/latest/download/install.yaml` },
+  { title: "2 · Add each cluster", note: "One manifest (or the Helm chart); the agent creates its own API token", cmd: `kubectl apply -f ${repo}/releases/latest/download/install.yaml` },
+  { title: "3 · Add each Nginx (optional)", note: "On the server; or use the k10y/k10y-nginx image in Docker Compose", cmd: `curl -fsSLO ${repo}/releases/latest/download/install-nginx-agent.sh\nsudo sh install-nginx-agent.sh` },
 ];
 const copied = ref(-1);
 async function copy(i: number) {
   try { await navigator.clipboard.writeText(install[i].cmd); copied.value = i; setTimeout(() => (copied.value = -1), 1500); } catch { /* blocked */ }
 }
 
-const worksWith = ["Kubernetes", "RKE2", "k3s", "Amazon EKS", "Google GKE", "Azure AKS", "HAProxy 2.x / 3.x", "Docker Compose", "PostgreSQL", "Telegram", "Google Gemini", "OpenAI-compatible APIs", "amd64 + arm64"];
+const worksWith = ["Kubernetes", "RKE2", "k3s", "Amazon EKS", "Google GKE", "Azure AKS", "HAProxy 2.x / 3.x", "Nginx", "Docker Compose", "Helm", "PostgreSQL", "Telegram", "Slack", "Email", "Webhooks", "Google, Entra ID, Keycloak (SSO)", "Google Gemini", "OpenAI-compatible APIs", "amd64 + arm64"];
 // The systems k10y manages. "now" are shipped; the others are on the public roadmap (no dates promised).
 const systemsNow = [
   { name: "Kubernetes", icon: "M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z", points: ["Every workload, pod, service and config page", "Live charts, live logs, pod shell", "Scale, restart, roll back, edit YAML, drain", "AI diagnosis with human-approved fixes"] },
   { name: "HAProxy", icon: "M9 2.5h6v5H9zM2.5 16.5h6v5h-6zM9 16.5h6v5H9zM15.5 16.5h6v5h-6zM12 7.5v9M5.5 16.5V14h13v2.5", points: ["Frontends, backends, servers, topology", "Drain, maintenance, rolling deploys, canaries", "Validated config changes, history, rollback", "Certificates, rate limits, logs, Kubernetes sync"] },
+  { name: "Nginx", icon: "M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5zM9 16V8l6 8V8", points: ["Sites, routes and upstreams with live server checks", "Requests, errors and latency per site, route and server", "Changes from forms, checked with nginx -t, history and restore", "Logs, certificates and the full config"] },
 ];
-const systemsNext = ["Nginx", "PostgreSQL & MySQL", "Redis", "Docker hosts", "GitLab & Jenkins pipelines", "Prometheus & Grafana", "Cloud accounts (AWS, GCP, Azure)"];
+const systemsNext = ["PostgreSQL & MySQL", "Redis", "Docker hosts", "GitLab & Jenkins pipelines", "Prometheus & Grafana", "Cloud accounts (AWS, GCP, Azure)"];
 const shared = [
-  ["One login", "Users, sessions and device sign-out, once for every system."],
-  ["One set of roles", "24 permissions across Kubernetes and HAProxy, per cluster or global."],
+  ["One login", "Users, two-factor login and single sign-on (OIDC), once for every system."],
+  ["One set of roles", "32 permissions across Kubernetes, HAProxy and Nginx, on everything or one cluster or instance."],
   ["One audit log", "Who changed what, in which system, with the result, in one place."],
-  ["One alert pipeline", "Rules for pods, nodes, load balancers and certificates, sent to Telegram."],
+  ["One alert pipeline", "Rules for pods, nodes, load balancers, web servers and certificates, to Telegram, Slack, email or a webhook."],
   ["One Home page", "The health of every system on a single screen."],
   ["One AI assistant", "Investigates problems with read-only tools; you approve every fix."],
 ];
 const stats = [
-  { n: "2", l: "systems in one place, more coming" }, { n: "38", l: "pages in the dashboard" }, { n: "24", l: "fine-grained permissions" },
+  { n: "3", l: "systems in one place, more coming" }, { n: "49", l: "pages in the dashboard" }, { n: "32", l: "fine-grained permissions" },
   { n: "Every", l: "change audited, with who made it" }, { n: "0", l: "kubeconfigs handed out" },
 ];
 const useCases = [
@@ -62,7 +64,8 @@ const useCases = [
   { t: "Give developers access without kubeconfigs", d: "A role per cluster: view and logs on production, scale and restart on staging. Developers never hold credentials, and every click is audited.", tag: "Safe self-service" },
   { t: "Get alerted, then fix it from your phone", d: "A crash loop fires a Telegram message, with an optional AI diagnosis. Open k10y, check the live logs, roll back. Done.", tag: "On-call" },
   { t: "Ship without downtime", d: "Drain one HAProxy server at a time, deploy, check it's healthy, move on. Or send 5% of traffic, or only requests with a canary header, to the new version.", tag: "Releases" },
-  { t: "Stop switching between tools", d: "kubectl, the HAProxy stats page, config files over SSH, a Telegram bot, a spreadsheet of who changed what: replaced by one dashboard with one login and one audit log.", tag: "Everyone" },
+  { t: "Stop switching between tools", d: "kubectl, the HAProxy stats page, Nginx config files over SSH, a Telegram bot, a spreadsheet of who changed what: replaced by one dashboard with one login and one audit log.", tag: "Everyone" },
+  { t: "Change Nginx without SSH", d: "Add a site, a route or an upstream from a form. k10y shows the diff, nginx -t checks it, and only then does Nginx reload. Your comments stay where you wrote them.", tag: "Web servers" },
   { t: "Let AI explain a CrashLoopBackOff", d: "The assistant reads events, specs and logs with read-only tools, finds the root cause and proposes a fix. A person reviews it before anything changes.", tag: "Troubleshooting" },
 ];
 const features = [
@@ -84,10 +87,10 @@ const features = [
     ["AI assistant", "Gemini or any OpenAI-compatible model (optional; cluster data goes to the provider you choose). Read-only tools; you approve every fix."]] },
 ];
 const security = [
-  { t: "Identity", items: ["argon2id passwords, forced first change", "Server-side sessions, sign out any device", "Login rate limiting"] },
-  { t: "Authorization", items: ["Fully custom roles", "Per-cluster or global assignments", "24 fine-grained permissions"] },
+  { t: "Identity", items: ["argon2id passwords, two-factor login", "Single sign-on (OIDC) with groups to roles", "Sign out any device, login rate limiting"] },
+  { t: "Authorization", items: ["Fully custom roles", "Per cluster, per HAProxy, per Nginx, or global", "32 fine-grained permissions, scoped API tokens"] },
   { t: "Data", items: ["HTTPS everywhere, no Ingress needed", "Tokens and keys encrypted at rest", "Secret values never leave the cluster"] },
-  { t: "Accountability", items: ["Every action, login and shell audited", "Automatic database backups", "API-only agents, no side doors"] },
+  { t: "Accountability", items: ["Every action, login and shell audited", "Export to your SIEM (webhook, syslog, files)", "Automatic database backups"] },
 ];
 </script>
 
@@ -97,9 +100,9 @@ const security = [
     <section class="hero">
       <div class="hero-grid" aria-hidden="true" /><div class="hero-glow" aria-hidden="true" />
       <div class="wrap">
-        <a class="pill" :href="withBase('/changelog')"><span class="dot" />New in 2.2: HAProxy management, one Home for every system <span aria-hidden="true">→</span></a>
+        <a class="pill" :href="withBase('/changelog')"><span class="dot" />New: Nginx, the third system: monitor and change it safely <span aria-hidden="true">→</span></a>
         <h1>All your DevOps tools.<br><span class="grad">One calm place.</span></h1>
-        <p class="lead">k10y-agent brings the tools you run your infrastructure with into one open-source control room. Kubernetes clusters and HAProxy load balancers today, more systems next. Monitor, troubleshoot and safely change all of them with one login, one set of roles, one audit log and one alert pipeline.</p>
+        <p class="lead">k10y-agent brings the tools you run your infrastructure with into one open-source control room. Kubernetes clusters, HAProxy load balancers and Nginx today, more systems next. Monitor, troubleshoot and safely change all of them with one login, one set of roles, one audit log and one alert pipeline.</p>
         <div class="ctas">
           <a class="btn primary" :href="withBase('/docs/quick-start')">Get started, it's free</a>
           <a class="btn ghost" :href="repo" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.7 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5z"/></svg>Star on GitHub</a>
@@ -197,6 +200,9 @@ const security = [
       <div class="cards">
         <div class="card"><h3>Multi-cluster</h3><p>A cluster switcher with live health dots, and an all-clusters overview.</p></div>
         <div class="card"><h3>HAProxy</h3><p>Load balancers next to your clusters: topology, live charts and logs, certificates, rate limits, history and rollback.</p></div>
+        <div class="card"><h3>Nginx</h3><p>Sites, routes and upstreams with live numbers per route and server; changes checked with <code>nginx -t</code>, with history.</p></div>
+        <div class="card"><h3>Search everything</h3><p>Ctrl/⌘ K finds any object in every cluster, HAProxy and Nginx.</p></div>
+        <div class="card"><h3>Helm releases</h3><p>History, values, compare, roll back and upgrade with new values, with a dry run first.</p></div>
         <div class="card"><h3>Relationship map</h3><p>Ingress → Service → workload → Pod → ConfigMap, Secret or PVC. Broken links are flagged.</p></div>
         <div class="card"><h3>CronJobs</h3><p>Run now, suspend and resume, with readable schedules like "every 5 minutes".</p></div>
         <div class="card"><h3>Per-user settings</h3><p>Hide pages and set your theme and start page. Your settings follow you to every device.</p></div>
@@ -219,11 +225,11 @@ const security = [
     <!-- ROADMAP TEASER -->
     <section class="road wrap">
       <div class="sec-head"><span class="kicker">Roadmap</span><h2>Built in the open, <span class="grad">shipping fast</span></h2>
-        <p>Ten releases so far: from the first Kubernetes agent to the hub, alerts, the AI assistant and HAProxy, a second system in the same control room.</p></div>
+        <p>From the first Kubernetes agent to the hub, HAProxy and Nginx, three systems in the same control room, plus SSO, two-factor login and a release every few days.</p></div>
       <div class="road-cols">
-        <div><h3><span class="b done" />Shipped</h3><ul><li>Kubernetes control room</li><li>HAProxy management</li><li>Roles, audit, alerts, AI</li><li>One Home for every system</li></ul></div>
-        <div><h3><span class="b now" />Next</h3><ul><li>Two-factor login (TOTP)</li><li>Slack, email and webhook alerts</li><li>Next systems: Nginx, databases</li></ul></div>
-        <div><h3><span class="b later" />Later</h3><ul><li>Single sign-on (OIDC)</li><li>Long-term metrics (Prometheus)</li><li>Helm chart</li></ul></div>
+        <div><h3><span class="b done" />Shipped</h3><ul><li>Kubernetes, HAProxy and Nginx</li><li>SSO, two-factor login, API tokens</li><li>Roles, audit export, alerts, AI</li><li>Helm charts, one Home for every system</li></ul></div>
+        <div><h3><span class="b now" />Next</h3><ul><li>Nginx: drain servers, rolling deploys</li><li>Nginx: IP blocks, rate limits, certificates</li><li>Longer metrics history</li></ul></div>
+        <div><h3><span class="b later" />Later</h3><ul><li>Databases (PostgreSQL, MySQL)</li><li>Redis</li><li>CI/CD pipelines</li></ul></div>
       </div>
       <p class="more"><a :href="withBase('/roadmap')">See the full roadmap →</a></p>
     </section>

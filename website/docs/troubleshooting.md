@@ -56,13 +56,17 @@ Buttons only appear when the action is allowed:
 - Press **Send test** on the channel. The error from Telegram is shown if it fails.
 - Check the rule has the channel ticked under **Notify**.
 
+## Nginx
+
+See [Nginx → Troubleshooting](./nginx#troubleshooting).
+
 ## Where is my data?
 
 In `./data` next to `docker-compose.yml`. See [Install the hub](./install-hub#where-data-is-stored) and [Backups](./backups).
 
 ## Does k10y send data anywhere?
 
-No, unless you turn on the AI assistant (data goes to the provider you chose) or Telegram alerts (alert messages go to Telegram). The hub and agents don't phone home.
+No, unless you turn on the AI assistant (data goes to the provider you chose), alert channels (messages go to Telegram, Slack, your mail server or your webhook) or activity log export (to the webhook or syslog server you set). The hub and agents don't phone home.
 
 ## Is k10y free?
 

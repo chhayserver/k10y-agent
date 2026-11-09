@@ -1,13 +1,15 @@
 # Architecture
 
 ```
- Browser ──HTTPS──► k10y hub :8443   (dashboard, login, roles, audit, alerts, AI)
-                      │   ├── PostgreSQL 17   (users, roles, clusters, settings, audit, alerts)
+ Browser ──HTTPS──► k10y hub :8443   (dashboard, login and SSO, roles, audit, alerts, AI)
+                      │   ├── PostgreSQL 17   (users, roles, clusters, instances, settings, audit, alerts, history)
                       │   └── backup          (daily dumps to ./data/backups)
-                      ├──HTTPS──► agent in cluster "staging"     :30800 ──► Kubernetes API + metrics-server
-                      └──HTTPS──► agent in cluster "production"  :30800 ──► Kubernetes API + metrics-server
- Telegram ◄── alerts ─┘
- k10y CLI ──HTTPS──► agents directly (one token per cluster)
+                      ├──HTTPS──► agent in cluster "staging"     :30800 ──► Kubernetes API + metrics-server + kubelets
+                      ├──HTTPS──► agent in cluster "production"  :30800 ──► Kubernetes API + metrics-server + kubelets
+                      ├──HTTP(S)─► HAProxy Data Plane API         :5555  ──► HAProxy (config, runtime, stats)
+                      └──HTTPS──► Nginx agent on "web1"           :9443  ──► nginx.conf, nginx -t, reload, access log
+ Telegram, Slack, email, webhooks ◄── alerts ─┘      SIEM ◄── activity log export (webhook, syslog, files)
+ k10y CLI ──HTTPS──► agents directly (one token per cluster), or the hub with an API token (port-forward)
 ```
 
 ## The hub
@@ -34,6 +36,21 @@ The agent is a single pod (about 130 MiB of memory) in the `k10y` namespace of e
 
 Agents never connect out to the hub. The hub connects to them, so an agent only needs to be reachable from the hub.
 
+## HAProxy
+
+The hub talks to each HAProxy's **Data Plane API** directly (no k10y agent on the load balancer). It samples the stats every 10 seconds for the live numbers and charts, and makes every configuration change in a Data Plane API transaction that HAProxy validates before it's committed. Server state changes (drain, maintenance) use the runtime API, so they apply instantly without a reload. See [HAProxy](./haproxy).
+
+## The Nginx agent
+
+Nginx has no management API, so a small k10y agent runs **next to each Nginx**: installed on the server as a systemd service, or built into the `k10y/k10y-nginx` image for Docker Compose. It's the same program as the cluster agent, started in Nginx mode. It:
+
+- reads the configuration (every included file) and turns it into sites, routes and upstreams;
+- follows the access log to count requests, errors and response times per site, route and upstream server, and checks every upstream server with a TCP connection every 10 seconds;
+- changes configuration files by editing only the block concerned, checks the result with `nginx -t`, reloads, puts the old files back if anything fails, and keeps a history;
+- serves an **API only** over HTTPS on port 9443, with its own token.
+
+See [Nginx](./nginx).
+
 ## Request flow
 
 1. You click **Scale** in the browser. The request goes to the hub with your session cookie.
@@ -46,5 +63,5 @@ Agents never connect out to the hub. The hub connects to them, so an agent only 
 
 - **No kubeconfigs for people.** Access is managed in one place and can be revoked instantly.
 - **One audit trail** across all clusters.
-- **Small agents.** Each cluster only runs a reader with a scoped ServiceAccount.
+- **Small agents.** Each cluster only runs a reader with a scoped ServiceAccount; each Nginx only runs a small sidecar; HAProxy needs nothing extra.
 - **Resilient.** If one cluster is down, the hub and every other cluster keep working.

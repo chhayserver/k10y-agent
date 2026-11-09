@@ -55,4 +55,13 @@ Pods open a dedicated panel with live CPU and memory charts, logs and a **Shell*
 
 ## HAProxy
 
-**Overview**, **Frontends**, **Backends**, **Topology** and **Config** for the selected HAProxy instance. See [HAProxy](./haproxy).
+**Overview**, **Frontends**, **Backends**, **Topology**, **Certificates**, **Rate limits & blocks**, **Logs**, **Config history** and **Raw config** for the selected HAProxy instance. See [HAProxy](./haproxy).
+
+## Nginx
+
+**Overview**, **Sites**, **Upstreams**, **Logs**, **Certificates**, **Config history** and **Raw config** for the selected Nginx instance, with live numbers per site, route and upstream server. See [Nginx](./nginx).
+
+## Everywhere
+
+- **Search** (Ctrl/⌘ K in the top bar) finds objects in every cluster, HAProxy and Nginx.
+- **Home** shows every system's health; **Alerts** and **Activity** cover all of them.
