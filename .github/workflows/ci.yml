@@ -90,7 +90,7 @@ jobs:
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/out" aquasec/trivy:0.57.1 image --quiet \
             --severity HIGH,CRITICAL --ignore-unfixed --format sarif -o /out/trivy.sarif k10y-ci:test
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@v4
         if: always() && hashFiles('trivy.sarif') != ''
         with:
           sarif_file: trivy.sarif
