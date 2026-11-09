@@ -19,6 +19,8 @@ export const SYSTEMS: SystemDef[] = [
     visible: (s) => s.clusters.length > 0 || s.canGlobal("clusters.manage") },
   { id: "haproxy", label: "HAProxy", icon: "lb", base: "/haproxy", description: "Load balancers: frontends, backends, servers",
     visible: (s) => s.canGlobal("haproxy.view") },
+  { id: "nginx", label: "Nginx", icon: "nginx", base: "/nginx", description: "Web servers and reverse proxies: sites, routes, upstreams",
+    visible: (s) => s.canGlobal("nginx.view") },
 ];
 export const systemById = (id: string | undefined) => SYSTEMS.find((x) => x.id === id);
 
@@ -29,7 +31,7 @@ export interface NavItem {
   id: string; label: string; icon: string; section: string; system?: string; slug?: string; tab?: string;
   perm?: string; global?: string; locked?: boolean; cluster?: boolean; hidden?: boolean;
 }
-const K = "kubernetes", H = "haproxy";
+const K = "kubernetes", H = "haproxy", N = "nginx";
 export const NAV: NavItem[] = [
   { id: "home", label: "Home", icon: "overview", section: "Hub", locked: true, hidden: true },
 
@@ -67,12 +69,20 @@ export const NAV: NavItem[] = [
   { id: "haproxy-history", label: "Config history", icon: "rollback", section: "Configuration", system: H, slug: "history", tab: "history", global: "haproxy.view" },
   { id: "haproxy-config", label: "Raw config", icon: "file", section: "Configuration", system: H, slug: "config", tab: "config", global: "haproxy.configure" },
 
+  { id: "nginx-overview", label: "Overview", icon: "overview", section: "Web server", system: N, slug: "overview", tab: "overview", global: "nginx.view" },
+  { id: "nginx-sites", label: "Sites", icon: "globe", section: "Web server", system: N, slug: "sites", tab: "sites", global: "nginx.view" },
+  { id: "nginx-upstreams", label: "Upstreams", icon: "nodes", section: "Web server", system: N, slug: "upstreams", tab: "upstreams", global: "nginx.view" },
+  { id: "nginx-logs", label: "Logs", icon: "events", section: "Traffic & security", system: N, slug: "logs", tab: "logs", global: "nginx.view" },
+  { id: "nginx-certificates", label: "Certificates", icon: "lock", section: "Traffic & security", system: N, slug: "certificates", tab: "certificates", global: "nginx.view" },
+  { id: "nginx-config", label: "Raw config", icon: "file", section: "Configuration", system: N, slug: "config", tab: "config", global: "nginx.configure" },
+
   { id: "alerts", label: "Alerts", icon: "bell", section: "Hub" },
   { id: "activity", label: "Activity", icon: "audit", section: "Hub", perm: "audit.view" },
   { id: "users", label: "Users", icon: "key", section: "Administration", slug: "admin/users", global: "users.manage" },
   { id: "roles", label: "Roles", icon: "lock", section: "Administration", slug: "admin/roles", global: "users.manage" },
   { id: "manage-clusters", label: "Clusters", icon: "logo", section: "Administration", slug: "admin/clusters", global: "clusters.manage" },
   { id: "manage-haproxy", label: "HAProxy instances", icon: "lb", section: "Administration", slug: "admin/haproxy", global: "haproxy.manage" },
+  { id: "manage-nginx", label: "Nginx instances", icon: "nginx", section: "Administration", slug: "admin/nginx", global: "nginx.manage" },
   { id: "system", label: "System settings", icon: "gear", section: "Administration", slug: "admin/system", global: "settings.manage|namespaces.protect" },
   { id: "settings", label: "My settings", icon: "gear", section: "You", locked: true },
 ];

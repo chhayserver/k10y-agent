@@ -9,6 +9,7 @@ export interface Me {
   global_permissions: string[];
   clusters: ClusterRef[];
   haproxy?: HaproxyRef[];        // HAProxy instances this user has a role on, with the permissions there
+  nginx?: HaproxyRef[];          // Nginx instances, likewise
   version: string;
 }
 
@@ -40,11 +41,17 @@ export const useSession = defineStore("session", {
       // "a|b": either one. namespaces.protect counts on any cluster (the settings page lists only those clusters).
       const one = (perm: string) => Boolean(this.me && (this.me.global_permissions.includes(perm)
         || ((perm.startsWith("haproxy.") || perm === "ai.use") && (this.me.haproxy || []).some((h) => h.permissions.includes(perm)))
+        || (perm.startsWith("nginx.") && (this.me.nginx || []).some((n) => n.permissions.includes(perm)))
         || (perm === "namespaces.protect" && this.clusters.some((c) => c.permissions.includes(perm)))));
       return (perm: string) => perm.split("|").some(one);
     },
     canAll(): (perm: string) => boolean {
       return (perm: string) => Boolean(this.me && this.me.global_permissions.includes(perm));
+    },
+    /** An Nginx permission on one instance (a role on all of Nginx, or on that instance). */
+    canNg(): (perm: string, nginxId: number | null | undefined) => boolean {
+      return (perm: string, nginxId: number | null | undefined) => Boolean(this.me && (this.me.global_permissions.includes(perm)
+        || (nginxId != null && (this.me.nginx || []).find((n) => n.id === nginxId)?.permissions.includes(perm))));
     },
     /** An HAProxy permission on one instance (a role on all of HAProxy, or on that instance). */
     canHx(): (perm: string, haproxyId: number | null | undefined) => boolean {

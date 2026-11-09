@@ -15,24 +15,26 @@ import { useSession } from "@/stores/session";
 import { toast } from "@/stores/ui";
 
 const s = useSession(), state = page("users", { key: "username", dir: 1 });
-const users = ref<any[] | null>(null), roles = ref<any[]>([]), clusters = ref<any[]>([]), haproxies = ref<any[]>([]), error = ref("");
+const users = ref<any[] | null>(null), roles = ref<any[]>([]), clusters = ref<any[]>([]), haproxies = ref<any[]>([]), nginxes = ref<any[]>([]), error = ref("");
 async function load() {
   try { [users.value, roles.value, clusters.value] = await Promise.all([hub.get("/users"), hub.get("/roles"), hub.get("/clusters")]);
-    haproxies.value = await hub.get<any[]>("/haproxy").catch(() => []); }
+    haproxies.value = await hub.get<any[]>("/haproxy").catch(() => []);
+    nginxes.value = await hub.get<any[]>("/nginx").catch(() => []); }
   catch (e: any) { error.value = e.message; }
 }
 onMounted(load);
 const roleName = (id: number) => roles.value.find((r) => r.id === id)?.name || "?";
 const clusterName = (id: number | null) => (id == null ? "all clusters" : clusters.value.find((c) => c.id === id)?.name || "?");
-// Where a role applies: everything, one cluster, or one HAProxy instance ("all" | "c:3" | "h:2").
-type Assign = { role_id: number; cluster_id: number | null; haproxy_id?: number | null };
-const scopeOf = (a: Assign) => (a.haproxy_id ? `h:${a.haproxy_id}` : a.cluster_id ? `c:${a.cluster_id}` : "all");
+// Where a role applies: everything, one cluster, one HAProxy or one Nginx instance ("all" | "c:3" | "h:2" | "n:1").
+type Assign = { role_id: number; cluster_id: number | null; haproxy_id?: number | null; nginx_id?: number | null };
+const scopeOf = (a: Assign) => (a.haproxy_id ? `h:${a.haproxy_id}` : a.nginx_id ? `n:${a.nginx_id}` : a.cluster_id ? `c:${a.cluster_id}` : "all");
 function setScope(a: Assign, v: string) {
   a.cluster_id = v.startsWith("c:") ? Number(v.slice(2)) : null;
   a.haproxy_id = v.startsWith("h:") ? Number(v.slice(2)) : null;
+  a.nginx_id = v.startsWith("n:") ? Number(v.slice(2)) : null;
 }
 const scopeName = (a: Assign) => (a.haproxy_id ? `HAProxy ${haproxies.value.find((x) => x.id === a.haproxy_id)?.name || "?"}`
-  : a.cluster_id ? clusterName(a.cluster_id) : "everything");
+  : a.nginx_id ? `Nginx ${nginxes.value.find((x) => x.id === a.nginx_id)?.name || "?"}` : a.cluster_id ? clusterName(a.cluster_id) : "everything");
 const rows = computed(() => { const q = state.q.trim().toLowerCase(); return (users.value || []).filter((u) => !q || `${u.username} ${u.display_name}`.toLowerCase().includes(q)); });
 
 const edit = reactive({ open: false, id: 0, username: "", display_name: "", password: "", is_active: true, must_change_password: true, totp: false, sso: [] as any[], assignments: [] as Assign[], err: "", busy: false });
@@ -51,7 +53,7 @@ async function setActive(u: any, active: boolean) {
 }
 function openEdit(u: any) { loadUserSessions(u.id); Object.assign(edit, { open: true, id: u.id, username: u.username, display_name: u.display_name, password: "", is_active: u.is_active, must_change_password: u.must_change_password, totp: !!u.totp_enabled,
   sso: u.assignments.filter((a: any) => a.source === "sso"),
-  assignments: u.assignments.filter((a: any) => a.source !== "sso").map((a: any) => ({ role_id: a.role_id, cluster_id: a.cluster_id, haproxy_id: a.haproxy_id || null })), err: "" }); }
+  assignments: u.assignments.filter((a: any) => a.source !== "sso").map((a: any) => ({ role_id: a.role_id, cluster_id: a.cluster_id, haproxy_id: a.haproxy_id || null, nginx_id: a.nginx_id || null })), err: "" }); }
 // Lost phone: turn the user's two-factor login off; if it's required they set it up again at next sign-in.
 async function resetTotp() {
   if (!confirm(`Reset two-factor login for ${edit.username}? Their authenticator app and recovery codes stop working.`)) return;
@@ -114,10 +116,11 @@ const columns = [{ key: "username", label: "Username", cls: "primary" }, { key: 
         <select :value="scopeOf(a)" class="select" aria-label="Where the role applies" @change="setScope(a, ($event.target as HTMLSelectElement).value)">
           <option value="all">Everything</option>
           <optgroup v-if="clusters.length" label="One cluster"><option v-for="c in clusters" :key="c.id" :value="`c:${c.id}`">{{ c.name }}</option></optgroup>
-          <optgroup v-if="haproxies.length" label="One HAProxy"><option v-for="x in haproxies" :key="x.id" :value="`h:${x.id}`">{{ x.name }}</option></optgroup></select>
+          <optgroup v-if="haproxies.length" label="One HAProxy"><option v-for="x in haproxies" :key="x.id" :value="`h:${x.id}`">{{ x.name }}</option></optgroup>
+          <optgroup v-if="nginxes.length" label="One Nginx"><option v-for="x in nginxes" :key="x.id" :value="`n:${x.id}`">{{ x.name }}</option></optgroup></select>
         <button class="btn icon-only ghost" aria-label="Remove role" @click="edit.assignments.splice(i, 1)"><Icon name="x" /></button>
       </div>
-      <button class="btn sm" style="align-self:flex-start" @click="edit.assignments.push({ role_id: roles[0]?.id, cluster_id: null, haproxy_id: null })">Add role</button>
+      <button class="btn sm" style="align-self:flex-start" @click="edit.assignments.push({ role_id: roles[0]?.id, cluster_id: null, haproxy_id: null, nginx_id: null })">Add role</button>
     </div>
     <div v-if="edit.id" class="form-row"><span class="lbl">API tokens</span><ApiTokens :key="edit.id" :user-id="edit.id" /></div>
     <div v-if="edit.id" class="form-row"><div style="display:flex;align-items:center;gap:8px"><span class="lbl" style="flex:1">Signed-in devices</span>

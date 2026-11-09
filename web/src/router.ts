@@ -34,12 +34,14 @@ const views: Record<string, () => Promise<any>> = {
   roles: () => import("@/views/admin/Roles.vue"),
   "manage-clusters": () => import("@/views/admin/Clusters.vue"),
   "manage-haproxy": () => import("@/views/admin/HAProxyInstances.vue"),
+  "manage-nginx": () => import("@/views/admin/NginxInstances.vue"),
   system: () => import("@/views/admin/System.vue"),
   settings: () => import("@/views/Settings.vue"),
 };
 
 const haproxyView = () => import("@/views/haproxy/HAProxyView.vue");
-const component = (id: string) => views[id] || (id.startsWith("haproxy-") ? haproxyView : undefined);
+const nginxView = () => import("@/views/nginx/NginxView.vue");
+const component = (id: string) => views[id] || (id.startsWith("haproxy-") ? haproxyView : id.startsWith("nginx-") ? nginxView : undefined);
 
 // Old URLs (before systems had their own prefix) keep working.
 const legacy: RouteRecordRaw[] = NAV.filter((n) => `/${n.id}` !== pathOf(n)).map((n) => ({ path: `/${n.id}`, redirect: () => pathOf(n) }));

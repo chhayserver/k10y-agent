@@ -9,6 +9,7 @@ import { HEALTH } from "@/lib/format";
 import { backendHealth } from "@/lib/haproxy";
 import { NAV, pathOf, SYSTEMS, systemById, to } from "@/lib/nav";
 import { useHaproxy } from "@/stores/haproxy";
+import { useNginx } from "@/stores/nginx";
 import { fleet, fleetLevel, refreshFleet } from "@/stores/fleet";
 import { applyTheme, isDark, prefs } from "@/stores/prefs";
 import { useCluster } from "@/stores/cluster";
@@ -24,7 +25,7 @@ import MenuPopover from "./MenuPopover.vue";
 import PanelHost from "@/panels/PanelHost.vue";
 import Toasts from "./Toasts.vue";
 
-const s = useSession(), c = useCluster(), h = useHaproxy(), route = useRoute(), router = useRouter();
+const s = useSession(), c = useCluster(), h = useHaproxy(), ngx = useNginx(), route = useRoute(), router = useRouter();
 const now = ref(Date.now());
 const navItem = computed(() => route.meta.nav as (typeof NAV)[number] | undefined);
 
@@ -83,17 +84,24 @@ const counts = computed<Record<string, { n: number | string; alert: boolean }>>(
   };
 });
 const onHaproxy = computed(() => navItem.value?.system === "haproxy");
-const live = computed(() => !!navItem.value?.cluster || onHaproxy.value);   // pages with auto-refresh
+const onNginx = computed(() => navItem.value?.system === "nginx");
+const live = computed(() => !!navItem.value?.cluster || onHaproxy.value || onNginx.value);   // pages with auto-refresh
 const health = computed(() => {
   if (navItem.value?.cluster && c.data) return HEALTH[c.data.summary.health];
   if (onHaproxy.value && h.data) {
     const lv = h.data.backends.map((b) => backendHealth(b).level);
     return lv.includes("critical") ? { level: "critical", label: "Backend down" } : lv.includes("warning") ? { level: "warning", label: "Degraded" } : { level: "good", label: "Healthy" };
   }
+  if (onNginx.value && ngx.data) {
+    const p = ngx.data.summary.problems;
+    return !ngx.data.info.running ? { level: "critical", label: "Not running" }
+      : p.some((x) => x.kind === "upstream_down") ? { level: "critical", label: "Upstream down" }
+      : p.length ? { level: "warning", label: "Degraded" } : { level: "good", label: "Healthy" };
+  }
   return null;
 });
 const updated = computed(() => {
-  const [paused, at] = onHaproxy.value ? [h.paused, h.updated] : [c.paused, c.lastUpdated];
+  const [paused, at] = onHaproxy.value ? [h.paused, h.updated] : onNginx.value ? [ngx.paused, ngx.updated] : [c.paused, c.lastUpdated];
   if (paused) return "Paused";
   if (!at) return "";
   const sec = Math.round((now.value - at) / 1000);
@@ -154,10 +162,26 @@ function instanceMenu(e: MouseEvent) {
   openMenu(el, items);
 }
 const instanceLevel = computed(() => (health.value && onHaproxy.value ? health.value.level : h.data ? "good" : ""));
-watch(() => system.value?.id, (id) => { if (id === "haproxy" && h.instances == null) h.loadInstances(); }, { immediate: true });
-function refreshNow() { if (onHaproxy.value) h.refresh(); else c.refresh(); }
+function nginxMenu(e: MouseEvent) {
+  const el = e.currentTarget as HTMLElement;
+  el.dataset.menuAlign = "left";
+  const items: MenuItem[] = [{ note: "Switch Nginx" }, ...(ngx.instances || []).map((i) => ({ label: i.name, icon: i.id === ngx.currentId ? "ok" : "nginx",
+    run: () => { ngx.select(i.id); if (!onNginx.value) router.push(to("nginx-overview")); } }))];
+  if (!ngx.instances?.length) items.push({ note: "No Nginx connected yet" });
+  if (s.canAll("nginx.manage")) items.push({ sep: true }, { label: "Add Nginx…", icon: "gear", run: () => router.push(to("manage-nginx")) });
+  openMenu(el, items);
+}
+const nginxLevel = computed(() => (health.value && onNginx.value ? health.value.level : ngx.data ? "good" : ""));
+watch(() => system.value?.id, (id) => {
+  if (id === "haproxy" && h.instances == null) h.loadInstances();
+  if (id === "nginx" && ngx.instances == null) ngx.loadInstances();
+}, { immediate: true });
+const livePaused = computed(() => (onHaproxy.value ? h.paused : onNginx.value ? ngx.paused : c.paused));
+const liveLoading = computed(() => (onHaproxy.value ? h.loading : onNginx.value ? ngx.loading : c.loading));
+function refreshNow() { if (onHaproxy.value) h.refresh(); else if (onNginx.value) ngx.refresh(); else c.refresh(); }
 function togglePauseAny() {
   if (onHaproxy.value) { h.paused = !h.paused; if (!h.paused) h.refresh(); }
+  else if (onNginx.value) { ngx.paused = !ngx.paused; if (!ngx.paused) ngx.refresh(); }
   else togglePause();
 }
 
@@ -205,6 +229,11 @@ const canApply = computed(() => navItem.value?.cluster && s.can("apply.yaml") &&
         <span class="cs-text"><span class="cs-label">HAProxy</span><b>{{ h.current?.name || (h.instances?.length === 0 ? "None yet" : "…") }}</b></span>
         <Icon name="sort" />
       </button>
+      <button v-else-if="system?.id === 'nginx' && navItem?.id !== 'home'" class="cluster-switch" title="Switch Nginx" aria-haspopup="menu" @click="nginxMenu">
+        <span class="hdot" :class="nginxLevel" />
+        <span class="cs-text"><span class="cs-label">Nginx</span><b>{{ ngx.current?.name || (ngx.instances?.length === 0 ? "None yet" : "…") }}</b></span>
+        <Icon name="sort" />
+      </button>
       <nav class="nav" aria-label="Main">
         <RouterLink :to="to('home')" :aria-current="navItem?.id === 'home' ? 'page' : undefined"><Icon name="overview" /><span>Home</span></RouterLink>
         <template v-if="navItem?.id !== 'home'">
@@ -232,6 +261,7 @@ const canApply = computed(() => navItem.value?.cluster && s.can("apply.yaml") &&
       <div class="sidebar-foot">
         <template v-if="system?.id === 'kubernetes' && c.info && navItem?.id !== 'home'"><strong>{{ c.info.cluster }}</strong><br>Agent v{{ c.info.agent_version }}<span v-if="s.current && agents.byId[s.current.id]?.outdated" class="foot-old" :title="outdatedHint(agents.byId[s.current.id])"> · update</span><br>{{ c.info.kubernetes_version }}</template>
         <template v-else-if="onHaproxy && h.data"><strong>{{ h.data.instance.name }}</strong><br>config version {{ h.data.config_version }}</template>
+        <template v-else-if="onNginx && ngx.data"><strong>{{ ngx.data.instance.name }}</strong><br>Nginx {{ ngx.data.info.nginx_version || "?" }}<br>agent v{{ ngx.data.info.agent_version }}</template>
         <template v-else>k10y hub v{{ s.me?.version }}</template>
       </div>
     </aside>
@@ -242,6 +272,7 @@ const canApply = computed(() => navItem.value?.cluster && s.can("apply.yaml") &&
           <div class="crumb">
             <template v-if="navItem?.cluster && s.current"><Icon name="logo" />{{ s.current.name }}<span v-if="c.info" class="dim">·</span>{{ c.info?.kubernetes_version }}</template>
             <template v-else-if="onHaproxy && h.current"><Icon name="lb" />HAProxy<span class="dim">·</span>{{ h.current.name }}</template>
+            <template v-else-if="onNginx && ngx.current"><Icon name="nginx" />Nginx<span class="dim">·</span>{{ ngx.current.name }}</template>
             <template v-else-if="system && navItem?.system">{{ system.label }}</template>
             <template v-else>k10y</template>
           </div>
@@ -251,10 +282,10 @@ const canApply = computed(() => navItem.value?.cluster && s.can("apply.yaml") &&
         <div class="spacer" />
         <GlobalSearch v-if="s.me" />
         <span v-if="live" class="updated" aria-live="polite">{{ updated }}</span>
-        <button v-if="live" class="btn icon-only ghost" :aria-pressed="onHaproxy ? h.paused : c.paused" :title="(onHaproxy ? h.paused : c.paused) ? 'Resume auto-refresh' : 'Pause auto-refresh'"
-                @click="togglePauseAny"><Icon :name="(onHaproxy ? h.paused : c.paused) ? 'play' : 'pause'" /></button>
+        <button v-if="live" class="btn icon-only ghost" :aria-pressed="livePaused" :title="livePaused ? 'Resume auto-refresh' : 'Pause auto-refresh'"
+                @click="togglePauseAny"><Icon :name="livePaused ? 'play' : 'pause'" /></button>
         <button v-if="canApply" class="btn" @click="actApply()"><Icon name="upload" /><span>Apply YAML</span></button>
-        <button v-if="live" class="btn" :class="{ spin: onHaproxy ? h.loading : c.loading }" title="Refresh now (R)" @click="refreshNow"><Icon name="refresh" /><span>Refresh</span></button>
+        <button v-if="live" class="btn" :class="{ spin: liveLoading }" title="Refresh now (R)" @click="refreshNow"><Icon name="refresh" /><span>Refresh</span></button>
         <button class="btn icon-only ghost" title="Toggle theme" @click="toggleTheme"><Icon :name="isDark() ? 'sun' : 'moon'" /></button>
         <button class="btn ghost user-btn" aria-haspopup="menu" title="Account" @click="userMenu"><span class="avatar">{{ initials }}</span></button>
       </header>
