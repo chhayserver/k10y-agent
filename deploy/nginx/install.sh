@@ -46,6 +46,8 @@ K10Y_TLS=true
 K10Y_TLS_DIR=/var/lib/k10y-nginx/tls
 K10Y_TOKEN_FILE=/etc/k10y/nginx-token
 K10Y_NGINX_CONF=/etc/nginx/nginx.conf
+K10Y_NGINX_DATA_DIR=/var/lib/k10y-nginx
+# K10Y_NGINX_RELOAD_CMD=systemctl reload nginx
 # K10Y_NGINX_BIN=/usr/sbin/nginx
 # K10Y_NGINX_STATUS_URL=http://127.0.0.1/nginx_status
 ENV

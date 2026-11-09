@@ -56,10 +56,14 @@ class AgentError(Exception):
     pass
 
 
-def call(url: str, token: str, verify: bool, path: str, params: Optional[dict] = None) -> Any:
+def call(url: str, token: str, verify: bool, path: str, params: Optional[dict] = None, body: Optional[dict] = None,
+         actor: str = "") -> Any:
+    headers = {"Authorization": f"Bearer {token}", **({"X-K10Y-Actor": actor[:64]} if actor else {})}
     try:
-        r = httpx.get(f"{url}/api/v1/nginx/{path}", params=params, headers={"Authorization": f"Bearer {token}"},
-                      verify=verify, timeout=TIMEOUT)
+        if body is None:
+            r = httpx.get(f"{url}/api/v1/nginx/{path}", params=params, headers=headers, verify=verify, timeout=TIMEOUT)
+        else:
+            r = httpx.post(f"{url}/api/v1/nginx/{path}", json=body, headers=headers, verify=verify, timeout=httpx.Timeout(90.0, connect=6.0))
     except httpx.HTTPError as e:
         raise AgentError(f"cannot reach the agent at {url}: {e}")
     if r.status_code >= 400:
@@ -84,11 +88,12 @@ def build_router(db_session, require, audit, crypto) -> APIRouter:
             raise HTTPException(status_code=404, detail="Nginx instance not found")
         return i
 
-    def agent(i: NginxInstance, path: str, params: Optional[dict] = None) -> Any:
+    def agent(i: NginxInstance, path: str, params: Optional[dict] = None, body: Optional[dict] = None, actor: str = "") -> Any:
         try:
-            return call(i.url, crypto().decrypt(i.token_encrypted), i.verify_tls, path, params)
+            return call(i.url, crypto().decrypt(i.token_encrypted), i.verify_tls, path, params, body, actor)
         except AgentError as e:
-            raise HTTPException(status_code=502, detail=str(e))
+            msg = str(e)
+            raise HTTPException(status_code=400 if "answered 400" in msg else 502, detail=msg.split("answered 400: ", 1)[-1])
 
     @r.get("")
     def list_instances(p=Depends(require("nginx.view")), s: Session = Depends(db_session)) -> list:
@@ -153,8 +158,44 @@ def build_router(db_session, require, audit, crypto) -> APIRouter:
         return {"instance": view(i), "info": agent(i, "info"), "config": agent(i, "config"), "summary": agent(i, "summary"),
                 "health": agent(i, "upstreams/health")}
 
+    # --- changes (nginx.configure): dry runs aren't audited, applied changes and failures are -------------
+    class ChangeBody(BaseModel):
+        ops: list = Field(..., min_length=1, max_length=50)
+        apply: bool = False
+        note: str = Field("", max_length=300)
+
+    class ApplyBody(BaseModel):
+        apply: bool = False
+
+    def audited(s: Session, request: Request, p, i: NginxInstance, path: str, body: dict, apply: bool, what: str) -> dict:
+        try:
+            r = agent(i, path, body=body, actor=f"hub:{p.user.username}")
+        except HTTPException as e:
+            if apply:
+                audit(s, request, p, "nginx-change", f"nginx/{i.name}", ok=False, message=f"{what}: {e.detail}"[:2000])
+            raise
+        if apply:
+            ok = bool(r.get("applied"))
+            audit(s, request, p, "nginx-change", f"nginx/{i.name}", ok=ok,
+                  message=("; ".join(r.get("summary") or []) or what) + ("" if ok else f" (refused by nginx -t: {(r.get('errors') or [{}])[0].get('message', '')})"),
+                  params={"version": r.get("version")})
+        return r
+
+    @r.post("/{nid}/changes")
+    def changes(nid: int, body: ChangeBody, request: Request, p=Depends(require("nginx.configure")), s: Session = Depends(db_session)) -> dict:
+        return audited(s, request, p, get(s, nid), "changes", {"ops": body.ops, "apply": body.apply}, body.apply, body.note or "change")
+
+    @r.post("/{nid}/history/{v}/restore")
+    def restore(nid: int, v: int, body: ApplyBody, request: Request, p=Depends(require("nginx.configure")), s: Session = Depends(db_session)) -> dict:
+        return audited(s, request, p, get(s, nid), f"history/{v}/restore", {"apply": body.apply}, body.apply, f"restore version {v}")
+
+    @r.get("/{nid}/history/{v}")
+    def version(nid: int, v: int, p=Depends(require("nginx.configure")), s: Session = Depends(db_session)) -> dict:
+        return agent(get(s, nid), f"history/{v}")
+
     for path, perm in (("stats", "nginx.view"), ("logs", "nginx.view"), ("errors", "nginx.view"), ("certificates", "nginx.view"),
-                       ("upstreams/health", "nginx.view"), ("summary", "nginx.view"), ("config/raw", "nginx.configure")):
+                       ("upstreams/health", "nginx.view"), ("summary", "nginx.view"), ("config/raw", "nginx.configure"),
+                       ("history", "nginx.view"), ("files", "nginx.configure")):
         def endpoint(nid: int, request: Request, p=Depends(require(perm)), s: Session = Depends(db_session), _path: str = path) -> Any:
             return agent(get(s, nid), _path, dict(request.query_params))
         r.add_api_route(f"/{{nid}}/{path}", endpoint, methods=["GET"], name=f"nginx_{path.replace('/', '_')}")

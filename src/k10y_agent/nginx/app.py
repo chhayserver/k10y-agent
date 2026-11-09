@@ -12,11 +12,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from .. import __version__
 from ..config import Settings
-from . import metrics, model
+from . import edit, metrics, model
 
 settings = Settings()
 log = logging.getLogger("k10y.nginx")
@@ -188,6 +189,83 @@ def certificates() -> list:
         c = certs.setdefault(path, {**metrics.certificate(path), "sites": []})
         c["sites"].append({"id": s["id"], "server_names": s["server_names"]})
     return sorted(certs.values(), key=lambda c: c.get("days_left", 1e9))
+
+
+# --- changes (the hub asks nginx.configure) --------------------------------------------------------
+
+def conf_dir() -> str:
+    return os.path.dirname(os.path.abspath(settings.nginx_conf))
+
+
+def history_dir() -> str:
+    return os.path.join(settings.nginx_data_dir, "history")
+
+
+def reload_cmd() -> str:
+    return settings.nginx_reload_cmd or f"{settings.nginx_bin} -s reload"
+
+
+class ChangeBody(BaseModel):
+    ops: List[Dict[str, Any]] = Field(..., min_length=1, max_length=50)
+    apply: bool = False
+
+
+def _run(change: edit.Change, apply: bool, request: Request) -> dict:
+    try:
+        result = edit.run(settings.nginx_bin, settings.nginx_conf, change, apply, reload_cmd(), history_dir(),
+                          (request.headers.get("x-k10y-actor") or "")[:64])
+    except edit.EditError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    with _cache_lock:
+        _cache["model"] = None          # read the new configuration on the next request
+    return result
+
+
+@api.post("/changes")
+def changes(body: ChangeBody, request: Request) -> dict:
+    """Dry run (default) or apply: the diff, `nginx -t` and its errors by file and line; applied changes reload."""
+    c = edit.Change(config(), conf_dir())
+    try:
+        for op in body.ops:
+            c.apply(op)
+    except (edit.EditError, KeyError, TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e) if isinstance(e, edit.EditError) else f"invalid change: {e}")
+    return _run(c, body.apply, request)
+
+
+@api.get("/files")
+def read_file(path: str) -> dict:
+    """One configuration file's text, for the editor (only files Nginx loads, or new ones in its folder)."""
+    if path not in config()["files"]:
+        raise HTTPException(status_code=404, detail="not one of this Nginx's configuration files")
+    return {"path": path, "text": Path(path).read_text()}
+
+
+@api.get("/history")
+def get_history() -> list:
+    return edit.history(history_dir())
+
+
+@api.get("/history/{v}")
+def get_version(v: int) -> dict:
+    try:
+        return edit.version(history_dir(), v)
+    except edit.EditError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+class RestoreBody(BaseModel):
+    apply: bool = False
+
+
+@api.post("/history/{v}/restore")
+def restore(v: int, body: RestoreBody, request: Request) -> dict:
+    """Put the files back as they were before version `v` (dry run first, like any change)."""
+    try:
+        c = edit.restore_change(history_dir(), v, config(), conf_dir())
+    except edit.EditError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return _run(c, body.apply, request)
 
 
 @api.get("/summary")

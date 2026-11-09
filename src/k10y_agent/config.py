@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     nginx_conf: str = "/etc/nginx/nginx.conf"
     nginx_bin: str = "nginx"
     nginx_status_url: str = ""       # stub_status URL; found in the config when empty
+    nginx_reload_cmd: str = ""       # how to reload after a change; default: <nginx_bin> -s reload
+    nginx_data_dir: str = "/var/lib/k10y"   # config history
     # Used only when not running in-cluster.
     kubeconfig: Optional[str] = None
     host: str = "0.0.0.0"

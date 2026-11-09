@@ -11,7 +11,7 @@ SUMMARY = {"sites": 1, "upstreams": 1, "servers": 2, "req": 10.0, "e5_pct": 12.0
                         {"kind": "cert_expiry", "path": "/etc/nginx/certs/shop.pem", "days_left": 5, "message": "certificate shop.pem expires in 5 days"}]}
 
 
-def fake_call(url, token, verify, path, params=None):
+def fake_call(url, token, verify, path, params=None, body=None, actor=""):
     assert token == "agent-token"
     return {"info": {"nginx_version": "1.28.0", "running": True}, "config": {"sites": [], "upstreams": []}, "summary": SUMMARY,
             "upstreams/health": {}, "config/raw": {"text": "http {}"}, "stats": {"points": []}}[path]
@@ -58,3 +58,27 @@ def test_nginx_alert_conditions():
     assert keys("cert_expiry", {"threshold": 14}) == ["ng/7/cert//etc/nginx/certs/shop.pem"]
     assert alerts.evaluate_nginx(7, RuntimeError("down"), {"condition": "unreachable"})[0][0] == "ng/7/unreachable"
     assert alerts.evaluate_nginx(7, RuntimeError("down"), {"condition": "server_down"}) is None
+
+
+def test_changes_are_passed_with_actor_and_audited(client, monkeypatch):
+    seen = []
+
+    def fake(url, token, verify, path, params=None, body=None, actor=""):
+        seen.append((path, body, actor))
+        if path == "changes":
+            if body["ops"][0].get("bad"):
+                raise nginx.AgentError("agent answered 400: route /x: the path is empty")
+            return {"valid": True, "applied": body["apply"], "summary": ["add route /x to shop.local"], "diff": "+x", "errors": [], "version": 3 if body["apply"] else None}
+        return {"history": []}.get(path, [])
+
+    monkeypatch.setattr(nginx, "call", fake)
+    ready_admin(client)
+    nid = client.post("/api/hub/nginx", json={"name": "web1", "url": "web1", "token": "t"}, headers=CSRF).json()["id"]
+    dry = client.post(f"/api/hub/nginx/{nid}/changes", json={"ops": [{"kind": "location"}]}, headers=CSRF)
+    assert dry.status_code == 200 and dry.json()["applied"] is False and seen[-1][2] == "hub:admin"
+    bad = client.post(f"/api/hub/nginx/{nid}/changes", json={"ops": [{"bad": True}], "apply": True}, headers=CSRF)
+    assert bad.status_code == 400 and bad.json()["detail"] == "route /x: the path is empty"
+    done = client.post(f"/api/hub/nginx/{nid}/changes", json={"ops": [{"kind": "location"}], "apply": True}, headers=CSRF)
+    assert done.json()["version"] == 3
+    entries = [a for a in client.get("/api/hub/audit").json() if a["action"] == "nginx-change"]
+    assert [(a["ok"], a["message"]) for a in entries] == [(True, "add route /x to shop.local"), (False, "change: route /x: the path is empty")]
