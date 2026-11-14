@@ -7,7 +7,7 @@ COPY web/ ./
 RUN npm run build
 
 # 2. Python package (agent + hub), with the built UI inside it.
-FROM python:3.12-slim AS build
+FROM python:3.15-slim AS build
 WORKDIR /src
 COPY pyproject.toml README.md ./
 COPY src ./src
@@ -35,7 +35,7 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends binutil
  && rm -rf /var/lib/apt/lists/*
 
 # 3. Helm, for rolling back Helm releases from the hub (opt-in on the agent). Checksums pinned from the Helm release.
-FROM python:3.12-slim AS helm
+FROM python:3.15-slim AS helm
 ARG TARGETARCH
 ARG HELM_VERSION=v3.22.1
 ARG HELM_SHA256_amd64=896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea
@@ -51,7 +51,7 @@ with tarfile.open(fileobj=io.BytesIO(data)) as t:
 os.chmod("/helm", 0o755)
 PY
 
-FROM python:3.12-slim
+FROM python:3.15-slim
 LABEL org.opencontainers.image.licenses="AGPL-3.0-only" \
       org.opencontainers.image.source="https://github.com/chhayserver/k10y-agent"
 COPY LICENSE /usr/share/doc/k10y/LICENSE
